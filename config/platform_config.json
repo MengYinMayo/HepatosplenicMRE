@@ -1,0 +1,82 @@
+{
+  "_comment": "HepatosplenicMRE Platform — Harmonized Feature Definitions v1.0",
+  "_version": "1.0",
+  "_date": "2026-04",
+  "_sites": ["Mayo Clinic", "UCSD"],
+
+  "acquisition": {
+    "sequences": ["Scout_3Plane", "Dixon_MRI", "2D_MRE"],
+    "mre_drive_frequency_Hz": 60,
+    "dixon_contrasts": ["Water", "Fat", "InPhase", "OutPhase", "FF"],
+    "mre_phases": 4
+  },
+
+  "harmonization": {
+    "reference_modality": "Dixon",
+    "interpolation_method": "linear",
+    "units": "mm"
+  },
+
+  "features": {
+    "organ_size_composition": {
+      "LiverVolume_mL":         { "unit":"mL",  "range":[500, 4000], "source":"Dixon" },
+      "SpleenVolume_mL":        { "unit":"mL",  "range":[50, 2000],  "source":"Dixon" },
+      "LiverSpleenRatio":       { "unit":"",    "range":[0.5, 20],   "source":"Dixon" },
+      "LiverPDFF_pct":          { "unit":"%",   "range":[0, 100],    "source":"DixonFF" },
+      "SpleenPDFF_pct":         { "unit":"%",   "range":[0, 30],     "source":"DixonFF" }
+    },
+    "mechanical_mre": {
+      "LiverStiffness_kPa":     { "unit":"kPa", "range":[0.5, 20],   "source":"MRE" },
+      "SpleenStiffness_kPa":    { "unit":"kPa", "range":[1, 30],     "source":"MRE" },
+      "StiffnessRatio_LS":      { "unit":"",    "range":[0.1, 5],    "source":"MRE" },
+      "LiverStiffnessIQR_kPa":  { "unit":"kPa", "range":[0, 10],     "source":"MRE", "note":"heterogeneity" },
+      "SpleenStiffnessIQR_kPa": { "unit":"kPa", "range":[0, 15],     "source":"MRE", "note":"heterogeneity" }
+    },
+    "body_composition": {
+      "MuscleArea_cm2":         { "unit":"cm2", "range":[20, 300],   "source":"Dixon", "level":"L3_proxy" },
+      "SATArea_cm2":            { "unit":"cm2", "range":[10, 800],   "source":"Dixon" },
+      "MuscleFatAreaRatio":     { "unit":"",    "range":[0.05, 10],  "source":"Dixon" },
+      "MusclePDFF_pct":         { "unit":"%",   "range":[0, 50],     "source":"DixonFF" }
+    },
+    "l1_l2_measures": {
+      "L1SliceScout":           { "unit":"slice", "range":[1, 200],  "source":"Scout" },
+      "L2SliceScout":           { "unit":"slice", "range":[1, 200],  "source":"Scout" },
+      "L12MuscleArea_cm2":      { "unit":"cm2", "range":[20, 300],   "source":"Dixon" },
+      "L12SATArea_cm2":         { "unit":"cm2", "range":[10, 800],   "source":"Dixon" },
+      "L12MuscleFatAreaRatio":  { "unit":"",    "range":[0.05, 10],  "source":"Dixon" },
+      "L12PDFF_pct":            { "unit":"%",   "range":[0, 60],     "source":"DixonFF" },
+      "L12Stiffness_kPa":       { "unit":"kPa", "range":[0.5, 20],   "source":"MRE", "note":"if MRE FOV covers L1-L2" }
+    },
+    "spatial_heterogeneity": {
+      "LiverStiffnessEntropy":  { "unit":"",    "range":[0, 5],      "source":"MRE" },
+      "LiverStiffnessCV":       { "unit":"",    "range":[0, 2],      "source":"MRE", "note":"coeff of variation" },
+      "LiverPDFF_IQR":          { "unit":"%",   "range":[0, 30],     "source":"DixonFF" }
+    }
+  },
+
+  "qc": {
+    "segmentation_confidence_threshold": 0.80,
+    "coverage_minimum_fraction":         0.85,
+    "flagging_rules": [
+      { "feature":"LiverVolume_mL",      "action":"flag", "condition":"out_of_range" },
+      { "feature":"SpleenVolume_mL",     "action":"flag", "condition":"out_of_range" },
+      { "feature":"LiverStiffness_kPa",  "action":"flag", "condition":"out_of_range" },
+      { "feature":"SegmentationConfidence", "action":"flag", "condition":"below_threshold" }
+    ],
+    "reproducibility_subset_fraction": 0.10
+  },
+
+  "export": {
+    "csv_delimiter": ",",
+    "missing_value_code": "NA",
+    "feature_order": [
+      "PatientID","StudyDate","ScannerVendor","Site",
+      "LiverVolume_mL","SpleenVolume_mL","LiverSpleenRatio","LiverPDFF_pct",
+      "LiverStiffness_kPa","SpleenStiffness_kPa","StiffnessRatio_LS",
+      "LiverStiffnessIQR_kPa","LiverStiffnessEntropy","LiverStiffnessCV",
+      "MuscleArea_cm2","SATArea_cm2","MuscleFatAreaRatio","MusclePDFF_pct",
+      "L12MuscleArea_cm2","L12SATArea_cm2","L12MuscleFatAreaRatio","L12PDFF_pct",
+      "SegmentationConfidence","CoveragePass","RangeCheckPass","FlaggedForReview"
+    ]
+  }
+}
