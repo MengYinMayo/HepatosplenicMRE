@@ -314,7 +314,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LeftPanel.Layout.Column = 1;
 
             lg = uigridlayout(app.LeftPanel,[2 1]);
-            lg.RowHeight=[{'1x'},{24}]; lg.Padding=[4 4 4 4]; lg.RowSpacing=4;
+            lg.RowHeight={'1x',24}; lg.Padding=[4 4 4 4]; lg.RowSpacing=4;
 
             app.StudyTree = uitree(lg,'checkbox');
             app.StudyTree.Layout.Row=1; app.StudyTree.FontSize=11;
@@ -372,7 +372,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Sliders (row 2)
             corSliderGrid = uigridlayout(app.LocGrid,[1 3]);
             corSliderGrid.Layout.Row=2; corSliderGrid.Layout.Column=1;
-            corSliderGrid.ColumnWidth={'60','1x',40}; corSliderGrid.Padding=[0 0 0 0];
+            corSliderGrid.ColumnWidth={60,'1x',40}; corSliderGrid.Padding=[0 0 0 0];
             lc = uilabel(corSliderGrid); lc.Layout.Column=1;
             lc.Text='Coronal:'; lc.FontSize=12;
             app.SldrLocCor = uislider(corSliderGrid);
@@ -386,7 +386,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             sagSliderGrid = uigridlayout(app.LocGrid,[1 3]);
             sagSliderGrid.Layout.Row=2; sagSliderGrid.Layout.Column=2;
-            sagSliderGrid.ColumnWidth={'60','1x',40}; sagSliderGrid.Padding=[0 0 0 0];
+            sagSliderGrid.ColumnWidth={60,'1x',40}; sagSliderGrid.Padding=[0 0 0 0];
             ls = uilabel(sagSliderGrid); ls.Layout.Column=1;
             ls.Text='Sagittal:'; ls.FontSize=12;
             app.SldrLocSag = uislider(sagSliderGrid);
@@ -463,7 +463,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Slice control
             slCtrl = uigridlayout(imgG,[1 4]);
             slCtrl.Layout.Row=2; slCtrl.Layout.Column=[1 3];
-            slCtrl.ColumnWidth={'70','1x',60,180}; slCtrl.Padding=[0 4 0 4];
+            slCtrl.ColumnWidth={70,'1x',60,180}; slCtrl.Padding=[0 4 0 4];
             lsd = uilabel(slCtrl); lsd.Layout.Column=1;
             lsd.Text='Slice:'; lsd.FontSize=13; lsd.FontWeight='bold';
             app.SldrDixon = uislider(slCtrl);
@@ -555,7 +555,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Controls row
             ctrlG = uigridlayout(imgG,[1 7]);
             ctrlG.Layout.Row=2; ctrlG.Layout.Column=[1 3];
-            ctrlG.ColumnWidth={'56','1x',56,90,80,80,80}; ctrlG.Padding=[0 4 0 4];
+            ctrlG.ColumnWidth={56,'1x',56,90,80,80,80}; ctrlG.Padding=[0 4 0 4];
 
             lmr = uilabel(ctrlG); lmr.Layout.Column=1;
             lmr.Text='Slice:'; lmr.FontSize=13; lmr.FontWeight='bold';
@@ -1104,7 +1104,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function setStiffScaleCustom(app)
-            ans_ = inputdlg({'Min (kPa):','Max (kPa):'},'Custom Scale',1,{'0','8'});
+            ans_ = inputdlg({'Min (kPa):','Max (kPa):'},'Custom Scale',1,{0,8});
             if isempty(ans_), return; end
             lo=str2double(ans_{1}); hi=str2double(ans_{2});
             if isnan(lo)||isnan(hi)||lo>=hi
@@ -1576,15 +1576,18 @@ function clr = mreROIColor(name)
 end
 
 function cmap = mreWaveCmap()
-    % Use awave if available, else symmetric blue-white-red
-    if exist('awave','file')==2
-        cmap = awave(256);
-    else
-        n=128; r=[linspace(0,1,n); ones(1,n)]';
-        g=[linspace(0,1,n); linspace(1,0,n)]';
-        b=[ones(1,n); linspace(1,0,n)]';
-        cmap=[r g b];
+    if exist('awave','file') == 2
+        try
+            cmap = awave(256);
+            if size(cmap,2)==3, return; end
+        catch
+        end
     end
+    % Symmetric blue→white→red colormap (256×3)
+    n = 128;
+    top    = [linspace(0,1,n)', linspace(0,1,n)', ones(n,1)];   % blue→white
+    bottom = [ones(n,1), linspace(1,0,n)', linspace(1,0,n)'];   % white→red
+    cmap   = [top; bottom];
 end
 
 function cmap = mreStiffCmap()
