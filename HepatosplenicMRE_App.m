@@ -1,239 +1,187 @@
 classdef HepatosplenicMRE_App < matlab.apps.AppBase
-% HepatosplenicMRE_App  GUI skeleton for the hepatosplenic MRE analysis platform.
+% HepatosplenicMRE_App  v2.0 — Unified single-window analysis platform.
 %
-%   PURPOSE
-%     Phase 1 scaffold: builds the complete UI layout with all panels,
-%     menus, toolbar buttons, image tabs, feature display, and pipeline
-%     status bar.  Every callback is stubbed so later phases can fill in
-%     the logic without touching the layout code.
+%   All processing, image viewing, and ROI placement occurs inside this
+%   one window. No separate pop-up figures.
+%
+%   TABS
+%     Localizer  Scrollable coronal + sagittal; interactive L1/L2 placement
+%     Dixon      Multi-contrast viewer (Water, PDFF, InPhase) + organ ROIs
+%     MRE        Magnitude / animated wave / stiffness + organ ROIs
+%     Results    Summary table of all measurements
+%
+%   ROI SETS (all saved separately)
+%     Liver_Dixon    entire-organ contour on Dixon → volume, PDFF
+%     Spleen_Dixon   entire-organ contour on Dixon → volume, PDFF
+%     Muscle_L1      L1 slice on Dixon → area, PDFF
+%     Muscle_L2      L2 slice on Dixon → area, PDFF
+%     SAT_L1         L1 slice on Dixon → area, PDFF
+%     SAT_L2         L2 slice on Dixon → area, PDFF
+%     Liver_MRE      inner stiffness ROI on MRE (per slice)
+%     Spleen_MRE     inner stiffness ROI on MRE (per slice)
 %
 %   USAGE
-%     app = HepatosplenicMRE_App;   % launch the app
-%     delete(app);                  % close programmatically
+%     app = HepatosplenicMRE_App;
 %
-%   LAYOUT  (approximate)
-%     ┌──────────────────────────────────────────────────────────────────┐
-%     │  Menu bar                                                        │
-%     │  Toolbar                                                         │
-%     ├──────────┬─────────────────────────────────────┬────────────────┤
-%     │  Study   │  [Scout][Dixon][MRE][L1-L2][Overlay]│  Feature       │
-%     │  Browser │         Image display axes          │  Results panel │
-%     │  (tree)  │         Slice / overlay controls    │  (collapsible) │
-%     ├──────────┴─────────────────────────────────────┴────────────────┤
-%     │  Pipeline status bar  S1 → S2 → S3 → S4 | L1-L2 | message     │
-%     └──────────────────────────────────────────────────────────────────┘
-%
-%   PHASES
-%     Phase 1  This file — UI skeleton only, all callbacks are stubs.
-%     Phase 2  DICOM I/O, series sorter, matrix harmonization.
-%     Phase 3  L1–L2 vertebral localization + Scout→Dixon→MRE propagation.
-%     Phase 4  Organ segmentation (liver, spleen, muscle, SAT).
-%     Phase 5  Feature extraction (stiffness, PDFF, volumes, ratios).
-%     Phase 6  Technical QC engine (confidence, range/coverage checks).
-%     Phase 7  Export (CSV, PDF report, NIfTI masks, JSON config).
-%
-%   REQUIREMENTS
-%     MATLAB R2019b or later (uifigure, uigridlayout, uitabgroup, uitree).
-%     Image Processing Toolbox (imadjust, imshow into uiaxes).
-%     (Optional) Deep Learning Toolbox — for Phase 4 segmentation.
-%
-%   AUTHOR  MengYin Mayo / HepatosplenicMRE project
-%   DATE    2026-04
+%   AUTHOR  HepatosplenicMRE Platform  v2.0
 
     % =====================================================================
-    %  PROPERTIES — UI components
+    %  UI PROPERTIES
     % =====================================================================
     properties (Access = public)
-
-        % --- Main window ---
         UIFigure            matlab.ui.Figure
 
-        % --- Menus ---
+        % Menus
         FileMenu            matlab.ui.container.Menu
-        ProcessMenu         matlab.ui.container.Menu
-        SegmentationMenu    matlab.ui.container.Menu
-        FeaturesMenu        matlab.ui.container.Menu
-        L12Menu             matlab.ui.container.Menu
-        QCMenu              matlab.ui.container.Menu
-        RegistrationMenu    matlab.ui.container.Menu
+        ViewMenu            matlab.ui.container.Menu
         ExportMenu          matlab.ui.container.Menu
         HelpMenu            matlab.ui.container.Menu
 
-        % --- Toolbar (top button row) ---
+        % Toolbar
         ToolbarPanel        matlab.ui.container.Panel
         BtnLoadStudy        matlab.ui.control.Button
-        BtnRunStage1        matlab.ui.control.Button
-        BtnRunStage2        matlab.ui.control.Button
-        BtnRunStage3        matlab.ui.control.Button
-        BtnRunQC            matlab.ui.control.Button
-        BtnL12Locate        matlab.ui.control.Button
-        BtnRunAll           matlab.ui.control.Button
+        BtnRunPipeline      matlab.ui.control.Button
+        BtnConfirmL12       matlab.ui.control.Button
         BtnExportCSV        matlab.ui.control.Button
+        LblPatientInfo      matlab.ui.control.Label
 
-        % --- Overall body grid ---
+        % Body layout
         BodyGrid            matlab.ui.container.GridLayout
 
-        % --- LEFT PANEL: Study browser ---
+        % ── LEFT: Study Browser ──
         LeftPanel           matlab.ui.container.Panel
-        LeftGrid            matlab.ui.container.GridLayout
-        LblBrowser          matlab.ui.control.Label
         StudyTree           matlab.ui.container.CheckBoxTree
         LblStudyStats       matlab.ui.control.Label
 
-        % --- CENTER PANEL: Tabbed image views ---
+        % ── CENTER: Tabbed image viewer ──
         CenterPanel         matlab.ui.container.Panel
-        CenterGrid          matlab.ui.container.GridLayout
         ImageTabGroup       matlab.ui.container.TabGroup
 
-        ScoutTab            matlab.ui.container.Tab
-        ScoutGrid           matlab.ui.container.GridLayout
-        AxScoutAxial        matlab.ui.control.UIAxes
-        AxScoutCoronal      matlab.ui.control.UIAxes
-        AxScoutSagittal     matlab.ui.control.UIAxes
+        % Localizer tab
+        LocTab              matlab.ui.container.Tab
+        LocGrid             matlab.ui.container.GridLayout
+        AxLocCoronal        matlab.ui.control.UIAxes
+        AxLocSagittal       matlab.ui.control.UIAxes
+        SldrLocCor          matlab.ui.control.Slider
+        SldrLocSag          matlab.ui.control.Slider
+        LblLocCor           matlab.ui.control.Label
+        LblLocSag           matlab.ui.control.Label
+        BtnPlaceL1          matlab.ui.control.Button
+        BtnPlaceL2          matlab.ui.control.Button
+        BtnClearL12         matlab.ui.control.Button
+        LblL12Status        matlab.ui.control.Label
 
+        % Dixon tab
         DixonTab            matlab.ui.container.Tab
         DixonGrid           matlab.ui.container.GridLayout
         AxDixonWater        matlab.ui.control.UIAxes
-        AxDixonFat          matlab.ui.control.UIAxes
-        AxDixonFF           matlab.ui.control.UIAxes
-        AxDixonInPhase      matlab.ui.control.UIAxes
+        AxDixonPDFF         matlab.ui.control.UIAxes
+        AxDixonIP           matlab.ui.control.UIAxes
+        SldrDixon           matlab.ui.control.Slider
+        LblDixonSlice       matlab.ui.control.Label
+        LblDixonInfo        matlab.ui.control.Label
+        % Dixon ROI buttons
+        BtnROI_LiverDixon   matlab.ui.control.Button
+        BtnROI_SpleenDixon  matlab.ui.control.Button
+        BtnROI_MuscleL1     matlab.ui.control.Button
+        BtnROI_MuscleL2     matlab.ui.control.Button
+        BtnROI_SATL1        matlab.ui.control.Button
+        BtnROI_SATL2        matlab.ui.control.Button
+        BtnClearDixonROIs   matlab.ui.control.Button
 
+        % MRE tab
         MRETab              matlab.ui.container.Tab
         MREGrid             matlab.ui.container.GridLayout
-        AxMREMagnitude      matlab.ui.control.UIAxes
-        AxMREStiffness      matlab.ui.control.UIAxes
+        AxMREMag            matlab.ui.control.UIAxes
         AxMREWave           matlab.ui.control.UIAxes
+        AxMREStiff          matlab.ui.control.UIAxes
+        SldrMRE             matlab.ui.control.Slider
+        LblMRESlice         matlab.ui.control.Label
+        LblMREInfo          matlab.ui.control.Label
+        BtnMREPlay          matlab.ui.control.Button
+        BtnStiff8           matlab.ui.control.Button
+        BtnStiff20          matlab.ui.control.Button
+        BtnConfMap          matlab.ui.control.StateButton
+        BtnROI_LiverMRE     matlab.ui.control.Button
+        BtnROI_SpleenMRE    matlab.ui.control.Button
+        BtnClearMREROIs     matlab.ui.control.Button
 
-        L12Tab              matlab.ui.container.Tab
-        L12Grid             matlab.ui.container.GridLayout
-        AxL12Axial          matlab.ui.control.UIAxes
-        AxL12Coronal        matlab.ui.control.UIAxes
+        % Results tab
+        ResultsTab          matlab.ui.container.Tab
+        ResultsGrid         matlab.ui.container.GridLayout
+        ResultsTable        matlab.ui.control.Table
 
-        OverlayTab          matlab.ui.container.Tab
-        OverlayGrid         matlab.ui.container.GridLayout
-        AxOverlayDixon      matlab.ui.control.UIAxes
-        AxOverlayMRE        matlab.ui.control.UIAxes
-
-        % --- Image controls (below tabs) ---
-        ControlPanel        matlab.ui.container.Panel
-        ControlGrid         matlab.ui.container.GridLayout
-        BtnSegOverlay       matlab.ui.control.StateButton
-        BtnL12Lines         matlab.ui.control.StateButton
-        BtnStiffnessMap     matlab.ui.control.StateButton
-        BtnPDFFMap          matlab.ui.control.StateButton
-        SldrSlice           matlab.ui.control.Slider
-        LblSlice            matlab.ui.control.Label
-        DropColormap        matlab.ui.control.DropDown
-        LblImageInfo        matlab.ui.control.Label
-
-        % --- RIGHT PANEL: Feature results ---
+        % ── RIGHT: Feature results ──
         RightPanel          matlab.ui.container.Panel
         RightGrid           matlab.ui.container.GridLayout
 
-        % Organ size & composition section
-        PnlOrgan            matlab.ui.container.Panel
-        LblLiverVol         matlab.ui.control.Label
-        ValLiverVol         matlab.ui.control.Label
-        LblSpleenVol        matlab.ui.control.Label
-        ValSpleenVol        matlab.ui.control.Label
-        LblLSRatio          matlab.ui.control.Label
-        ValLSRatio          matlab.ui.control.Label
-        LblLiverPDFF        matlab.ui.control.Label
-        ValLiverPDFF        matlab.ui.control.Label
-
-        % Mechanical / MRE section
-        PnlMRE              matlab.ui.container.Panel
-        LblLiverStiff       matlab.ui.control.Label
+        % Feature value labels (generated dynamically — see buildRightPanel)
+        ValLiverDixonVol    matlab.ui.control.Label
+        ValLiverDixonPDFF   matlab.ui.control.Label
+        ValSpleenDixonVol   matlab.ui.control.Label
+        ValSpleenDixonPDFF  matlab.ui.control.Label
+        ValMuscleL1Area     matlab.ui.control.Label
+        ValMuscleL1PDFF     matlab.ui.control.Label
+        ValMuscleL2Area     matlab.ui.control.Label
+        ValMuscleL2PDFF     matlab.ui.control.Label
+        ValSATL1Area        matlab.ui.control.Label
+        ValSATL1PDFF        matlab.ui.control.Label
+        ValSATL2Area        matlab.ui.control.Label
+        ValSATL2PDFF        matlab.ui.control.Label
+        ValMuscleSATRatio   matlab.ui.control.Label
         ValLiverStiff       matlab.ui.control.Label
-        LblSpleenStiff      matlab.ui.control.Label
         ValSpleenStiff      matlab.ui.control.Label
-        LblStiffRatio       matlab.ui.control.Label
-        ValStiffRatio       matlab.ui.control.Label
-        LblHetIQR           matlab.ui.control.Label
-        ValHetIQR           matlab.ui.control.Label
-
-        % Body composition section
-        PnlBodyComp         matlab.ui.container.Panel
-        LblMuscleArea       matlab.ui.control.Label
-        ValMuscleArea       matlab.ui.control.Label
-        LblSATArea          matlab.ui.control.Label
-        ValSATArea          matlab.ui.control.Label
-        LblMuscleFatRatio   matlab.ui.control.Label
-        ValMuscleFatRatio   matlab.ui.control.Label
-        LblMusclePDFF       matlab.ui.control.Label
-        ValMusclePDFF       matlab.ui.control.Label
-
-        % L1-L2 section
-        PnlL12              matlab.ui.container.Panel
-        LblL1Status         matlab.ui.control.Label
-        ValL1Status         matlab.ui.control.Label
-        LblL2Status         matlab.ui.control.Label
-        ValL2Status         matlab.ui.control.Label
-        LblL12MuscleArea    matlab.ui.control.Label
-        ValL12MuscleArea    matlab.ui.control.Label
-        LblL12SATArea       matlab.ui.control.Label
-        ValL12SATArea       matlab.ui.control.Label
-        LblL12MuscleFat     matlab.ui.control.Label
-        ValL12MuscleFat     matlab.ui.control.Label
-        LblL12PDFF          matlab.ui.control.Label
-        ValL12PDFF          matlab.ui.control.Label
-
-        % QC section
-        PnlQC               matlab.ui.container.Panel
-        LblSegConf          matlab.ui.control.Label
+        ValLiverStiffIQR    matlab.ui.control.Label
+        ValSpleenStiffIQR   matlab.ui.control.Label
         ValSegConf          matlab.ui.control.Label
-        LblCoverage         matlab.ui.control.Label
         ValCoverage         matlab.ui.control.Label
-        LblRangeCheck       matlab.ui.control.Label
-        ValRangeCheck       matlab.ui.control.Label
-        LblManualReview     matlab.ui.control.Label
-        ValManualReview     matlab.ui.control.Label
 
-        % --- BOTTOM: Pipeline status bar ---
+        % Bottom bar
         BottomPanel         matlab.ui.container.Panel
         BottomGrid          matlab.ui.container.GridLayout
-        BtnStage1Status     matlab.ui.control.Button
-        BtnStage2Status     matlab.ui.control.Button
-        BtnStage3Status     matlab.ui.control.Button
-        BtnStage4Status     matlab.ui.control.Button
-        BtnL12Status        matlab.ui.control.Button
+        BtnStepLoc          matlab.ui.control.Button
+        BtnStepDixon        matlab.ui.control.Button
+        BtnStepMRE          matlab.ui.control.Button
+        BtnStepResults      matlab.ui.control.Button
         LblStatusMsg        matlab.ui.control.Label
     end
 
     % =====================================================================
-    %  PROPERTIES — App data (filled in by later phases)
+    %  APP DATA
     % =====================================================================
     properties (Access = public)
         AppData struct = struct( ...
-            'StudyList',        {{}}, ...   % cell array of study structs
-            'ActiveStudyIdx',   0,    ...   % index into StudyList
-            'ScoutVolume',      [],   ...   % 3D array [rows x cols x slices]
-            'DixonWater',       [],   ...   % 3D Dixon water image
-            'DixonFat',         [],   ...   % 3D Dixon fat image
-            'DixonFF',          [],   ...   % 3D fat fraction map (0–100%)
-            'DixonInPhase',     [],   ...   % 3D in-phase image
-            'MREMagnitude',     [],   ...   % 4D MRE magnitude [r x c x s x t]
-            'MREStiffness',     [],   ...   % 3D stiffness map (kPa)
-            'MREWaveImages',    [],   ...   % 4D wave images
-            'LiverMask',        [],   ...   % 3D binary liver mask
-            'SpleenMask',       [],   ...   % 3D binary spleen mask
-            'MuscleMask',       [],   ...   % 3D binary muscle mask
-            'SATMask',          [],   ...   % 3D binary SAT mask
-            'L1SliceScout',     [],   ...   % slice index of L1 in Scout
-            'L2SliceScout',     [],   ...   % slice index of L2 in Scout
-            'L1SliceDixon',     [],   ...   % propagated L1 in Dixon space
-            'L2SliceDixon',     [],   ...   % propagated L2 in Dixon space
-            'L1SliceMRE',       [],   ...   % propagated L1 in MRE space
-            'L2SliceMRE',       [],   ...   % propagated L2 in MRE space
-            'RegistrationTform',[], ...     % Scout→Dixon tform struct
-            'Features',         struct(), ...% extracted feature struct
-            'QCResults',        struct(), ...% QC output struct
-            'CurrentSlice',     1,    ...   % displayed slice index
-            'PipelineStatus',   struct( ...
-                'S1', 'idle', 'S2', 'idle', ...
-                'S3', 'idle', 'S4', 'idle', ...
-                'L12','idle') ...
-        )
+            'Exam',         [], ...
+            'Selection',    [], ...
+            'MATPath',      '', ...
+            'Localizer',    [], ...   % from loc_loadLocalizer
+            'Dixon',        [], ...   % from seg_buildDixonVolume
+            'MRE',          [], ...   % struct: M,W,W_raw,S,LapC,H
+            'L12',          [], ...   % from loc_detectL1L2
+            'L12_Dixon',    [], ...   % propagated to Dixon space
+            'L12_MRE',      [], ...   % propagated to MRE space
+            'L1_CorRow',    NaN, ...  % row index in coronal localizer
+            'L2_CorRow',    NaN, ...  % row index in coronal localizer
+            'L1_SagRow',    NaN, ...  % row index in sagittal localizer
+            'L2_SagRow',    NaN, ...
+            'CorSlice',     1, ...    % current coronal slice index
+            'SagSlice',     1, ...    % current sagittal slice index
+            'DixonSlice',   1, ...
+            'MRESlice',     1, ...
+            'MREPhase',     1, ...
+            'MREPlaying',   false, ...
+            'MRETimer',     [], ...
+            'StiffCLim',    [0 8], ...
+            'ShowConfMask', false, ...
+            'ROIs',         struct( ...   % all ROI masks
+                'LiverDixon',  struct('Slices',struct()), ...
+                'SpleenDixon', struct('Slices',struct()), ...
+                'MuscleL1',    [], ...
+                'MuscleL2',    [], ...
+                'SATL1',       [], ...
+                'SATL2',       [], ...
+                'LiverMRE',    struct('Slices',struct()), ...
+                'SpleenMRE',   struct('Slices',struct())))
     end
 
     % =====================================================================
@@ -242,31 +190,28 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
     methods (Access = private)
 
         function createComponents(app)
-            % ---- Main window ----------------------------------------
-            app.UIFigure = uifigure('Visible', 'off');
-            app.UIFigure.Position  = [50 50 1440 860];
-            app.UIFigure.Name      = 'HepatosplenicMRE Analysis Platform  v1.0';
+            app.UIFigure = uifigure('Visible','off');
+            app.UIFigure.Position  = [20 20 1440 860];
+            app.UIFigure.Name      = 'HepatosplenicMRE Analysis Platform  v2.0';
             app.UIFigure.Resize    = 'on';
-            app.UIFigure.CloseRequestFcn = @(s,e) app.CloseFcn();
+            app.UIFigure.CloseRequestFcn = @(~,~) app.onClose();
 
-            % ---- Menus ----------------------------------------------
             createMenus(app);
 
-            % ---- Outer grid (toolbar | body | bottom) ---------------
-            outerGrid = uigridlayout(app.UIFigure, [3 1]);
-            outerGrid.RowHeight    = {44, '1x', 68};
-            outerGrid.ColumnWidth  = {'1x'};
-            outerGrid.Padding      = [0 0 0 0];
-            outerGrid.RowSpacing   = 0;
+            % Outer grid: toolbar | body | bottom
+            outer = uigridlayout(app.UIFigure, [3 1]);
+            outer.RowHeight   = {52,'1x',56};
+            outer.ColumnWidth = {'1x'};
+            outer.Padding     = [0 0 0 0];
+            outer.RowSpacing  = 0;
 
-            % ---- Toolbar --------------------------------------------
-            createToolbar(app, outerGrid);
+            createToolbar(app, outer);
 
-            % ---- Body (left | center | right) -----------------------
-            app.BodyGrid = uigridlayout(outerGrid, [1 3]);
+            % Body: left | center | right
+            app.BodyGrid = uigridlayout(outer,[1 3]);
             app.BodyGrid.Layout.Row    = 2;
             app.BodyGrid.Layout.Column = 1;
-            app.BodyGrid.ColumnWidth   = {200, '1x', 220};
+            app.BodyGrid.ColumnWidth   = {200,'1x',230};
             app.BodyGrid.RowHeight     = {'1x'};
             app.BodyGrid.Padding       = [0 0 0 0];
             app.BodyGrid.ColumnSpacing = 0;
@@ -274,136 +219,44 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             createLeftPanel(app);
             createCenterPanel(app);
             createRightPanel(app);
-
-            % ---- Bottom status bar ----------------------------------
-            createBottomBar(app, outerGrid);
+            createBottomBar(app, outer);
         end
 
         % -----------------------------------------------------------------
         function createMenus(app)
-            % FILE --------------------------------------------------------
-            app.FileMenu = uimenu(app.UIFigure, 'Text', 'File');
-            uimenu(app.FileMenu, 'Text', 'Load Study (DICOM)...', ...
-                'Accelerator', 'O', ...
-                'MenuSelectedFcn', @(~,~) app.LoadStudyCallback());
-            uimenu(app.FileMenu, 'Text', 'Load Study List (.csv)...', ...
-                'MenuSelectedFcn', @(~,~) app.LoadStudyListCallback());
-            uimenu(app.FileMenu, 'Text', 'Save Session...', ...
-                'Separator', 'on', 'Accelerator', 'S', ...
-                'MenuSelectedFcn', @(~,~) app.SaveSessionCallback());
-            uimenu(app.FileMenu, 'Text', 'Load Session...', ...
-                'MenuSelectedFcn', @(~,~) app.LoadSessionCallback());
-            uimenu(app.FileMenu, 'Text', 'Exit', ...
-                'Separator', 'on', ...
-                'MenuSelectedFcn', @(~,~) app.CloseFcn());
+            app.FileMenu = uimenu(app.UIFigure,'Text','File');
+            uimenu(app.FileMenu,'Text','Load Study (DICOM)...', ...
+                'Accelerator','O','MenuSelectedFcn',@(~,~)app.loadStudy());
+            uimenu(app.FileMenu,'Text','Save Session...','Separator','on', ...
+                'Accelerator','S','MenuSelectedFcn',@(~,~)app.saveSession());
+            uimenu(app.FileMenu,'Text','Load Session...', ...
+                'MenuSelectedFcn',@(~,~)app.loadSession());
+            uimenu(app.FileMenu,'Text','Exit','Separator','on', ...
+                'MenuSelectedFcn',@(~,~)app.onClose());
 
-            % PROCESS -----------------------------------------------------
-            app.ProcessMenu = uimenu(app.UIFigure, 'Text', 'Process');
-            uimenu(app.ProcessMenu, 'Text', 'Run All Stages (Batch)', ...
-                'Accelerator', 'R', ...
-                'MenuSelectedFcn', @(~,~) app.RunAllStagesCallback());
-            uimenu(app.ProcessMenu, 'Text', '─────────', 'Enable', 'off');
-            uimenu(app.ProcessMenu, 'Text', 'Stage 1 — Sequence Recognition & Harmonization', ...
-                'MenuSelectedFcn', @(~,~) app.RunStage1Callback());
-            uimenu(app.ProcessMenu, 'Text', 'Stage 2 — AI Organ Segmentation', ...
-                'MenuSelectedFcn', @(~,~) app.RunStage2Callback());
-            uimenu(app.ProcessMenu, 'Text', 'Stage 3 — Feature Extraction', ...
-                'MenuSelectedFcn', @(~,~) app.RunStage3Callback());
-            uimenu(app.ProcessMenu, 'Text', 'Stage 4 — Technical QC', ...
-                'MenuSelectedFcn', @(~,~) app.RunQCCallback());
+            app.ViewMenu = uimenu(app.UIFigure,'Text','View');
+            uimenu(app.ViewMenu,'Text','Colormap: Gray (images)', ...
+                'MenuSelectedFcn',@(~,~)app.setColormap('gray'));
+            uimenu(app.ViewMenu,'Text','Colormap: Hot (PDFF/stiffness)', ...
+                'MenuSelectedFcn',@(~,~)app.setColormap('hot'));
+            uimenu(app.ViewMenu,'Text','Stiffness 0-8 kPa','Separator','on', ...
+                'MenuSelectedFcn',@(~,~)app.setStiffScale([0 8]));
+            uimenu(app.ViewMenu,'Text','Stiffness 0-20 kPa', ...
+                'MenuSelectedFcn',@(~,~)app.setStiffScale([0 20]));
+            uimenu(app.ViewMenu,'Text','Stiffness custom...', ...
+                'MenuSelectedFcn',@(~,~)app.setStiffScaleCustom());
 
-            % SEGMENTATION ------------------------------------------------
-            app.SegmentationMenu = uimenu(app.UIFigure, 'Text', 'Segmentation');
-            uimenu(app.SegmentationMenu, 'Text', 'Edit Liver Mask', ...
-                'MenuSelectedFcn', @(~,~) app.EditMaskCallback('liver'));
-            uimenu(app.SegmentationMenu, 'Text', 'Edit Spleen Mask', ...
-                'MenuSelectedFcn', @(~,~) app.EditMaskCallback('spleen'));
-            uimenu(app.SegmentationMenu, 'Text', 'Edit Muscle Mask', ...
-                'MenuSelectedFcn', @(~,~) app.EditMaskCallback('muscle'));
-            uimenu(app.SegmentationMenu, 'Text', 'Edit SAT Mask', ...
-                'MenuSelectedFcn', @(~,~) app.EditMaskCallback('SAT'));
-            uimenu(app.SegmentationMenu, 'Text', 'Accept All Masks', ...
-                'Separator', 'on', ...
-                'MenuSelectedFcn', @(~,~) app.AcceptAllMasksCallback());
-            uimenu(app.SegmentationMenu, 'Text', 'Reset Masks for This Study', ...
-                'MenuSelectedFcn', @(~,~) app.ResetMasksCallback());
+            app.ExportMenu = uimenu(app.UIFigure,'Text','Export');
+            uimenu(app.ExportMenu,'Text','Export Features (CSV)...', ...
+                'Accelerator','E','MenuSelectedFcn',@(~,~)app.exportCSV());
+            uimenu(app.ExportMenu,'Text','Export ROI Masks (MAT)...', ...
+                'MenuSelectedFcn',@(~,~)app.exportROIs());
+            uimenu(app.ExportMenu,'Text','Export Report (PDF)...', ...
+                'MenuSelectedFcn',@(~,~)app.exportPDF());
 
-            % FEATURES ----------------------------------------------------
-            app.FeaturesMenu = uimenu(app.UIFigure, 'Text', 'Features');
-            uimenu(app.FeaturesMenu, 'Text', 'View Full Feature Table', ...
-                'MenuSelectedFcn', @(~,~) app.ViewFeatureTableCallback());
-            uimenu(app.FeaturesMenu, 'Text', 'Plot Stiffness Histogram', ...
-                'MenuSelectedFcn', @(~,~) app.PlotStiffnessHistCallback());
-            uimenu(app.FeaturesMenu, 'Text', 'Plot PDFF Distribution', ...
-                'MenuSelectedFcn', @(~,~) app.PlotPDFFDistCallback());
-            uimenu(app.FeaturesMenu, 'Text', 'Plot Stiffness Heterogeneity Map', ...
-                'MenuSelectedFcn', @(~,~) app.PlotHetMapCallback());
-            uimenu(app.FeaturesMenu, 'Text', 'Cross-Organ Ratio Summary', ...
-                'Separator', 'on', ...
-                'MenuSelectedFcn', @(~,~) app.CrossOrganSummaryCallback());
-
-            % L1-L2 ------------------------------------------------------
-            app.L12Menu = uimenu(app.UIFigure, 'Text', 'L1–L2');
-            uimenu(app.L12Menu, 'Text', 'Auto-Locate L1–L2 in Scout', ...
-                'MenuSelectedFcn', @(~,~) app.L12LocateCallback());
-            uimenu(app.L12Menu, 'Text', 'Manual Landmark Adjustment', ...
-                'MenuSelectedFcn', @(~,~) app.L12ManualAdjustCallback());
-            uimenu(app.L12Menu, 'Text', 'Propagate to Dixon + MRE', ...
-                'MenuSelectedFcn', @(~,~) app.L12PropagateCallback());
-            uimenu(app.L12Menu, 'Text', 'Measure Muscle + SAT Area', ...
-                'MenuSelectedFcn', @(~,~) app.L12MeasureCallback());
-            uimenu(app.L12Menu, 'Text', 'L1–L2 Summary Report', ...
-                'Separator', 'on', ...
-                'MenuSelectedFcn', @(~,~) app.L12ReportCallback());
-
-            % QC ----------------------------------------------------------
-            app.QCMenu = uimenu(app.UIFigure, 'Text', 'QC');
-            uimenu(app.QCMenu, 'Text', 'Run All QC Checks', ...
-                'MenuSelectedFcn', @(~,~) app.RunQCCallback());
-            uimenu(app.QCMenu, 'Text', 'Flag Study for Manual Review', ...
-                'MenuSelectedFcn', @(~,~) app.FlagStudyCallback());
-            uimenu(app.QCMenu, 'Text', 'Unflag Study', ...
-                'MenuSelectedFcn', @(~,~) app.UnflagStudyCallback());
-            uimenu(app.QCMenu, 'Text', 'QC Summary — All Studies', ...
-                'Separator', 'on', ...
-                'MenuSelectedFcn', @(~,~) app.QCSummaryCallback());
-            uimenu(app.QCMenu, 'Text', 'Reproducibility Report', ...
-                'MenuSelectedFcn', @(~,~) app.ReproducibilityReportCallback());
-
-            % REGISTRATION -----------------------------------------------
-            app.RegistrationMenu = uimenu(app.UIFigure, 'Text', 'Registration');
-            uimenu(app.RegistrationMenu, 'Text', 'Dixon → MRE  (Rigid)', ...
-                'MenuSelectedFcn', @(~,~) app.RegisterDixonMRECallback('rigid'));
-            uimenu(app.RegistrationMenu, 'Text', 'Dixon → MRE  (Deformable)', ...
-                'MenuSelectedFcn', @(~,~) app.RegisterDixonMRECallback('deformable'));
-            uimenu(app.RegistrationMenu, 'Text', 'Scout → Dixon  (L1–L2 propagation)', ...
-                'MenuSelectedFcn', @(~,~) app.RegisterScoutDixonCallback());
-            uimenu(app.RegistrationMenu, 'Text', 'Check Registration Overlay', ...
-                'Separator', 'on', ...
-                'MenuSelectedFcn', @(~,~) app.CheckRegistrationCallback());
-
-            % EXPORT ------------------------------------------------------
-            app.ExportMenu = uimenu(app.UIFigure, 'Text', 'Export');
-            uimenu(app.ExportMenu, 'Text', 'Export Features (CSV)...', ...
-                'Accelerator', 'E', ...
-                'MenuSelectedFcn', @(~,~) app.ExportCSVCallback());
-            uimenu(app.ExportMenu, 'Text', 'Export Subject Report (PDF)...', ...
-                'MenuSelectedFcn', @(~,~) app.ExportPDFCallback());
-            uimenu(app.ExportMenu, 'Text', 'Export Segmentation Masks (NIfTI)...', ...
-                'MenuSelectedFcn', @(~,~) app.ExportMasksCallback());
-            uimenu(app.ExportMenu, 'Text', 'Export Platform Config (JSON)...', ...
-                'Separator', 'on', ...
-                'MenuSelectedFcn', @(~,~) app.ExportConfigCallback());
-
-            % HELP --------------------------------------------------------
-            app.HelpMenu = uimenu(app.UIFigure, 'Text', 'Help');
-            uimenu(app.HelpMenu, 'Text', 'Platform Documentation', ...
-                'MenuSelectedFcn', @(~,~) app.OpenDocCallback());
-            uimenu(app.HelpMenu, 'Text', 'Feature Definitions', ...
-                'MenuSelectedFcn', @(~,~) app.FeatureDefsCallback());
-            uimenu(app.HelpMenu, 'Text', 'About', ...
-                'Separator', 'on', ...
-                'MenuSelectedFcn', @(~,~) app.AboutCallback());
+            app.HelpMenu = uimenu(app.UIFigure,'Text','Help');
+            uimenu(app.HelpMenu,'Text','About', ...
+                'MenuSelectedFcn',@(~,~)app.showAbout());
         end
 
         % -----------------------------------------------------------------
@@ -412,976 +265,1353 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.ToolbarPanel.Layout.Row    = 1;
             app.ToolbarPanel.Layout.Column = 1;
             app.ToolbarPanel.BorderType    = 'none';
-            app.ToolbarPanel.BackgroundColor = [0.95 0.95 0.95];
+            app.ToolbarPanel.BackgroundColor = [0.93 0.93 0.93];
 
-            tg = uigridlayout(app.ToolbarPanel, [1 10]);
-            tg.ColumnWidth  = {110, 90, 90, 90, 80, 90, 8, 100, 90, '1x'};
-            tg.RowHeight    = {'1x'};
-            tg.Padding      = [6 6 6 6];
-            tg.ColumnSpacing = 4;
+            tg = uigridlayout(app.ToolbarPanel,[1 6]);
+            tg.ColumnWidth   = {150,150,160,140,8,'1x'};
+            tg.RowHeight     = {'1x'};
+            tg.Padding       = [8 7 8 7];
+            tg.ColumnSpacing = 6;
 
-            % Load Study
-            app.BtnLoadStudy = uibutton(tg, 'push');
-            app.BtnLoadStudy.Layout.Column     = 1;
-            app.BtnLoadStudy.Text              = '📂  Load Study';
-            app.BtnLoadStudy.FontSize          = 12;
-            app.BtnLoadStudy.BackgroundColor   = [0.20 0.45 0.75];
-            app.BtnLoadStudy.FontColor         = [1 1 1];
-            app.BtnLoadStudy.ButtonPushedFcn   = @(~,~) app.LoadStudyCallback();
-            app.BtnLoadStudy.Tooltip           = 'Load a DICOM study folder';
+            app.BtnLoadStudy = mkBtn(tg,1,'Load Study', ...
+                [0.18 0.44 0.74],[1 1 1],14);
+            app.BtnLoadStudy.ButtonPushedFcn = @(~,~)app.loadStudy();
+            app.BtnLoadStudy.Tooltip = 'Load DICOM exam, select series, build MAT';
 
-            % Run Stage 1
-            app.BtnRunStage1 = uibutton(tg, 'push');
-            app.BtnRunStage1.Layout.Column   = 2;
-            app.BtnRunStage1.Text            = 'Stage 1';
-            app.BtnRunStage1.Tooltip         = 'Sequence recognition & harmonization';
-            app.BtnRunStage1.ButtonPushedFcn = @(~,~) app.RunStage1Callback();
+            app.BtnRunPipeline = mkBtn(tg,2,'Run Pipeline', ...
+                [0.18 0.60 0.34],[1 1 1],14);
+            app.BtnRunPipeline.ButtonPushedFcn = @(~,~)app.runPipeline();
+            app.BtnRunPipeline.Tooltip = 'Run full analysis pipeline';
+            app.BtnRunPipeline.Enable  = 'off';
 
-            % Run Stage 2
-            app.BtnRunStage2 = uibutton(tg, 'push');
-            app.BtnRunStage2.Layout.Column   = 3;
-            app.BtnRunStage2.Text            = 'Stage 2';
-            app.BtnRunStage2.Tooltip         = 'AI organ segmentation';
-            app.BtnRunStage2.ButtonPushedFcn = @(~,~) app.RunStage2Callback();
+            app.BtnConfirmL12 = mkBtn(tg,3,'Confirm L1-L2', ...
+                [0.58 0.29 0.07],[1 1 1],14);
+            app.BtnConfirmL12.ButtonPushedFcn = @(~,~)app.confirmL12();
+            app.BtnConfirmL12.Tooltip = 'Confirm L1-L2 levels and propagate to Dixon/MRE';
+            app.BtnConfirmL12.Enable  = 'off';
 
-            % Run Stage 3
-            app.BtnRunStage3 = uibutton(tg, 'push');
-            app.BtnRunStage3.Layout.Column   = 4;
-            app.BtnRunStage3.Text            = 'Stage 3';
-            app.BtnRunStage3.Tooltip         = 'Automated feature extraction';
-            app.BtnRunStage3.ButtonPushedFcn = @(~,~) app.RunStage3Callback();
+            app.BtnExportCSV = mkBtn(tg,4,'Export CSV', ...
+                [0.88 0.88 0.88],[0.2 0.2 0.2],14);
+            app.BtnExportCSV.ButtonPushedFcn = @(~,~)app.exportCSV();
+            app.BtnExportCSV.Enable = 'off';
 
-            % Run QC
-            app.BtnRunQC = uibutton(tg, 'push');
-            app.BtnRunQC.Layout.Column   = 5;
-            app.BtnRunQC.Text            = 'QC';
-            app.BtnRunQC.Tooltip         = 'Technical quality control';
-            app.BtnRunQC.ButtonPushedFcn = @(~,~) app.RunQCCallback();
+            sep = uilabel(tg); sep.Layout.Column=5;
+            sep.Text='|'; sep.FontColor=[0.7 0.7 0.7];
+            sep.HorizontalAlignment='center';
 
-            % L1-L2 Locate
-            app.BtnL12Locate = uibutton(tg, 'push');
-            app.BtnL12Locate.Layout.Column   = 6;
-            app.BtnL12Locate.Text            = 'L1–L2 Locate';
-            app.BtnL12Locate.Tooltip         = 'Auto-locate L1-L2 vertebral levels in Scout';
-            app.BtnL12Locate.BackgroundColor = [0.55 0.27 0.07];
-            app.BtnL12Locate.FontColor       = [1 1 1];
-            app.BtnL12Locate.ButtonPushedFcn = @(~,~) app.L12LocateCallback();
-
-            % Separator (empty label)
-            sep = uilabel(tg);
-            sep.Layout.Column = 7;
-            sep.Text = '│';
-            sep.FontColor = [0.7 0.7 0.7];
-            sep.HorizontalAlignment = 'center';
-
-            % Run All
-            app.BtnRunAll = uibutton(tg, 'push');
-            app.BtnRunAll.Layout.Column   = 8;
-            app.BtnRunAll.Text            = '▶  Run All';
-            app.BtnRunAll.Tooltip         = 'Run all pipeline stages sequentially';
-            app.BtnRunAll.BackgroundColor = [0.18 0.62 0.36];
-            app.BtnRunAll.FontColor       = [1 1 1];
-            app.BtnRunAll.FontWeight      = 'bold';
-            app.BtnRunAll.ButtonPushedFcn = @(~,~) app.RunAllStagesCallback();
-
-            % Export CSV
-            app.BtnExportCSV = uibutton(tg, 'push');
-            app.BtnExportCSV.Layout.Column   = 9;
-            app.BtnExportCSV.Text            = '⬇  Export CSV';
-            app.BtnExportCSV.Tooltip         = 'Export all features to CSV';
-            app.BtnExportCSV.ButtonPushedFcn = @(~,~) app.ExportCSVCallback();
+            app.LblPatientInfo = uilabel(tg);
+            app.LblPatientInfo.Layout.Column = 6;
+            app.LblPatientInfo.Text      = 'No study loaded';
+            app.LblPatientInfo.FontSize  = 13;
+            app.LblPatientInfo.FontColor = [0.45 0.45 0.45];
+            app.LblPatientInfo.FontAngle = 'italic';
         end
 
         % -----------------------------------------------------------------
         function createLeftPanel(app)
-            app.LeftPanel = uipanel(app.BodyGrid);
-            app.LeftPanel.Layout.Row    = 1;
+            app.LeftPanel = uipanel(app.BodyGrid,'Title','Study Browser', ...
+                'FontSize',13,'FontWeight','bold');
             app.LeftPanel.Layout.Column = 1;
-            app.LeftPanel.Title         = 'Study Browser';
-            app.LeftPanel.FontWeight    = 'bold';
-            app.LeftPanel.BorderType    = 'line';
 
-            app.LeftGrid = uigridlayout(app.LeftPanel, [2 1]);
-            app.LeftGrid.RowHeight    = {'1x', 40};
-            app.LeftGrid.ColumnWidth  = {'1x'};
-            app.LeftGrid.Padding      = [4 4 4 4];
-            app.LeftGrid.RowSpacing   = 4;
+            lg = uigridlayout(app.LeftPanel,[2 1]);
+            lg.RowHeight=[{'1x'},{24}]; lg.Padding=[4 4 4 4]; lg.RowSpacing=4;
 
-            % Study tree
-            app.StudyTree = uitree(app.LeftGrid, 'checkbox');
-            app.StudyTree.Layout.Row    = 1;
-            app.StudyTree.Layout.Column = 1;
-            app.StudyTree.SelectionChangedFcn = @(~,e) app.StudySelectionCallback(e);
+            app.StudyTree = uitree(lg,'checkbox');
+            app.StudyTree.Layout.Row=1; app.StudyTree.FontSize=11;
+            app.StudyTree.SelectionChangedFcn = @(~,e)app.onStudySelect(e);
 
-            % Populate tree with placeholder nodes (replaced on load)
-            siteNode = uitreenode(app.StudyTree, ...
-                'Text', 'Site: Mayo Clinic', ...
-                'NodeData', struct('type','site','name','Mayo'));
-            s1 = uitreenode(siteNode, 'Text', 'Subject 001');
-            uitreenode(s1, 'Text', 'Session 2024-03  [pending]', ...
-                'NodeData', struct('type','session','id','001-2024-03'));
-            uitreenode(s1, 'Text', 'Session 2024-09  [pending]', ...
-                'NodeData', struct('type','session','id','001-2024-09'));
-            expand(siteNode);
-            expand(s1);
+            sn = uitreenode(app.StudyTree,'Text','Load a study to begin');
+            sn.NodeData = [];
+            expand(sn,'all');
 
-            % Stats label
-            app.LblStudyStats = uilabel(app.LeftGrid);
-            app.LblStudyStats.Layout.Row    = 2;
-            app.LblStudyStats.Layout.Column = 1;
-            app.LblStudyStats.Text          = 'Loaded: 0 / 0  |  Flagged: 0';
-            app.LblStudyStats.FontSize      = 10;
-            app.LblStudyStats.FontColor     = [0.5 0.5 0.5];
-            app.LblStudyStats.HorizontalAlignment = 'center';
+            app.LblStudyStats = uilabel(lg);
+            app.LblStudyStats.Layout.Row=2;
+            app.LblStudyStats.Text='Ready';
+            app.LblStudyStats.FontSize=10; app.LblStudyStats.FontColor=[0.5 0.5 0.5];
+            app.LblStudyStats.HorizontalAlignment='center';
         end
 
         % -----------------------------------------------------------------
         function createCenterPanel(app)
-            app.CenterPanel = uipanel(app.BodyGrid);
-            app.CenterPanel.Layout.Row    = 1;
+            app.CenterPanel = uipanel(app.BodyGrid,'BorderType','none');
             app.CenterPanel.Layout.Column = 2;
-            app.CenterPanel.BorderType    = 'none';
 
-            app.CenterGrid = uigridlayout(app.CenterPanel, [2 1]);
-            app.CenterGrid.RowHeight   = {'1x', 44};
-            app.CenterGrid.ColumnWidth = {'1x'};
-            app.CenterGrid.Padding     = [0 0 0 0];
-            app.CenterGrid.RowSpacing  = 0;
+            app.ImageTabGroup = uitabgroup(app.CenterPanel, ...
+                'Position',[0 0 1 1],'Units','normalized');
+            app.ImageTabGroup.FontSize = 13;
+            app.ImageTabGroup.SelectionChangedFcn = @(~,e)app.onTabChange(e);
 
-            % Tab group
-            app.ImageTabGroup = uitabgroup(app.CenterGrid);
-            app.ImageTabGroup.Layout.Row    = 1;
-            app.ImageTabGroup.Layout.Column = 1;
-            app.ImageTabGroup.SelectionChangedFcn = @(~,e) app.TabChangedCallback(e);
-
-            createScoutTab(app);
+            createLocalizerTab(app);
             createDixonTab(app);
             createMRETab(app);
-            createL12Tab(app);
-            createOverlayTab(app);
-
-            % Image controls below tabs
-            createImageControls(app);
+            createResultsTab(app);
         end
 
-        % --- Scout tab ---------------------------------------------------
-        function createScoutTab(app)
-            app.ScoutTab = uitab(app.ImageTabGroup, 'Title', '3-Plane Scout');
+        % ── LOCALIZER TAB ────────────────────────────────────────────────
+        function createLocalizerTab(app)
+            app.LocTab = uitab(app.ImageTabGroup,'Title','Localizer / L1-L2');
 
-            app.ScoutGrid = uigridlayout(app.ScoutTab, [1 3]);
-            app.ScoutGrid.ColumnWidth  = {'1x','1x','1x'};
-            app.ScoutGrid.RowHeight    = {'1x'};
-            app.ScoutGrid.Padding      = [4 4 4 4];
-            app.ScoutGrid.ColumnSpacing = 6;
+            % Grid: images row | controls row
+            app.LocGrid = uigridlayout(app.LocTab,[3 2]);
+            app.LocGrid.RowHeight    = {'1x',32,42};
+            app.LocGrid.ColumnWidth  = {'1x','1x'};
+            app.LocGrid.Padding      = [6 6 6 6];
+            app.LocGrid.RowSpacing   = 4;
+            app.LocGrid.ColumnSpacing = 8;
 
-            app.AxScoutAxial = uiaxes(app.ScoutGrid);
-            app.AxScoutAxial.Layout.Column = 1;
-            setupImageAxes(app, app.AxScoutAxial, 'Axial');
+            % Coronal axis
+            app.AxLocCoronal = uiaxes(app.LocGrid);
+            app.AxLocCoronal.Layout.Row=1; app.AxLocCoronal.Layout.Column=1;
+            setupDarkAxes(app.AxLocCoronal,'Coronal  (L1-L2 identification)');
 
-            app.AxScoutCoronal = uiaxes(app.ScoutGrid);
-            app.AxScoutCoronal.Layout.Column = 2;
-            setupImageAxes(app, app.AxScoutCoronal, 'Coronal');
+            % Sagittal axis
+            app.AxLocSagittal = uiaxes(app.LocGrid);
+            app.AxLocSagittal.Layout.Row=1; app.AxLocSagittal.Layout.Column=2;
+            setupDarkAxes(app.AxLocSagittal,'Sagittal  (L1-L2 verification)');
 
-            app.AxScoutSagittal = uiaxes(app.ScoutGrid);
-            app.AxScoutSagittal.Layout.Column = 3;
-            setupImageAxes(app, app.AxScoutSagittal, 'Sagittal');
+            % Sliders (row 2)
+            corSliderGrid = uigridlayout(app.LocGrid,[1 3]);
+            corSliderGrid.Layout.Row=2; corSliderGrid.Layout.Column=1;
+            corSliderGrid.ColumnWidth={'60','1x',40}; corSliderGrid.Padding=[0 0 0 0];
+            lc = uilabel(corSliderGrid); lc.Layout.Column=1;
+            lc.Text='Coronal:'; lc.FontSize=12;
+            app.SldrLocCor = uislider(corSliderGrid);
+            app.SldrLocCor.Layout.Column=2; app.SldrLocCor.Limits=[1 9];
+            app.SldrLocCor.Value=5; app.SldrLocCor.MajorTicks=[];
+            app.SldrLocCor.MinorTicks=[];
+            app.SldrLocCor.ValueChangedFcn = @(src,~)app.onLocCorSlide(src);
+            app.LblLocCor = uilabel(corSliderGrid); app.LblLocCor.Layout.Column=3;
+            app.LblLocCor.Text='5'; app.LblLocCor.FontSize=12;
+            app.LblLocCor.HorizontalAlignment='center';
+
+            sagSliderGrid = uigridlayout(app.LocGrid,[1 3]);
+            sagSliderGrid.Layout.Row=2; sagSliderGrid.Layout.Column=2;
+            sagSliderGrid.ColumnWidth={'60','1x',40}; sagSliderGrid.Padding=[0 0 0 0];
+            ls = uilabel(sagSliderGrid); ls.Layout.Column=1;
+            ls.Text='Sagittal:'; ls.FontSize=12;
+            app.SldrLocSag = uislider(sagSliderGrid);
+            app.SldrLocSag.Layout.Column=2; app.SldrLocSag.Limits=[1 9];
+            app.SldrLocSag.Value=5; app.SldrLocSag.MajorTicks=[];
+            app.SldrLocSag.MinorTicks=[];
+            app.SldrLocSag.ValueChangedFcn = @(src,~)app.onLocSagSlide(src);
+            app.LblLocSag = uilabel(sagSliderGrid); app.LblLocSag.Layout.Column=3;
+            app.LblLocSag.Text='5'; app.LblLocSag.FontSize=12;
+            app.LblLocSag.HorizontalAlignment='center';
+
+            % L1/L2 buttons (row 3, spanning both columns)
+            ctrlGrid = uigridlayout(app.LocGrid,[1 5]);
+            ctrlGrid.Layout.Row=3; ctrlGrid.Layout.Column=[1 2];
+            ctrlGrid.ColumnWidth={160,160,130,'1x',280}; ctrlGrid.Padding=[0 2 0 2];
+
+            app.BtnPlaceL1 = uibutton(ctrlGrid,'push');
+            app.BtnPlaceL1.Layout.Column=1;
+            app.BtnPlaceL1.Text='Mark L1 on coronal';
+            app.BtnPlaceL1.FontSize=12; app.BtnPlaceL1.FontWeight='bold';
+            app.BtnPlaceL1.BackgroundColor=[0.92 0.60 0.12];
+            app.BtnPlaceL1.Tooltip='Click this then click on the L1 vertebra in the coronal image';
+            app.BtnPlaceL1.ButtonPushedFcn = @(~,~)app.placeL1();
+
+            app.BtnPlaceL2 = uibutton(ctrlGrid,'push');
+            app.BtnPlaceL2.Layout.Column=2;
+            app.BtnPlaceL2.Text='Mark L2 on coronal';
+            app.BtnPlaceL2.FontSize=12; app.BtnPlaceL2.FontWeight='bold';
+            app.BtnPlaceL2.BackgroundColor=[0.38 0.62 0.92];
+            app.BtnPlaceL2.Tooltip='Click this then click on the L2 vertebra in the coronal image';
+            app.BtnPlaceL2.ButtonPushedFcn = @(~,~)app.placeL2();
+
+            app.BtnClearL12 = uibutton(ctrlGrid,'push');
+            app.BtnClearL12.Layout.Column=3;
+            app.BtnClearL12.Text='Clear marks';
+            app.BtnClearL12.FontSize=12;
+            app.BtnClearL12.ButtonPushedFcn = @(~,~)app.clearL12();
+
+            app.LblL12Status = uilabel(ctrlGrid);
+            app.LblL12Status.Layout.Column=[4 5];
+            app.LblL12Status.Text='No L1/L2 placed yet.  Use sliders to navigate, then click Mark L1/L2.';
+            app.LblL12Status.FontSize=12; app.LblL12Status.FontColor=[0.4 0.4 0.4];
         end
 
-        % --- Dixon tab ---------------------------------------------------
+        % ── DIXON TAB ────────────────────────────────────────────────────
         function createDixonTab(app)
-            app.DixonTab = uitab(app.ImageTabGroup, 'Title', 'Dixon MRI');
+            app.DixonTab = uitab(app.ImageTabGroup,'Title','Dixon / Body Comp');
 
-            app.DixonGrid = uigridlayout(app.DixonTab, [1 4]);
-            app.DixonGrid.ColumnWidth  = {'1x','1x','1x','1x'};
+            app.DixonGrid = uigridlayout(app.DixonTab,[1 2]);
+            app.DixonGrid.ColumnWidth  = {'1x',180};
             app.DixonGrid.RowHeight    = {'1x'};
             app.DixonGrid.Padding      = [4 4 4 4];
             app.DixonGrid.ColumnSpacing = 6;
 
-            app.AxDixonWater = uiaxes(app.DixonGrid);
-            app.AxDixonWater.Layout.Column = 1;
-            setupImageAxes(app, app.AxDixonWater, 'Water');
+            % Image area (3 panels stacked vertically within left column)
+            imgArea = uipanel(app.DixonGrid,'BorderType','none');
+            imgArea.Layout.Column = 1;
+            imgG = uigridlayout(imgArea,[2 3]);
+            imgG.RowHeight   = {'1x',34}; imgG.ColumnWidth = {'1x','1x','1x'};
+            imgG.Padding     = [0 0 0 0]; imgG.ColumnSpacing = 4;
 
-            app.AxDixonFat = uiaxes(app.DixonGrid);
-            app.AxDixonFat.Layout.Column = 2;
-            setupImageAxes(app, app.AxDixonFat, 'Fat');
+            app.AxDixonWater = uiaxes(imgG);
+            app.AxDixonWater.Layout.Row=1; app.AxDixonWater.Layout.Column=1;
+            setupDarkAxes(app.AxDixonWater,'Water');
 
-            app.AxDixonFF = uiaxes(app.DixonGrid);
-            app.AxDixonFF.Layout.Column = 3;
-            setupImageAxes(app, app.AxDixonFF, 'Fat Fraction (%)');
+            app.AxDixonPDFF = uiaxes(imgG);
+            app.AxDixonPDFF.Layout.Row=1; app.AxDixonPDFF.Layout.Column=2;
+            setupDarkAxes(app.AxDixonPDFF,'PDFF (%)'); colormap(app.AxDixonPDFF,'hot');
 
-            app.AxDixonInPhase = uiaxes(app.DixonGrid);
-            app.AxDixonInPhase.Layout.Column = 4;
-            setupImageAxes(app, app.AxDixonInPhase, 'In-Phase');
+            app.AxDixonIP = uiaxes(imgG);
+            app.AxDixonIP.Layout.Row=1; app.AxDixonIP.Layout.Column=3;
+            setupDarkAxes(app.AxDixonIP,'In-Phase');
+
+            % Slice control
+            slCtrl = uigridlayout(imgG,[1 4]);
+            slCtrl.Layout.Row=2; slCtrl.Layout.Column=[1 3];
+            slCtrl.ColumnWidth={'70','1x',60,180}; slCtrl.Padding=[0 4 0 4];
+            lsd = uilabel(slCtrl); lsd.Layout.Column=1;
+            lsd.Text='Slice:'; lsd.FontSize=13; lsd.FontWeight='bold';
+            app.SldrDixon = uislider(slCtrl);
+            app.SldrDixon.Layout.Column=2; app.SldrDixon.Limits=[1 28];
+            app.SldrDixon.Value=14; app.SldrDixon.MajorTicks=[];
+            app.SldrDixon.MinorTicks=[];
+            app.SldrDixon.ValueChangedFcn = @(src,~)app.onDixonSlide(src);
+            app.LblDixonSlice = uilabel(slCtrl); app.LblDixonSlice.Layout.Column=3;
+            app.LblDixonSlice.Text='14/28'; app.LblDixonSlice.FontSize=12;
+            app.LblDixonSlice.HorizontalAlignment='center';
+            app.LblDixonInfo = uilabel(slCtrl); app.LblDixonInfo.Layout.Column=4;
+            app.LblDixonInfo.Text='Pixel: 1.56mm  Slice: 8mm';
+            app.LblDixonInfo.FontSize=10; app.LblDixonInfo.FontColor=[0.5 0.5 0.5];
+
+            % ROI panel (right column)
+            roiPnl = uipanel(app.DixonGrid,'Title','ROI Tools', ...
+                'FontSize',12,'FontWeight','bold');
+            roiPnl.Layout.Column = 2;
+            rg = uigridlayout(roiPnl,[10 1]);
+            rg.RowHeight   = repmat({36},1,10); rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
+
+            uilabel(rg,'Text','Organ volumes:','FontSize',11, ...
+                'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
+
+            app.BtnROI_LiverDixon = roiBtn(rg,2,'Liver (entire)', ...
+                [0.22 0.55 0.22],[1 1 1]);
+            app.BtnROI_LiverDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('LiverDixon');
+
+            app.BtnROI_SpleenDixon = roiBtn(rg,3,'Spleen (entire)', ...
+                [0.20 0.50 0.70],[1 1 1]);
+            app.BtnROI_SpleenDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('SpleenDixon');
+
+            uilabel(rg,'Text','L1-L2 body comp:','FontSize',11, ...
+                'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
+
+            app.BtnROI_MuscleL1 = roiBtn(rg,5,'Muscle @ L1', ...
+                [0.78 0.22 0.12],[1 1 1]);
+            app.BtnROI_MuscleL1.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleL1');
+
+            app.BtnROI_MuscleL2 = roiBtn(rg,6,'Muscle @ L2', ...
+                [0.90 0.40 0.12],[1 1 1]);
+            app.BtnROI_MuscleL2.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleL2');
+
+            app.BtnROI_SATL1 = roiBtn(rg,7,'SAT @ L1', ...
+                [0.14 0.28 0.85],[1 1 1]);
+            app.BtnROI_SATL1.ButtonPushedFcn = @(~,~)app.drawDixonROI('SATL1');
+
+            app.BtnROI_SATL2 = roiBtn(rg,8,'SAT @ L2', ...
+                [0.30 0.44 0.92],[1 1 1]);
+            app.BtnROI_SATL2.ButtonPushedFcn = @(~,~)app.drawDixonROI('SATL2');
+
+            app.BtnClearDixonROIs = roiBtn(rg,10,'Clear this slice', ...
+                [0.72 0.72 0.72],[0.2 0.2 0.2]);
+            app.BtnClearDixonROIs.ButtonPushedFcn = @(~,~)app.clearDixonSlice();
         end
 
-        % --- MRE tab -----------------------------------------------------
+        % ── MRE TAB ──────────────────────────────────────────────────────
         function createMRETab(app)
-            app.MRETab = uitab(app.ImageTabGroup, 'Title', '2D MRE');
+            app.MRETab = uitab(app.ImageTabGroup,'Title','MRE');
 
-            app.MREGrid = uigridlayout(app.MRETab, [1 3]);
-            app.MREGrid.ColumnWidth  = {'1x','1x','1x'};
+            app.MREGrid = uigridlayout(app.MRETab,[1 2]);
+            app.MREGrid.ColumnWidth  = {'1x',180};
             app.MREGrid.RowHeight    = {'1x'};
             app.MREGrid.Padding      = [4 4 4 4];
             app.MREGrid.ColumnSpacing = 6;
 
-            app.AxMREMagnitude = uiaxes(app.MREGrid);
-            app.AxMREMagnitude.Layout.Column = 1;
-            setupImageAxes(app, app.AxMREMagnitude, 'MRE Magnitude');
+            % Image area
+            imgArea = uipanel(app.MREGrid,'BorderType','none');
+            imgArea.Layout.Column = 1;
+            imgG = uigridlayout(imgArea,[2 3]);
+            imgG.RowHeight   = {'1x',44}; imgG.ColumnWidth = {'1x','1x','1x'};
+            imgG.Padding     = [0 0 0 0]; imgG.ColumnSpacing = 4;
 
-            app.AxMREStiffness = uiaxes(app.MREGrid);
-            app.AxMREStiffness.Layout.Column = 2;
-            setupImageAxes(app, app.AxMREStiffness, 'Stiffness Map (kPa)');
-            colormap(app.AxMREStiffness, 'jet');
+            app.AxMREMag = uiaxes(imgG);
+            app.AxMREMag.Layout.Row=1; app.AxMREMag.Layout.Column=1;
+            setupDarkAxes(app.AxMREMag,'Magnitude');
 
-            app.AxMREWave = uiaxes(app.MREGrid);
-            app.AxMREWave.Layout.Column = 3;
-            setupImageAxes(app, app.AxMREWave, 'Wave Image');
+            app.AxMREWave = uiaxes(imgG);
+            app.AxMREWave.Layout.Row=1; app.AxMREWave.Layout.Column=2;
+            setupDarkAxes(app.AxMREWave,'Wave (phase 1/4)');
+            colormap(app.AxMREWave, mreWaveCmap());
+
+            app.AxMREStiff = uiaxes(imgG);
+            app.AxMREStiff.Layout.Row=1; app.AxMREStiff.Layout.Column=3;
+            setupDarkAxes(app.AxMREStiff,'Stiffness (kPa)');
+            colormap(app.AxMREStiff, mreStiffCmap());
+            colorbar(app.AxMREStiff,'FontSize',9,'Color',[0.7 0.7 0.7]);
+
+            % Controls row
+            ctrlG = uigridlayout(imgG,[1 7]);
+            ctrlG.Layout.Row=2; ctrlG.Layout.Column=[1 3];
+            ctrlG.ColumnWidth={'56','1x',56,90,80,80,80}; ctrlG.Padding=[0 4 0 4];
+
+            lmr = uilabel(ctrlG); lmr.Layout.Column=1;
+            lmr.Text='Slice:'; lmr.FontSize=13; lmr.FontWeight='bold';
+
+            app.SldrMRE = uislider(ctrlG);
+            app.SldrMRE.Layout.Column=2; app.SldrMRE.Limits=[1 4];
+            app.SldrMRE.Value=2; app.SldrMRE.MajorTicks=[];
+            app.SldrMRE.MinorTicks=[];
+            app.SldrMRE.ValueChangedFcn = @(src,~)app.onMRESlide(src);
+
+            app.LblMRESlice = uilabel(ctrlG); app.LblMRESlice.Layout.Column=3;
+            app.LblMRESlice.Text='2/4'; app.LblMRESlice.FontSize=12;
+            app.LblMRESlice.HorizontalAlignment='center';
+
+            app.BtnMREPlay = uibutton(ctrlG,'push');
+            app.BtnMREPlay.Layout.Column=4;
+            app.BtnMREPlay.Text='▶ Play wave';
+            app.BtnMREPlay.FontSize=12; app.BtnMREPlay.FontWeight='bold';
+            app.BtnMREPlay.BackgroundColor=[0.18 0.60 0.34];
+            app.BtnMREPlay.FontColor=[1 1 1];
+            app.BtnMREPlay.ButtonPushedFcn = @(~,~)app.toggleMREPlay();
+
+            app.BtnStiff8 = uibutton(ctrlG,'push');
+            app.BtnStiff8.Layout.Column=5;
+            app.BtnStiff8.Text='0-8 kPa';
+            app.BtnStiff8.FontSize=12; app.BtnStiff8.FontWeight='bold';
+            app.BtnStiff8.BackgroundColor=[0.25 0.55 0.85];
+            app.BtnStiff8.FontColor=[1 1 1];
+            app.BtnStiff8.ButtonPushedFcn = @(~,~)app.setStiffScale([0 8]);
+
+            app.BtnStiff20 = uibutton(ctrlG,'push');
+            app.BtnStiff20.Layout.Column=6;
+            app.BtnStiff20.Text='0-20 kPa';
+            app.BtnStiff20.FontSize=12;
+            app.BtnStiff20.BackgroundColor=[0.70 0.88 0.70];
+            app.BtnStiff20.FontColor=[0.1 0.3 0.1];
+            app.BtnStiff20.ButtonPushedFcn = @(~,~)app.setStiffScale([0 20]);
+
+            app.BtnConfMap = uibutton(ctrlG,'state');
+            app.BtnConfMap.Layout.Column=7;
+            app.BtnConfMap.Text='Conf. mask';
+            app.BtnConfMap.FontSize=12;
+            app.BtnConfMap.Value=false;
+            app.BtnConfMap.ValueChangedFcn = @(~,~)app.toggleConfMask();
+
+            % ROI panel
+            roiPnl = uipanel(app.MREGrid,'Title','MRE ROI Tools', ...
+                'FontSize',12,'FontWeight','bold');
+            roiPnl.Layout.Column = 2;
+            rg = uigridlayout(roiPnl,[8 1]);
+            rg.RowHeight   = repmat({36},1,8); rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
+
+            uilabel(rg,'Text','Stiffness ROIs:','FontSize',11, ...
+                'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
+
+            app.BtnROI_LiverMRE = roiBtn(rg,2,'Liver stiffness', ...
+                [0.22 0.55 0.22],[1 1 1]);
+            app.BtnROI_LiverMRE.ButtonPushedFcn = @(~,~)app.drawMREROI('LiverMRE');
+
+            app.BtnROI_SpleenMRE = roiBtn(rg,3,'Spleen stiffness', ...
+                [0.20 0.50 0.70],[1 1 1]);
+            app.BtnROI_SpleenMRE.ButtonPushedFcn = @(~,~)app.drawMREROI('SpleenMRE');
+
+            uilabel(rg,'Text','ROI info:','FontSize',11, ...
+                'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
+
+            app.LblMREInfo = uilabel(rg);
+            app.LblMREInfo.Layout.Row=[5 7];
+            app.LblMREInfo.Text='Draw ROI on wave image (inner) or magnitude (contour).  ROI saved per slice.';
+            app.LblMREInfo.FontSize=11; app.LblMREInfo.WordWrap='on';
+            app.LblMREInfo.FontColor=[0.45 0.45 0.45];
+
+            app.BtnClearMREROIs = roiBtn(rg,8,'Clear this slice', ...
+                [0.72 0.72 0.72],[0.2 0.2 0.2]);
+            app.BtnClearMREROIs.ButtonPushedFcn = @(~,~)app.clearMRESlice();
         end
 
-        % --- L1-L2 tab ---------------------------------------------------
-        function createL12Tab(app)
-            app.L12Tab = uitab(app.ImageTabGroup, 'Title', 'L1–L2 View');
+        % ── RESULTS TAB ──────────────────────────────────────────────────
+        function createResultsTab(app)
+            app.ResultsTab = uitab(app.ImageTabGroup,'Title','Results');
+            app.ResultsGrid = uigridlayout(app.ResultsTab,[1 1]);
+            app.ResultsGrid.Padding=[8 8 8 8];
 
-            app.L12Grid = uigridlayout(app.L12Tab, [1 2]);
-            app.L12Grid.ColumnWidth  = {'1x','1x'};
-            app.L12Grid.RowHeight    = {'1x'};
-            app.L12Grid.Padding      = [4 4 4 4];
-            app.L12Grid.ColumnSpacing = 6;
-
-            app.AxL12Axial = uiaxes(app.L12Grid);
-            app.AxL12Axial.Layout.Column = 1;
-            setupImageAxes(app, app.AxL12Axial, 'Axial — L1 level');
-
-            app.AxL12Coronal = uiaxes(app.L12Grid);
-            app.AxL12Coronal.Layout.Column = 2;
-            setupImageAxes(app, app.AxL12Coronal, 'Coronal — L1–L2 span');
-        end
-
-        % --- Overlay tab -------------------------------------------------
-        function createOverlayTab(app)
-            app.OverlayTab = uitab(app.ImageTabGroup, 'Title', 'Overlay / Fusion');
-
-            app.OverlayGrid = uigridlayout(app.OverlayTab, [1 2]);
-            app.OverlayGrid.ColumnWidth  = {'1x','1x'};
-            app.OverlayGrid.RowHeight    = {'1x'};
-            app.OverlayGrid.Padding      = [4 4 4 4];
-            app.OverlayGrid.ColumnSpacing = 6;
-
-            app.AxOverlayDixon = uiaxes(app.OverlayGrid);
-            app.AxOverlayDixon.Layout.Column = 1;
-            setupImageAxes(app, app.AxOverlayDixon, 'Dixon (reference)');
-
-            app.AxOverlayMRE = uiaxes(app.OverlayGrid);
-            app.AxOverlayMRE.Layout.Column = 2;
-            setupImageAxes(app, app.AxOverlayMRE, 'MRE (registered)');
-        end
-
-        % --- Shared axes setup ------------------------------------------
-        function setupImageAxes(~, ax, titleStr)
-            ax.XTick = [];
-            ax.YTick = [];
-            ax.Box   = 'on';
-            ax.Color = [0 0 0];
-            ax.XColor = [0.4 0.4 0.4];
-            ax.YColor = [0.4 0.4 0.4];
-            title(ax, titleStr, 'FontSize', 10, 'Color', [0.85 0.85 0.85], ...
-                'FontWeight', 'normal');
-            colormap(ax, 'gray');
-        end
-
-        % --- Image controls below the tab group -------------------------
-        function createImageControls(app)
-            app.ControlPanel = uipanel(app.CenterGrid);
-            app.ControlPanel.Layout.Row    = 2;
-            app.ControlPanel.Layout.Column = 1;
-            app.ControlPanel.BorderType    = 'line';
-            app.ControlPanel.BackgroundColor = [0.94 0.94 0.94];
-
-            app.ControlGrid = uigridlayout(app.ControlPanel, [1 8]);
-            app.ControlGrid.ColumnWidth  = {95, 80, 110, 80, 8, 70, 120, '1x'};
-            app.ControlGrid.RowHeight    = {'1x'};
-            app.ControlGrid.Padding      = [4 4 4 4];
-            app.ControlGrid.ColumnSpacing = 4;
-
-            % Toggle overlay buttons
-            app.BtnSegOverlay = uibutton(app.ControlGrid, 'state');
-            app.BtnSegOverlay.Layout.Column = 1;
-            app.BtnSegOverlay.Text          = 'Seg. overlay';
-            app.BtnSegOverlay.Value         = false;
-            app.BtnSegOverlay.Tooltip       = 'Show segmentation contours';
-            app.BtnSegOverlay.ValueChangedFcn = @(~,~) app.ToggleOverlayCallback('seg');
-
-            app.BtnL12Lines = uibutton(app.ControlGrid, 'state');
-            app.BtnL12Lines.Layout.Column = 2;
-            app.BtnL12Lines.Text          = 'L1–L2 lines';
-            app.BtnL12Lines.Value         = false;
-            app.BtnL12Lines.Tooltip       = 'Show L1 and L2 level lines';
-            app.BtnL12Lines.ValueChangedFcn = @(~,~) app.ToggleOverlayCallback('l12');
-
-            app.BtnStiffnessMap = uibutton(app.ControlGrid, 'state');
-            app.BtnStiffnessMap.Layout.Column = 3;
-            app.BtnStiffnessMap.Text          = 'Stiffness overlay';
-            app.BtnStiffnessMap.Value         = false;
-            app.BtnStiffnessMap.Tooltip       = 'Overlay stiffness colormap';
-            app.BtnStiffnessMap.ValueChangedFcn = @(~,~) app.ToggleOverlayCallback('stiffness');
-
-            app.BtnPDFFMap = uibutton(app.ControlGrid, 'state');
-            app.BtnPDFFMap.Layout.Column = 4;
-            app.BtnPDFFMap.Text          = 'PDFF overlay';
-            app.BtnPDFFMap.Value         = false;
-            app.BtnPDFFMap.Tooltip       = 'Overlay fat fraction colormap';
-            app.BtnPDFFMap.ValueChangedFcn = @(~,~) app.ToggleOverlayCallback('pdff');
-
-            % Separator
-            sep = uilabel(app.ControlGrid);
-            sep.Layout.Column = 5;
-            sep.Text = '│';
-            sep.HorizontalAlignment = 'center';
-            sep.FontColor = [0.7 0.7 0.7];
-
-            % Colormap selector
-            app.DropColormap = uidropdown(app.ControlGrid);
-            app.DropColormap.Layout.Column = 6;
-            app.DropColormap.Items         = {'gray','jet','hot','parula','bone'};
-            app.DropColormap.Value         = 'gray';
-            app.DropColormap.Tooltip       = 'Image colormap';
-            app.DropColormap.ValueChangedFcn = @(~,e) app.ColormapChangedCallback(e);
-
-            % Slice slider
-            app.SldrSlice = uislider(app.ControlGrid);
-            app.SldrSlice.Layout.Column = 7;
-            app.SldrSlice.Limits        = [1 100];
-            app.SldrSlice.Value         = 1;
-            app.SldrSlice.MajorTicks    = [];
-            app.SldrSlice.MinorTicks    = [];
-            app.SldrSlice.Tooltip       = 'Navigate slices';
-            app.SldrSlice.ValueChangedFcn = @(~,e) app.SliceChangedCallback(e);
-
-            % Image info label
-            app.LblImageInfo = uilabel(app.ControlGrid);
-            app.LblImageInfo.Layout.Column = 8;
-            app.LblImageInfo.Text          = 'No study loaded';
-            app.LblImageInfo.FontSize      = 10;
-            app.LblImageInfo.FontColor     = [0.5 0.5 0.5];
+            app.ResultsTable = uitable(app.ResultsGrid);
+            app.ResultsTable.Layout.Row=1; app.ResultsTable.Layout.Column=1;
+            app.ResultsTable.FontSize=12;
+            app.ResultsTable.ColumnName = {'Measurement','Value','Unit','Notes'};
+            app.ResultsTable.Data       = {'No data yet','—','—','Load a study first'};
+            app.ResultsTable.ColumnWidth= {220,120,80,250};
         end
 
         % -----------------------------------------------------------------
         function createRightPanel(app)
-            app.RightPanel = uipanel(app.BodyGrid);
-            app.RightPanel.Layout.Row    = 1;
+            app.RightPanel = uipanel(app.BodyGrid,'Title','Measurements', ...
+                'FontSize',13,'FontWeight','bold');
             app.RightPanel.Layout.Column = 3;
-            app.RightPanel.Title         = 'Feature Results';
-            app.RightPanel.FontWeight    = 'bold';
 
-            app.RightGrid = uigridlayout(app.RightPanel, [5 1]);
-            app.RightGrid.RowHeight    = {110, 100, 110, 130, 100};
-            app.RightGrid.ColumnWidth  = {'1x'};
-            app.RightGrid.Padding      = [2 2 2 2];
-            app.RightGrid.RowSpacing   = 2;
+            app.RightGrid = uigridlayout(app.RightPanel,[6 1]);
+            app.RightGrid.RowHeight   = {110,100,110,110,80,80};
+            app.RightGrid.ColumnWidth = {'1x'};
+            app.RightGrid.Padding     = [2 2 2 2];
+            app.RightGrid.RowSpacing  = 2;
 
-            createFeatureSection(app, app.RightGrid, 1, ...
-                'Organ size & composition', ...
-                {'Liver vol.','Spleen vol.','Liver:spleen ratio','Liver PDFF'}, ...
-                {'—','—','—','—'}, ...
-                {'LiverVol','SpleenVol','LSRatio','LiverPDFF'});
+            addMeasSection(app,1,'Dixon — Organ size & PDFF', ...
+                {'Liver vol.','Liver PDFF','Spleen vol.','Spleen PDFF'}, ...
+                {'ValLiverDixonVol','ValLiverDixonPDFF', ...
+                 'ValSpleenDixonVol','ValSpleenDixonPDFF'});
 
-            createFeatureSection(app, app.RightGrid, 2, ...
-                'Mechanical (MRE)', ...
-                {'Liver stiffness','Spleen stiffness','Stiff. ratio','Het. IQR'}, ...
-                {'—','—','—','—'}, ...
-                {'LiverStiff','SpleenStiff','StiffRatio','HetIQR'});
+            addMeasSection(app,2,'L1-L2 — Muscle', ...
+                {'Muscle area L1','Muscle PDFF L1', ...
+                 'Muscle area L2','Muscle PDFF L2'}, ...
+                {'ValMuscleL1Area','ValMuscleL1PDFF', ...
+                 'ValMuscleL2Area','ValMuscleL2PDFF'});
 
-            createFeatureSection(app, app.RightGrid, 3, ...
-                'Body composition', ...
-                {'Muscle area','SAT area','Muscle:fat ratio','Muscle PDFF'}, ...
-                {'—','—','—','—'}, ...
-                {'MuscleArea','SATArea','MuscleFatRatio','MusclePDFF'});
+            addMeasSection(app,3,'L1-L2 — SAT & ratio', ...
+                {'SAT area L1','SAT PDFF L1', ...
+                 'SAT area L2','SAT PDFF L2','Muscle:SAT ratio'}, ...
+                {'ValSATL1Area','ValSATL1PDFF', ...
+                 'ValSATL2Area','ValSATL2PDFF','ValMuscleSATRatio'});
 
-            createFeatureSection(app, app.RightGrid, 4, ...
-                'L1–L2 measures', ...
-                {'L1 located','L2 located','Muscle area L1–L2', ...
-                 'SAT area L1–L2','Muscle:fat L1–L2','PDFF at L1–L2'}, ...
-                {'—','—','—','—','—','—'}, ...
-                {'L1Status','L2Status','L12MuscleArea', ...
-                 'L12SATArea','L12MuscleFat','L12PDFF'});
+            addMeasSection(app,4,'MRE — Stiffness', ...
+                {'Liver stiffness','Liver IQR', ...
+                 'Spleen stiffness','Spleen IQR'}, ...
+                {'ValLiverStiff','ValLiverStiffIQR', ...
+                 'ValSpleenStiff','ValSpleenStiffIQR'});
 
-            createFeatureSection(app, app.RightGrid, 5, ...
-                'QC status', ...
-                {'Seg. confidence','Coverage check','Range check','Manual review'}, ...
-                {'—','—','—','—'}, ...
-                {'SegConf','Coverage','RangeCheck','ManualReview'});
+            addMeasSection(app,5,'QC', ...
+                {'Seg. confidence','Coverage'}, ...
+                {'ValSegConf','ValCoverage'});
         end
 
-        % --- Generic feature section builder ----------------------------
-        function createFeatureSection(app, parentGrid, row, title, labels, defaults, propNames)
-            pnl = uipanel(parentGrid);
-            pnl.Layout.Row    = row;
-            pnl.Layout.Column = 1;
-            pnl.Title         = title;
-            pnl.FontSize      = 10;
-            pnl.FontWeight    = 'bold';
-
-            n   = numel(labels);
-            g   = uigridlayout(pnl, [n 2]);
-            g.ColumnWidth  = {'1x', '1x'};
-            g.RowHeight    = repmat({18}, 1, n);
-            g.Padding      = [4 2 4 2];
-            g.ColumnSpacing = 4;
-            g.RowSpacing    = 1;
-
+        function addMeasSection(app, row, sectionTitle, labels, propNames)
+            pnl = uipanel(app.RightGrid,'Title',sectionTitle, ...
+                'FontSize',11,'FontWeight','bold');
+            pnl.Layout.Row=row;
+            n = numel(labels);
+            g = uigridlayout(pnl,[n 2]);
+            g.ColumnWidth={'1x','1x'}; g.RowHeight=repmat({20},1,n);
+            g.Padding=[4 2 4 2]; g.ColumnSpacing=4; g.RowSpacing=2;
             for k = 1:n
-                lbl = uilabel(g);
-                lbl.Layout.Row    = k;
-                lbl.Layout.Column = 1;
-                lbl.Text          = labels{k};
-                lbl.FontSize      = 10;
-                lbl.FontColor     = [0.45 0.45 0.45];
-
-                val = uilabel(g);
-                val.Layout.Row    = k;
-                val.Layout.Column = 2;
-                val.Text          = defaults{k};
-                val.FontSize      = 10;
-                val.FontWeight    = 'bold';
-                val.HorizontalAlignment = 'right';
-
-                % Store handle in app property by name
-                app.(['Val' propNames{k}]) = val;
-                app.(['Lbl' propNames{k}]) = lbl;
+                lbl = uilabel(g); lbl.Layout.Row=k; lbl.Layout.Column=1;
+                lbl.Text=labels{k}; lbl.FontSize=11; lbl.FontColor=[0.40 0.40 0.40];
+                val = uilabel(g); val.Layout.Row=k; val.Layout.Column=2;
+                val.Text='—'; val.FontSize=12; val.FontWeight='bold';
+                val.HorizontalAlignment='right'; val.FontColor=[0.25 0.25 0.25];
+                app.(propNames{k}) = val;
             end
         end
 
         % -----------------------------------------------------------------
         function createBottomBar(app, parentGrid)
-            app.BottomPanel = uipanel(parentGrid);
-            app.BottomPanel.Layout.Row    = 3;
-            app.BottomPanel.Layout.Column = 1;
-            app.BottomPanel.BorderType    = 'line';
-            app.BottomPanel.BackgroundColor = [0.93 0.93 0.93];
+            app.BottomPanel = uipanel(parentGrid,'BorderType','line');
+            app.BottomPanel.Layout.Row=3; app.BottomPanel.Layout.Column=1;
+            app.BottomPanel.BackgroundColor=[0.91 0.91 0.91];
 
-            app.BottomGrid = uigridlayout(app.BottomPanel, [2 7]);
-            app.BottomGrid.RowHeight    = {'1x', 18};
-            app.BottomGrid.ColumnWidth  = {'1x','1x','1x','1x',8,'1x','2x'};
-            app.BottomGrid.Padding      = [6 4 6 4];
-            app.BottomGrid.ColumnSpacing = 4;
-            app.BottomGrid.RowSpacing    = 2;
+            app.BottomGrid = uigridlayout(app.BottomPanel,[2 6]);
+            app.BottomGrid.RowHeight    = {'1x',18};
+            app.BottomGrid.ColumnWidth  = {'1x','1x','1x','1x',8,'2x'};
+            app.BottomGrid.Padding      = [6 3 6 2]; app.BottomGrid.ColumnSpacing=4;
 
-            stageLabels  = {'S1  Harmonize', 'S2  Segment', 'S3  Features', 'S4  QC'};
-            stageProps   = {'Stage1Status','Stage2Status','Stage3Status','Stage4Status'};
-            stageCBs     = {@(~,~)app.RunStage1Callback(), ...
-                            @(~,~)app.RunStage2Callback(), ...
-                            @(~,~)app.RunStage3Callback(), ...
-                            @(~,~)app.RunQCCallback()};
-
-            for k = 1:4
-                btn = uibutton(app.BottomGrid, 'push');
-                btn.Layout.Row    = 1;
-                btn.Layout.Column = k;
-                btn.Text          = stageLabels{k};
-                btn.FontSize      = 10;
-                btn.BackgroundColor = [0.82 0.82 0.82];
-                btn.Tooltip       = ['Run ' stageLabels{k}];
-                btn.ButtonPushedFcn = stageCBs{k};
-                app.(stageProps{k}) = btn;
+            stepLabels = {'Localizer / L1-L2','Dixon + ROIs','MRE + ROIs','Export'};
+            stepProps  = {'BtnStepLoc','BtnStepDixon','BtnStepMRE','BtnStepResults'};
+            stepCBs    = {@(~,~)app.activateTab('loc'), ...
+                          @(~,~)app.activateTab('dixon'), ...
+                          @(~,~)app.activateTab('mre'), ...
+                          @(~,~)app.activateTab('results')};
+            for k=1:4
+                b = uibutton(app.BottomGrid,'push');
+                b.Layout.Row=1; b.Layout.Column=k;
+                b.Text=stepLabels{k}; b.FontSize=12;
+                b.BackgroundColor=[0.80 0.80 0.80];
+                b.ButtonPushedFcn=stepCBs{k};
+                app.(stepProps{k})=b;
             end
 
-            % Separator
-            sep = uilabel(app.BottomGrid);
-            sep.Layout.Row    = 1;
-            sep.Layout.Column = 5;
-            sep.Text = '│';
-            sep.HorizontalAlignment = 'center';
-            sep.FontColor = [0.6 0.6 0.6];
+            sep=uilabel(app.BottomGrid); sep.Layout.Row=1; sep.Layout.Column=5;
+            sep.Text='|'; sep.HorizontalAlignment='center'; sep.FontColor=[0.6 0.6 0.6];
 
-            % L1-L2 button
-            app.BtnL12Status = uibutton(app.BottomGrid, 'push');
-            app.BtnL12Status.Layout.Row    = 1;
-            app.BtnL12Status.Layout.Column = 6;
-            app.BtnL12Status.Text          = 'L1–L2  Module';
-            app.BtnL12Status.FontSize      = 10;
-            app.BtnL12Status.BackgroundColor = [0.82 0.70 0.55];
-            app.BtnL12Status.ButtonPushedFcn = @(~,~) app.L12LocateCallback();
-
-            % Status message (spans whole second row)
             app.LblStatusMsg = uilabel(app.BottomGrid);
-            app.LblStatusMsg.Layout.Row    = 2;
-            app.LblStatusMsg.Layout.Column = [1 7];
-            app.LblStatusMsg.Text          = '●  Ready — no study loaded';
-            app.LblStatusMsg.FontSize      = 10;
-            app.LblStatusMsg.FontColor     = [0.4 0.4 0.4];
+            app.LblStatusMsg.Layout.Row=2; app.LblStatusMsg.Layout.Column=[1 6];
+            app.LblStatusMsg.Text='Ready — click Load Study to begin.';
+            app.LblStatusMsg.FontSize=11; app.LblStatusMsg.FontColor=[0.40 0.40 0.40];
         end
 
-    end % private methods (createComponents)
+    end % createComponents
 
     % =====================================================================
-    %  INITIALIZATION
+    %  STARTUP
     % =====================================================================
     methods (Access = private)
-
         function startupFcn(app)
-            % Called after createComponents — set initial state.
-            updatePipelineStatus(app, 'S1', 'idle');
-            updatePipelineStatus(app, 'S2', 'idle');
-            updatePipelineStatus(app, 'S3', 'idle');
-            updatePipelineStatus(app, 'S4', 'idle');
-            updatePipelineStatus(app, 'L12','idle');
-            setStatus(app, 'Ready — please load a study to begin.');
+            setStatus(app,'Ready — click Load Study to begin.');
         end
-
     end
 
     % =====================================================================
-    %  CALLBACK STUBS  (filled in by later phases)
+    %  PUBLIC CALLBACKS
     % =====================================================================
     methods (Access = public)
 
-        % --- File / I-O --------------------------------------------------
-        function LoadStudyCallback(app)
-            % PHASE 2: Open DICOM folder, identify Scout / Dixon / MRE
-            % series, populate AppData, refresh tree and image axes.
-            setStatus(app, '[Phase 2] LoadStudyCallback — not yet implemented.');
+        % ── LOAD STUDY ────────────────────────────────────────────────────
+        function loadStudy(app)
+            % 1. Pick folder
+            folderPath = uigetdir(pwd,'Select DICOM Exam Folder');
+            if isequal(folderPath,0), return; end
+
+            dlg = uiprogressdlg(app.UIFigure,'Title','Loading Study', ...
+                'Message','Parsing DICOM exam...','Indeterminate','on');
+
+            try
+                % 2. Parse
+                setStatus(app,'Parsing DICOM exam...');
+                exam = mre_parseDICOMExam(folderPath, struct('verbose',false));
+                app.AppData.Exam = exam;
+
+                close(dlg);
+
+                % 3. Series selection GUI (inside the main figure context)
+                setStatus(app,'Select series...');
+                selection = mre_selectSeriesGUI(exam);
+                if ~selection.Confirmed
+                    setStatus(app,'Series selection cancelled.');
+                    return
+                end
+                app.AppData.Selection = selection;
+
+                dlg = uiprogressdlg(app.UIFigure,'Title','Building Data', ...
+                    'Message','Building MRE MAT file...','Indeterminate','on');
+
+                % 4. Build MRE MAT
+                dlg.Message = 'Building MRE MAT file...';
+                matOpts = struct('outputDir',folderPath,'verbose',false, ...
+                                 'forceRebuild',false,'interpolateWave',true);
+                matPath = mre_buildMATFile(selection, matOpts);
+                app.AppData.MATPath = matPath;
+
+                % 5. Load Localizer
+                if ~isempty(selection.Localizer)
+                    dlg.Message = 'Loading localizer...';
+                    app.AppData.Localizer = loc_loadLocalizer( ...
+                        selection.Localizer, struct('verbose',false));
+                    populateLocalizerTab(app);
+                end
+
+                % 6. Build Dixon volumes
+                if ~isempty(selection.DixonGroup)
+                    dlg.Message = 'Building Dixon volumes...';
+                    app.AppData.Dixon = seg_buildDixonVolume( ...
+                        selection.DixonGroup, struct('verbose',false));
+                    populateDixonTab(app);
+                end
+
+                % 7. Load MRE .mat
+                if isfile(matPath)
+                    dlg.Message = 'Loading MRE data...';
+                    tmp = load(matPath,'M','W','S','LapC','H');
+                    app.AppData.MRE = tmp;
+                    populateMRETab(app);
+                end
+
+                % 8. Update patient info
+                app.LblPatientInfo.Text = sprintf('%s  |  %s  |  %s', ...
+                    exam.PatientID, exam.StudyDate, exam.MREType);
+                app.BtnRunPipeline.Enable  = 'on';
+                app.BtnConfirmL12.Enable   = 'on';
+
+                updateStudyBrowser(app, exam, selection);
+                setStatus(app,sprintf('Loaded: %s — %s | %d series', ...
+                    exam.PatientID, exam.StudyDate, numel(exam.Series)));
+
+            catch ME
+                if isvalid(dlg), close(dlg); end
+                uialert(app.UIFigure, ME.message,'Load Error','Icon','error');
+                setStatus(app,['ERROR: ' ME.message]);
+            end
+            if isvalid(dlg), close(dlg); end
         end
 
-        function LoadStudyListCallback(app)
-            % PHASE 2: Load a CSV of study folder paths for batch processing.
-            setStatus(app, '[Phase 2] LoadStudyListCallback — not yet implemented.');
+        % ── RUN FULL PIPELINE ─────────────────────────────────────────────
+        function runPipeline(app)
+            if isempty(app.AppData.Exam)
+                uialert(app.UIFigure,'Please load a study first.','No Study');
+                return
+            end
+            opts = struct('verbose',true,'outputDir',app.AppData.Exam.ExamRootDir, ...
+                'subjectId',sprintf('%s_%s', ...
+                    app.AppData.Exam.PatientID, app.AppData.Exam.StudyDate));
+            results = seg_runFullPipeline(app.AppData.Exam, app.AppData.Selection, ...
+                app.AppData.MATPath, opts);
+            updateResultsFromStruct(app, results);
+            activateTab(app,'results');
         end
 
-        function SaveSessionCallback(app)
-            % Save AppData to a .mat file.
-            setStatus(app, '[Phase 7] SaveSessionCallback — not yet implemented.');
+        % ── LOCALIZER / L1-L2 ────────────────────────────────────────────
+        function onLocCorSlide(app, src)
+            sl = round(src.Value);
+            app.AppData.CorSlice = sl;
+            app.LblLocCor.Text = sprintf('%d',sl);
+            refreshLocCoronal(app);
         end
 
-        function LoadSessionCallback(app)
-            % Restore AppData from a previously saved .mat file.
-            setStatus(app, '[Phase 7] LoadSessionCallback — not yet implemented.');
+        function onLocSagSlide(app, src)
+            sl = round(src.Value);
+            app.AppData.SagSlice = sl;
+            app.LblLocSag.Text = sprintf('%d',sl);
+            refreshLocSagittal(app);
         end
 
-        % --- Pipeline stages ---------------------------------------------
-        function RunAllStagesCallback(app)
-            % Run stages 1-4 plus L1-L2 module sequentially.
-            setStatus(app, 'Running all stages…');
-            RunStage1Callback(app);
-            RunStage2Callback(app);
-            L12LocateCallback(app);
-            RunStage3Callback(app);
-            RunQCCallback(app);
-        end
-
-        function RunStage1Callback(app)
-            % PHASE 2: Sequence recognition, DICOM metadata parsing,
-            % voxel-size harmonization, spatial alignment of Scout/Dixon/MRE.
-            updatePipelineStatus(app, 'S1', 'running');
-            setStatus(app, '[Phase 2] Stage 1 — Harmonization running…');
-            % TODO: call harmonizeSequences(app)
-            updatePipelineStatus(app, 'S1', 'idle');
-        end
-
-        function RunStage2Callback(app)
-            % PHASE 4: AI-assisted organ segmentation:
-            %   liver, spleen, abdominal muscle groups, SAT.
-            % Also performs Dixon→MRE co-registration.
-            updatePipelineStatus(app, 'S2', 'running');
-            setStatus(app, '[Phase 4] Stage 2 — Segmentation running…');
-            % TODO: call segmentOrgans(app)
-            updatePipelineStatus(app, 'S2', 'idle');
-        end
-
-        function RunStage3Callback(app)
-            % PHASE 5: Extract all pre-specified quantitative phenotypes:
-            %   organ volumes, PDFF, mean stiffness, ratios,
-            %   body-composition measures, spatial heterogeneity.
-            updatePipelineStatus(app, 'S3', 'running');
-            setStatus(app, '[Phase 5] Stage 3 — Feature extraction running…');
-            % TODO: call extractFeatures(app)
-            updatePipelineStatus(app, 'S3', 'idle');
-        end
-
-        function RunQCCallback(app)
-            % PHASE 6: Compute confidence scores, coverage checks,
-            % range checks; flag studies for manual review.
-            updatePipelineStatus(app, 'S4', 'running');
-            setStatus(app, '[Phase 6] Stage 4 — QC running…');
-            % TODO: call runQualityControl(app)
-            updatePipelineStatus(app, 'S4', 'idle');
-        end
-
-        % --- L1-L2 module ------------------------------------------------
-        function L12LocateCallback(app)
-            % PHASE 3: Auto-detect L1 and L2 vertebral levels in 3D Scout.
-            updatePipelineStatus(app, 'L12', 'running');
-            setStatus(app, '[Phase 3] L1–L2 — Vertebral localization running…');
-            % TODO: call localizeL1L2(app)
-            updatePipelineStatus(app, 'L12', 'idle');
-        end
-
-        function L12ManualAdjustCallback(app)
-            % PHASE 3: Allow user to drag L1/L2 level lines interactively.
-            setStatus(app, '[Phase 3] L12ManualAdjustCallback — not yet implemented.');
-        end
-
-        function L12PropagateCallback(app)
-            % PHASE 3: Propagate Scout L1-L2 landmarks to Dixon and MRE
-            % via rigid registration transform.
-            setStatus(app, '[Phase 3] L12PropagateCallback — not yet implemented.');
-        end
-
-        function L12MeasureCallback(app)
-            % PHASE 5: Measure muscle area, SAT area, muscle:fat ratio,
-            % and PDFF at L1-L2 level on Dixon images.
-            setStatus(app, '[Phase 5] L12MeasureCallback — not yet implemented.');
-        end
-
-        function L12ReportCallback(app)
-            % PHASE 7: Generate and display L1-L2 summary table.
-            setStatus(app, '[Phase 7] L12ReportCallback — not yet implemented.');
-        end
-
-        % --- Segmentation ------------------------------------------------
-        function EditMaskCallback(app, organ)
-            % PHASE 4: Launch interactive mask editor for specified organ.
-            setStatus(app, sprintf('[Phase 4] EditMaskCallback (%s) — not yet implemented.', organ));
-        end
-
-        function AcceptAllMasksCallback(app)
-            setStatus(app, '[Phase 4] AcceptAllMasksCallback — not yet implemented.');
-        end
-
-        function ResetMasksCallback(app)
-            app.AppData.LiverMask  = [];
-            app.AppData.SpleenMask = [];
-            app.AppData.MuscleMask = [];
-            app.AppData.SATMask    = [];
-            setStatus(app, 'Masks cleared for active study.');
-        end
-
-        % --- Registration ------------------------------------------------
-        function RegisterDixonMRECallback(app, mode)
-            % PHASE 3: Register Dixon to MRE using rigid or deformable transform.
-            setStatus(app, sprintf('[Phase 3] RegisterDixonMRE (%s) — not yet implemented.', mode));
-        end
-
-        function RegisterScoutDixonCallback(app)
-            setStatus(app, '[Phase 3] RegisterScoutDixon — not yet implemented.');
-        end
-
-        function CheckRegistrationCallback(app)
-            setStatus(app, '[Phase 3] CheckRegistration — not yet implemented.');
-        end
-
-        % --- Features / plots --------------------------------------------
-        function ViewFeatureTableCallback(app)
-            setStatus(app, '[Phase 5] ViewFeatureTable — not yet implemented.');
-        end
-
-        function PlotStiffnessHistCallback(app)
-            setStatus(app, '[Phase 5] PlotStiffnessHist — not yet implemented.');
-        end
-
-        function PlotPDFFDistCallback(app)
-            setStatus(app, '[Phase 5] PlotPDFFDist — not yet implemented.');
-        end
-
-        function PlotHetMapCallback(app)
-            setStatus(app, '[Phase 5] PlotHetMap — not yet implemented.');
-        end
-
-        function CrossOrganSummaryCallback(app)
-            setStatus(app, '[Phase 5] CrossOrganSummary — not yet implemented.');
-        end
-
-        % --- QC ----------------------------------------------------------
-        function FlagStudyCallback(app)
-            setStatus(app, '[Phase 6] FlagStudy — not yet implemented.');
-        end
-
-        function UnflagStudyCallback(app)
-            setStatus(app, '[Phase 6] UnflagStudy — not yet implemented.');
-        end
-
-        function QCSummaryCallback(app)
-            setStatus(app, '[Phase 6] QCSummary — not yet implemented.');
-        end
-
-        function ReproducibilityReportCallback(app)
-            setStatus(app, '[Phase 6] ReproducibilityReport — not yet implemented.');
-        end
-
-        % --- Export ------------------------------------------------------
-        function ExportCSVCallback(app)
-            % PHASE 7: Write AppData.Features struct to a tidy CSV.
-            setStatus(app, '[Phase 7] ExportCSV — not yet implemented.');
-        end
-
-        function ExportPDFCallback(app)
-            setStatus(app, '[Phase 7] ExportPDF — not yet implemented.');
-        end
-
-        function ExportMasksCallback(app)
-            setStatus(app, '[Phase 7] ExportMasks (NIfTI) — not yet implemented.');
-        end
-
-        function ExportConfigCallback(app)
-            setStatus(app, '[Phase 7] ExportConfig (JSON) — not yet implemented.');
-        end
-
-        % --- Help --------------------------------------------------------
-        function OpenDocCallback(~)
-            web('https://github.com/MengYinMayo/HepatosplenicMRE', '-browser');
-        end
-
-        function FeatureDefsCallback(app)
-            setStatus(app, '[Help] FeatureDefs — not yet implemented.');
-        end
-
-        function AboutCallback(~)
-            msgbox( ...
-                sprintf(['HepatosplenicMRE Analysis Platform\n' ...
-                         'Version 1.0  (Phase 1 — GUI skeleton)\n\n' ...
-                         'Mayo Clinic / UCSD R01 Collaboration\n' ...
-                         'Principal Investigator: Meng Yin, PhD\n\n' ...
-                         'Phases 2–7 in development.']), ...
-                'About', 'help');
-        end
-
-        % --- Image / display ---------------------------------------------
-        function StudySelectionCallback(app, event)
-            % Update displayed images when a study node is selected.
-            node = event.SelectedNodes;
-            if isempty(node), return; end
-            setStatus(app, sprintf('Selected: %s', node.Text));
-            % PHASE 2: load and display images for selected study.
-        end
-
-        function TabChangedCallback(app, ~)
-            % Refresh slice slider range when tab changes.
-            updateSliceSlider(app);
-        end
-
-        function SliceChangedCallback(app, event)
-            app.AppData.CurrentSlice = round(event.Value);
-            app.LblImageInfo.Text    = sprintf('Slice %d', app.AppData.CurrentSlice);
-            refreshDisplayedSlice(app);
-        end
-
-        function ToggleOverlayCallback(app, type)
-            refreshDisplayedSlice(app);
-            setStatus(app, sprintf('Overlay toggled: %s', type));
-        end
-
-        function ColormapChangedCallback(app, event)
-            cm = event.Value;
-            for ax = [app.AxScoutAxial, app.AxScoutCoronal, app.AxScoutSagittal, ...
-                      app.AxDixonWater, app.AxDixonFat, app.AxDixonInPhase, ...
-                      app.AxMREMagnitude, app.AxMREWave, ...
-                      app.AxL12Axial, app.AxL12Coronal, ...
-                      app.AxOverlayDixon, app.AxOverlayMRE]
-                colormap(ax, cm);
+        function placeL1(app)
+            if isempty(app.AppData.Localizer)
+                uialert(app.UIFigure,'Load a study first.','No Localizer');
+                return
+            end
+            setStatus(app,'Click on the L1 vertebra centre in the coronal image...');
+            % Use ginput-style: user clicks on the coronal axes
+            figure(app.UIFigure);
+            [~, rowY] = ginputAxes(app.AxLocCoronal);
+            if ~isnan(rowY)
+                app.AppData.L1_CorRow = rowY;
+                refreshLocCoronal(app);
+                setStatus(app,sprintf('L1 marked at row %.0f on coronal slice %d.  Now mark L2.', ...
+                    rowY, app.AppData.CorSlice));
+                app.LblL12Status.Text = sprintf('L1 @ row %.0f  |  L2: not placed', rowY);
             end
         end
 
-        % --- Close -------------------------------------------------------
-        function CloseFcn(app)
-            selection = uiconfirm(app.UIFigure, ...
-                'Close HepatosplenicMRE Platform?', ...
-                'Confirm Exit', ...
-                'Options', {'Close','Cancel'}, ...
-                'DefaultOption', 'Cancel', ...
-                'CancelOption',  'Cancel');
-            if strcmp(selection, 'Close')
-                delete(app.UIFigure);
+        function placeL2(app)
+            if isempty(app.AppData.Localizer)
+                uialert(app.UIFigure,'Load a study first.','No Localizer');
+                return
+            end
+            setStatus(app,'Click on the L2 vertebra centre in the coronal image...');
+            figure(app.UIFigure);
+            [~, rowY] = ginputAxes(app.AxLocCoronal);
+            if ~isnan(rowY)
+                app.AppData.L2_CorRow = rowY;
+                refreshLocCoronal(app);
+                l1r = app.AppData.L1_CorRow;
+                setStatus(app,sprintf('L2 marked at row %.0f.  Click Confirm L1-L2 in toolbar.', rowY));
+                if ~isnan(l1r)
+                    app.LblL12Status.Text = sprintf('L1 @ row %.0f  |  L2 @ row %.0f  — press Confirm L1-L2', ...
+                        l1r, rowY);
+                end
             end
         end
 
-    end % public callbacks
+        function clearL12(app)
+            app.AppData.L1_CorRow = NaN;
+            app.AppData.L2_CorRow = NaN;
+            refreshLocCoronal(app);
+            app.LblL12Status.Text = 'L1/L2 cleared.';
+            setStatus(app,'L1-L2 cleared.');
+        end
+
+        function confirmL12(app)
+            if isnan(app.AppData.L1_CorRow) || isnan(app.AppData.L2_CorRow)
+                uialert(app.UIFigure,'Place both L1 and L2 markers first.','Missing Marks');
+                return
+            end
+            % Convert row position to mm using localizer spatial info
+            loc = app.AppData.Localizer;
+            if isempty(loc), return; end
+
+            sinfo = loc.Coronal.SpatialInfo;
+            L12 = rowsToL12mm(app, sinfo);
+            app.AppData.L12 = L12;
+
+            % Propagate to Dixon
+            if ~isempty(app.AppData.Dixon) && ~isempty(app.AppData.Dixon.SpatialInfo) && ...
+               isfield(app.AppData.Dixon.SpatialInfo,'AffineMatrix')
+                app.AppData.L12_Dixon = loc_propagateToSpace(L12, ...
+                    app.AppData.Dixon.SpatialInfo, struct('verbose',false));
+                setStatus(app,sprintf( ...
+                    'L1/L2 confirmed.  Dixon: L1→sl%d  L2→sl%d.  Switch to Dixon tab.', ...
+                    app.AppData.L12_Dixon.L1_sliceIdx, app.AppData.L12_Dixon.L2_sliceIdx));
+            end
+
+            % Update Dixon slider to L1 level
+            if ~isempty(app.AppData.L12_Dixon) && ~isnan(app.AppData.L12_Dixon.L1_sliceIdx)
+                sl = max(1, min(app.AppData.Dixon.nSlices, ...
+                    round(app.AppData.L12_Dixon.L1_sliceIdx)));
+                app.SldrDixon.Value = sl;
+                app.AppData.DixonSlice = sl;
+                refreshDixon(app);
+            end
+
+            app.BtnStepDixon.BackgroundColor = [0.70 0.88 0.70];
+            activateTab(app,'dixon');
+        end
+
+        % ── DIXON ─────────────────────────────────────────────────────────
+        function onDixonSlide(app, src)
+            sl = round(src.Value);
+            app.AppData.DixonSlice = sl;
+            nZ = max(1, app.AppData.Dixon.nSlices);
+            app.LblDixonSlice.Text = sprintf('%d/%d', sl, nZ);
+            refreshDixon(app);
+        end
+
+        function drawDixonROI(app, roiName)
+            if isempty(app.AppData.Dixon)
+                uialert(app.UIFigure,'No Dixon data loaded.','No Data');
+                return
+            end
+            sl = app.AppData.DixonSlice;
+
+            % For L1/L2 ROIs, jump to the correct slice first
+            switch roiName
+                case 'MuscleL1', if ~isnan(app.AppData.L12_Dixon.L1_sliceIdx)
+                    sl = round(app.AppData.L12_Dixon.L1_sliceIdx);
+                    app.AppData.DixonSlice = sl;
+                    app.SldrDixon.Value = sl;
+                    refreshDixon(app);
+                end
+                case 'MuscleL2', if ~isnan(app.AppData.L12_Dixon.L2_sliceIdx)
+                    sl = round(app.AppData.L12_Dixon.L2_sliceIdx);
+                    app.AppData.DixonSlice = sl;
+                    app.SldrDixon.Value = sl;
+                    refreshDixon(app);
+                end
+                case 'SATL1', if ~isnan(app.AppData.L12_Dixon.L1_sliceIdx)
+                    sl = round(app.AppData.L12_Dixon.L1_sliceIdx);
+                    app.AppData.DixonSlice = sl;
+                    app.SldrDixon.Value = sl;
+                    refreshDixon(app);
+                end
+                case 'SATL2', if ~isnan(app.AppData.L12_Dixon.L2_sliceIdx)
+                    sl = round(app.AppData.L12_Dixon.L2_sliceIdx);
+                    app.AppData.DixonSlice = sl;
+                    app.SldrDixon.Value = sl;
+                    refreshDixon(app);
+                end
+            end
+
+            setStatus(app,sprintf('Draw %s ROI on the water image (freehand).  Double-click to close.', ...
+                strrep(roiName,'_',' ')));
+            try
+                h = drawfreehand(app.AxDixonWater,'Color',dixonROIColor(roiName), ...
+                    'LineWidth',2,'FaceAlpha',0.15);
+                wait(h);
+                nR = size(app.AppData.Dixon.Water,1);
+                nC = size(app.AppData.Dixon.Water,2);
+                mask = logical(h.createMask());
+                storeROI(app, roiName, sl, mask, nR, nC);
+                overlayROIOnDixon(app, roiName, mask);
+                computeDixonROIStats(app, roiName, mask, sl);
+                setStatus(app,sprintf('%s ROI placed on slice %d.', roiName, sl));
+            catch ME
+                setStatus(app,['ROI error: ' ME.message]);
+            end
+        end
+
+        function clearDixonSlice(app)
+            sl = app.AppData.DixonSlice;
+            app.AppData.ROIs.LiverDixon.Slices  = removeSlice(app.AppData.ROIs.LiverDixon.Slices,  sl);
+            app.AppData.ROIs.SpleenDixon.Slices = removeSlice(app.AppData.ROIs.SpleenDixon.Slices, sl);
+            app.AppData.ROIs.MuscleL1 = [];
+            app.AppData.ROIs.MuscleL2 = [];
+            app.AppData.ROIs.SATL1    = [];
+            app.AppData.ROIs.SATL2    = [];
+            refreshDixon(app);
+            setStatus(app,sprintf('ROIs cleared for Dixon slice %d.',sl));
+        end
+
+        % ── MRE ───────────────────────────────────────────────────────────
+        function onMRESlide(app, src)
+            sl = round(src.Value);
+            app.AppData.MRESlice = sl;
+            nZ = max(1, size(app.AppData.MRE.S,3));
+            app.LblMRESlice.Text = sprintf('%d/%d',sl,nZ);
+            refreshMRE(app);
+        end
+
+        function toggleMREPlay(app)
+            if app.AppData.MREPlaying
+                % Stop
+                if ~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer)
+                    stop(app.AppData.MRETimer);
+                    delete(app.AppData.MRETimer);
+                    app.AppData.MRETimer = [];
+                end
+                app.AppData.MREPlaying = false;
+                app.BtnMREPlay.Text = '▶ Play wave';
+                app.BtnMREPlay.BackgroundColor = [0.18 0.60 0.34];
+            else
+                % Start
+                app.AppData.MREPlaying = true;
+                app.BtnMREPlay.Text = '⏸ Pause';
+                app.BtnMREPlay.BackgroundColor = [0.75 0.35 0.10];
+                t = timer('ExecutionMode','fixedRate','Period',0.15, ...
+                    'TimerFcn',@(~,~)app.advanceWaveFrame());
+                app.AppData.MRETimer = t;
+                start(t);
+            end
+        end
+
+        function advanceWaveFrame(app)
+            if isempty(app.AppData.MRE) || ~isfield(app.AppData.MRE,'W'), return; end
+            nPh = size(app.AppData.MRE.W, 4);
+            ph  = mod(app.AppData.MREPhase, nPh) + 1;
+            app.AppData.MREPhase = ph;
+            sl  = app.AppData.MRESlice;
+            W   = app.AppData.MRE.W;
+            img = double(W(:,:,min(sl,end),ph));
+            imagesc(app.AxMREWave, img);
+            title(app.AxMREWave, sprintf('Wave (phase %d/%d)', ph, nPh), ...
+                'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+        end
+
+        function drawMREROI(app, roiName)
+            if isempty(app.AppData.MRE)
+                uialert(app.UIFigure,'No MRE data loaded.','No Data');
+                return
+            end
+            sl = app.AppData.MRESlice;
+            setStatus(app,sprintf('Draw %s ROI on the wave image.  Double-click to close.',roiName));
+            try
+                h = drawfreehand(app.AxMREWave,'Color',mreROIColor(roiName), ...
+                    'LineWidth',2,'FaceAlpha',0.15);
+                wait(h);
+                nR = size(app.AppData.MRE.M,1);
+                nC = size(app.AppData.MRE.M,2);
+                mask = logical(h.createMask());
+                storeROI(app, roiName, sl, mask, nR, nC);
+                computeMREROIStats(app, roiName, mask, sl);
+                setStatus(app,sprintf('%s ROI placed on slice %d.',roiName,sl));
+            catch ME
+                setStatus(app,['ROI error: ' ME.message]);
+            end
+        end
+
+        function clearMRESlice(app)
+            sl = app.AppData.MRESlice;
+            app.AppData.ROIs.LiverMRE.Slices  = removeSlice(app.AppData.ROIs.LiverMRE.Slices,  sl);
+            app.AppData.ROIs.SpleenMRE.Slices = removeSlice(app.AppData.ROIs.SpleenMRE.Slices, sl);
+            refreshMRE(app);
+            setStatus(app,sprintf('MRE ROIs cleared for slice %d.',sl));
+        end
+
+        function setStiffScale(app, clim)
+            app.AppData.StiffCLim = clim;
+            if ~isempty(app.AppData.MRE)
+                clim(app.AxMREStiff, clim);
+            end
+            setStatus(app,sprintf('Stiffness scale: %.0f–%.0f kPa',clim(1),clim(2)));
+        end
+
+        function setStiffScaleCustom(app)
+            ans_ = inputdlg({'Min (kPa):','Max (kPa):'},'Custom Scale',1,{'0','8'});
+            if isempty(ans_), return; end
+            lo=str2double(ans_{1}); hi=str2double(ans_{2});
+            if isnan(lo)||isnan(hi)||lo>=hi
+                uialert(app.UIFigure,'Invalid range.','Error'); return
+            end
+            setStiffScale(app,[lo hi]);
+        end
+
+        function toggleConfMask(app)
+            app.AppData.ShowConfMask = app.BtnConfMap.Value;
+            refreshMRE(app);
+        end
+
+        % ── EXPORT / MISC ─────────────────────────────────────────────────
+        function exportCSV(app)
+            setStatus(app,'[Phase 7] Export CSV — not yet implemented.');
+        end
+        function exportROIs(app)
+            setStatus(app,'[Phase 7] Export ROI masks — not yet implemented.');
+        end
+        function exportPDF(app)
+            setStatus(app,'[Phase 7] Export PDF — not yet implemented.');
+        end
+        function saveSession(app)
+            setStatus(app,'[Phase 7] Save session — not yet implemented.');
+        end
+        function loadSession(app)
+            setStatus(app,'[Phase 7] Load session — not yet implemented.');
+        end
+        function setColormap(app,~)
+            % Placeholder
+        end
+        function showAbout(~)
+            msgbox(sprintf(['HepatosplenicMRE Platform  v2.0\n\n' ...
+                'Mayo Clinic R01 Collaboration\nPI: Meng Yin, PhD']), ...
+                'About','help');
+        end
+        function onStudySelect(app,event)
+            n=event.SelectedNodes;
+            if ~isempty(n), setStatus(app,sprintf('Selected: %s',n.Text)); end
+        end
+        function onTabChange(app,~)
+            % Tab changed — could trigger data load if needed
+        end
+        function activateTab(app, which)
+            tabs = struct('loc',app.LocTab,'dixon',app.DixonTab, ...
+                          'mre',app.MRETab,'results',app.ResultsTab);
+            if isfield(tabs,which)
+                app.ImageTabGroup.SelectedTab = tabs.(which);
+            end
+        end
+        function onClose(app)
+            % Stop any running timer
+            if ~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer)
+                stop(app.AppData.MRETimer);
+                delete(app.AppData.MRETimer);
+            end
+            sel = uiconfirm(app.UIFigure,'Close HepatosplenicMRE?','Exit', ...
+                'Options',{'Close','Cancel'},'DefaultOption','Cancel','CancelOption','Cancel');
+            if strcmp(sel,'Close'), delete(app.UIFigure); end
+        end
+    end
 
     % =====================================================================
-    %  HELPER UTILITIES  (internal)
+    %  PRIVATE DISPLAY HELPERS
     % =====================================================================
     methods (Access = private)
 
+        function populateLocalizerTab(app)
+            loc = app.AppData.Localizer;
+            if isempty(loc), return; end
+
+            % Set slider ranges
+            nCor = size(loc.Coronal.Volume,3);
+            nSag = size(loc.Sagittal.Volume,3);
+            app.SldrLocCor.Limits = [1 max(nCor,2)];
+            app.SldrLocSag.Limits = [1 max(nSag,2)];
+            app.SldrLocCor.Value  = round(nCor/2);
+            app.SldrLocSag.Value  = round(nSag/2);
+            app.AppData.CorSlice  = round(nCor/2);
+            app.AppData.SagSlice  = round(nSag/2);
+
+            refreshLocCoronal(app);
+            refreshLocSagittal(app);
+        end
+
+        function refreshLocCoronal(app)
+            loc = app.AppData.Localizer;
+            if isempty(loc) || isempty(loc.Coronal.Volume), return; end
+            sl  = app.AppData.CorSlice;
+            sl  = max(1, min(size(loc.Coronal.Volume,3), sl));
+            img = double(loc.Coronal.Volume(:,:,sl));
+            showImg(app.AxLocCoronal, img, sprintf('Coronal  slice %d',sl));
+            % Draw L1/L2 lines
+            hold(app.AxLocCoronal,'on');
+            nC = size(img,2);
+            if ~isnan(app.AppData.L1_CorRow)
+                plot(app.AxLocCoronal,[1 nC],[app.AppData.L1_CorRow app.AppData.L1_CorRow], ...
+                    '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
+                text(app.AxLocCoronal, nC-2, app.AppData.L1_CorRow-3,'L1', ...
+                    'Color',[0.95 0.60 0.10],'FontSize',12,'FontWeight','bold', ...
+                    'HorizontalAlignment','right');
+            end
+            if ~isnan(app.AppData.L2_CorRow)
+                plot(app.AxLocCoronal,[1 nC],[app.AppData.L2_CorRow app.AppData.L2_CorRow], ...
+                    '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
+                text(app.AxLocCoronal, nC-2, app.AppData.L2_CorRow-3,'L2', ...
+                    'Color',[0.38 0.62 0.92],'FontSize',12,'FontWeight','bold', ...
+                    'HorizontalAlignment','right');
+            end
+            hold(app.AxLocCoronal,'off');
+        end
+
+        function refreshLocSagittal(app)
+            loc = app.AppData.Localizer;
+            if isempty(loc) || isempty(loc.Sagittal.Volume), return; end
+            sl  = app.AppData.SagSlice;
+            sl  = max(1, min(size(loc.Sagittal.Volume,3), sl));
+            img = double(loc.Sagittal.Volume(:,:,sl));
+            showImg(app.AxLocSagittal, img, sprintf('Sagittal  slice %d',sl));
+        end
+
+        function populateDixonTab(app)
+            dix = app.AppData.Dixon;
+            if isempty(dix), return; end
+            nZ = max(1, dix.nSlices);
+            app.SldrDixon.Limits = [1 max(nZ,2)];
+            app.SldrDixon.Value  = round(nZ/2);
+            app.AppData.DixonSlice = round(nZ/2);
+            app.LblDixonSlice.Text = sprintf('%d/%d',round(nZ/2),nZ);
+            app.LblDixonInfo.Text  = sprintf('Pixel: %.2fmm  Slice: %.1fmm', ...
+                dix.PixelSpacing_mm(1), dix.SliceThickness_mm);
+            refreshDixon(app);
+        end
+
+        function refreshDixon(app)
+            dix = app.AppData.Dixon;
+            if isempty(dix), return; end
+            sl = app.AppData.DixonSlice;
+            nZ = max(1, dix.nSlices);
+            sl = max(1, min(nZ, sl));
+
+            % Water
+            if ~isempty(dix.Water)
+                img = double(dix.Water(:,:,min(sl,end)));
+                showImg(app.AxDixonWater, img, sprintf('Water  sl %d',sl));
+            end
+            % PDFF
+            if ~isempty(dix.PDFF)
+                img = double(dix.PDFF(:,:,min(sl,end)));
+                imagesc(app.AxDixonPDFF, img); clim(app.AxDixonPDFF,[0 100]);
+                colormap(app.AxDixonPDFF,'hot'); axis(app.AxDixonPDFF,'image');
+                app.AxDixonPDFF.XTick=[]; app.AxDixonPDFF.YTick=[];
+                title(app.AxDixonPDFF,sprintf('PDFF (%%)  sl %d',sl),'FontSize',12, ...
+                    'Color',[0.75 0.75 0.75],'FontWeight','normal');
+            end
+            % In-phase
+            if ~isempty(dix.InPhase)
+                img = double(dix.InPhase(:,:,min(sl,end)));
+                showImg(app.AxDixonIP, img, sprintf('In-Phase  sl %d',sl));
+            end
+
+            % Overlay L1/L2 lines if available
+            l12d = app.AppData.L12_Dixon;
+            if ~isempty(l12d) && ~isnan(l12d.L1_sliceIdx)
+                for ax = [app.AxDixonWater, app.AxDixonPDFF, app.AxDixonIP]
+                    hold(ax,'on');
+                    nC = size(app.AppData.Dixon.Water,2);
+                    if sl == round(l12d.L1_sliceIdx)
+                        plot(ax,[1 nC],[nC/2 nC/2],'--','Color',[0.95 0.60 0.10],'LineWidth',1.5);
+                        text(ax,4,10,'L1','Color',[0.95 0.60 0.10],'FontSize',11,'FontWeight','bold');
+                    end
+                    if sl == round(l12d.L2_sliceIdx)
+                        plot(ax,[1 nC],[nC/2 nC/2],'--','Color',[0.38 0.62 0.92],'LineWidth',1.5);
+                        text(ax,4,10,'L2','Color',[0.38 0.62 0.92],'FontSize',11,'FontWeight','bold');
+                    end
+                    hold(ax,'off');
+                end
+            end
+        end
+
+        function populateMRETab(app)
+            mre = app.AppData.MRE;
+            if isempty(mre), return; end
+            nZ = max(1, size(mre.S,3));
+            app.SldrMRE.Limits = [1 max(nZ,2)];
+            app.SldrMRE.Value  = round(nZ/2);
+            app.AppData.MRESlice = round(nZ/2);
+            app.LblMRESlice.Text = sprintf('%d/%d',round(nZ/2),nZ);
+            refreshMRE(app);
+        end
+
+        function refreshMRE(app)
+            mre = app.AppData.MRE;
+            if isempty(mre) || ~isfield(mre,'M'), return; end
+            sl = app.AppData.MRESlice;
+            sl = max(1, min(size(mre.M,3), sl));
+            ph = max(1, min(size(mre.W,4), app.AppData.MREPhase));
+
+            % Magnitude
+            showImg(app.AxMREMag, double(mre.M(:,:,sl)), ...
+                sprintf('Magnitude  sl %d',sl));
+
+            % Wave
+            img = double(mre.W(:,:,sl,ph));
+            imagesc(app.AxMREWave, img);
+            colormap(app.AxMREWave, mreWaveCmap());
+            axis(app.AxMREWave,'image');
+            app.AxMREWave.XTick=[]; app.AxMREWave.YTick=[];
+            title(app.AxMREWave,sprintf('Wave  sl %d  ph %d/%d',sl,ph,size(mre.W,4)), ...
+                'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+
+            % Stiffness
+            S = double(mre.S(:,:,sl));
+            if app.AppData.ShowConfMask && isfield(mre,'LapC') && ~isempty(mre.LapC)
+                LapC = double(mre.LapC(:,:,min(sl,end)));
+                S(LapC < 0.95) = 0;
+            end
+            imagesc(app.AxMREStiff, S); clim(app.AxMREStiff, app.AppData.StiffCLim);
+            colormap(app.AxMREStiff, mreStiffCmap()); axis(app.AxMREStiff,'image');
+            app.AxMREStiff.XTick=[]; app.AxMREStiff.YTick=[];
+            title(app.AxMREStiff,sprintf('Stiffness (kPa)  sl %d',sl), ...
+                'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+        end
+
+        function storeROI(app, roiName, sl, mask, nR, nC)
+            if nargin < 5, nR=256; nC=256; end
+            mask = imresize(logical(mask),[nR nC],'nearest');
+            key = sprintf('sl%d',sl);
+            switch roiName
+                case 'LiverDixon',  app.AppData.ROIs.LiverDixon.Slices.(key)  = mask;
+                case 'SpleenDixon', app.AppData.ROIs.SpleenDixon.Slices.(key) = mask;
+                case 'MuscleL1',    app.AppData.ROIs.MuscleL1 = mask;
+                case 'MuscleL2',    app.AppData.ROIs.MuscleL2 = mask;
+                case 'SATL1',       app.AppData.ROIs.SATL1    = mask;
+                case 'SATL2',       app.AppData.ROIs.SATL2    = mask;
+                case 'LiverMRE',    app.AppData.ROIs.LiverMRE.Slices.(key)  = mask;
+                case 'SpleenMRE',   app.AppData.ROIs.SpleenMRE.Slices.(key) = mask;
+            end
+        end
+
+        function computeDixonROIStats(app, roiName, mask, sl)
+            dix = app.AppData.Dixon;
+            if isempty(dix), return; end
+            dx = dix.PixelSpacing_mm(1); dy = dix.PixelSpacing_mm(2);
+            pixA = dx*dy/100;   % mm² → cm²
+            area = sum(mask(:)) * pixA;
+
+            pdff = [];
+            if ~isempty(dix.PDFF) && sl <= size(dix.PDFF,3)
+                ff = dix.PDFF(:,:,sl); pdff = nanmean(ff(mask));
+            end
+
+            switch roiName
+                case 'LiverDixon'
+                    app.ValLiverDixonVol.Text  = sprintf('%.0f cm²',area);
+                    if ~isempty(pdff), app.ValLiverDixonPDFF.Text = sprintf('%.1f%%',pdff); end
+                case 'SpleenDixon'
+                    app.ValSpleenDixonVol.Text  = sprintf('%.0f cm²',area);
+                    if ~isempty(pdff), app.ValSpleenDixonPDFF.Text = sprintf('%.1f%%',pdff); end
+                case 'MuscleL1'
+                    app.ValMuscleL1Area.Text = sprintf('%.1f cm²',area);
+                    if ~isempty(pdff), app.ValMuscleL1PDFF.Text = sprintf('%.1f%%',pdff); end
+                case 'MuscleL2'
+                    app.ValMuscleL2Area.Text = sprintf('%.1f cm²',area);
+                    if ~isempty(pdff), app.ValMuscleL2PDFF.Text = sprintf('%.1f%%',pdff); end
+                case 'SATL1'
+                    app.ValSATL1Area.Text = sprintf('%.1f cm²',area);
+                    if ~isempty(pdff), app.ValSATL1PDFF.Text = sprintf('%.1f%%',pdff); end
+                case 'SATL2'
+                    app.ValSATL2Area.Text = sprintf('%.1f cm²',area);
+                    if ~isempty(pdff), app.ValSATL2PDFF.Text = sprintf('%.1f%%',pdff); end
+            end
+            updateMuscleSATRatio(app);
+        end
+
+        function computeMREROIStats(app, roiName, mask, sl)
+            mre = app.AppData.MRE;
+            if isempty(mre) || ~isfield(mre,'S'), return; end
+            S = double(mre.S(:,:,min(sl,end)));
+            if app.AppData.ShowConfMask && isfield(mre,'LapC')
+                LapC = double(mre.LapC(:,:,min(sl,end)));
+                S(LapC < 0.95) = NaN;
+            end
+            validPx = S(mask & isfinite(S));
+            if isempty(validPx), return; end
+            stiff = nanmean(validPx);
+            iqr_  = iqr(validPx);
+            switch roiName
+                case 'LiverMRE'
+                    app.ValLiverStiff.Text   = sprintf('%.1f kPa',stiff);
+                    app.ValLiverStiffIQR.Text = sprintf('%.1f kPa',iqr_);
+                case 'SpleenMRE'
+                    app.ValSpleenStiff.Text   = sprintf('%.1f kPa',stiff);
+                    app.ValSpleenStiffIQR.Text = sprintf('%.1f kPa',iqr_);
+            end
+        end
+
+        function updateMuscleSATRatio(app)
+            try
+                m1 = str2double(strrep(app.ValMuscleL1Area.Text,' cm²',''));
+                m2 = str2double(strrep(app.ValMuscleL2Area.Text,' cm²',''));
+                s1 = str2double(strrep(app.ValSATL1Area.Text,' cm²',''));
+                s2 = str2double(strrep(app.ValSATL2Area.Text,' cm²',''));
+                totalM = nanmean([m1 m2]); totalS = nanmean([s1 s2]);
+                if isfinite(totalM) && isfinite(totalS) && totalS>0
+                    app.ValMuscleSATRatio.Text = sprintf('%.3f',totalM/totalS);
+                end
+            catch
+            end
+        end
+
+        function overlayROIOnDixon(app, roiName, mask)
+            bnd = bwboundaries(mask);
+            clr = dixonROIColor(roiName);
+            for ax = [app.AxDixonWater, app.AxDixonPDFF, app.AxDixonIP]
+                hold(ax,'on');
+                for b=1:numel(bnd)
+                    plot(ax,bnd{b}(:,2),bnd{b}(:,1),'-','Color',clr,'LineWidth',2);
+                end
+                hold(ax,'off');
+            end
+        end
+
+        function updateStudyBrowser(app, exam, selection)
+            delete(app.StudyTree.Children);
+            root = uitreenode(app.StudyTree,'Text', ...
+                sprintf('%s  %s  (%s)', exam.PatientID, exam.StudyDate, exam.MREType));
+            root.NodeData = exam;
+            if ~isempty(selection.Localizer)
+                uitreenode(root,'Text',sprintf('[Localizer] S%d  %s', ...
+                    selection.Localizer.SeriesNumber, selection.Localizer.SeriesDescription));
+            end
+            if ~isempty(selection.Dixon)
+                uitreenode(root,'Text',sprintf('[Dixon anchor] S%d  %s', ...
+                    selection.Dixon.SeriesNumber, selection.Dixon.SeriesDescription));
+            end
+            if ~isempty(selection.MRE)
+                uitreenode(root,'Text',sprintf('[MRE anchor] S%d  %s', ...
+                    selection.MRE.SeriesNumber, selection.MRE.SeriesDescription));
+                for k=1:numel(selection.MREGroup)
+                    s=selection.MREGroup(k);
+                    uitreenode(root,'Text',sprintf('  S%d  %-22s %s', ...
+                        s.SeriesNumber, s.Role, s.SeriesDescription));
+                end
+            end
+            expand(root,'all');
+            app.LblStudyStats.Text = sprintf('%d series loaded', numel(exam.Series));
+        end
+
+        function updateResultsFromStruct(app, results)
+            rows = {};
+            if isfield(results,'L12') && isfield(results.L12,'L1')
+                L1 = results.L12.L1; L2 = results.L12.L2;
+                rows{end+1} = {'Muscle area L1',  sprintf('%.1f',L1.MuscleArea_cm2), 'cm²',  ''};
+                rows{end+1} = {'Muscle PDFF L1',  sprintf('%.1f',L1.MusclePDFF_pct), '%',    ''};
+                rows{end+1} = {'SAT area L1',      sprintf('%.1f',L1.SATArea_cm2),   'cm²',  ''};
+                rows{end+1} = {'SAT PDFF L1',      sprintf('%.1f',L1.SAT_PDFF_pct),  '%',    ''};
+                rows{end+1} = {'Muscle area L2',  sprintf('%.1f',L2.MuscleArea_cm2), 'cm²',  ''};
+                rows{end+1} = {'Muscle:SAT ratio', sprintf('%.3f',L1.MuscleSATRatio),'',     ''};
+            end
+            if ~isempty(rows)
+                app.ResultsTable.Data = vertcat(rows{:});
+            end
+        end
+
         function setStatus(app, msg)
-            % Update bottom status bar message.
-            timestamp = datestr(now, 'HH:MM:SS');
-            app.LblStatusMsg.Text = sprintf('●  [%s]  %s', timestamp, msg);
+            ts = datestr(now,'HH:MM:SS');
+            app.LblStatusMsg.Text = sprintf('[%s]  %s', ts, msg);
             drawnow limitrate;
         end
 
-        function updatePipelineStatus(app, stage, status)
-            % Update pipeline button color based on stage status.
-            %   status: 'idle' | 'running' | 'done' | 'error' | 'flagged'
-            colorMap = struct( ...
-                'idle',    [0.82 0.82 0.82], ...
-                'running', [0.98 0.80 0.20], ...
-                'done',    [0.22 0.65 0.30], ...
-                'error',   [0.80 0.18 0.18], ...
-                'flagged', [0.85 0.50 0.10]);
-
-            app.AppData.PipelineStatus.(stage) = status;
-            clr = colorMap.(status);
-
-            switch stage
-                case 'S1',  btn = app.BtnStage1Status;
-                case 'S2',  btn = app.BtnStage2Status;
-                case 'S3',  btn = app.BtnStage3Status;
-                case 'S4',  btn = app.BtnStage4Status;
-                case 'L12', btn = app.BtnL12Status;
-                otherwise,  return
+        function L12 = rowsToL12mm(app, sinfo)
+            L12 = struct('L1_mm',NaN,'L2_mm',NaN,'L1_L2_mid_mm',NaN, ...
+                'L1_row_coronal',app.AppData.L1_CorRow, ...
+                'L2_row_coronal',app.AppData.L2_CorRow, ...
+                'Confidence',1.0,'DetectionMethod','manual', ...
+                'SourcePlane','Coronal','PixelSpacing_mm',[1 1]);
+            try
+                ps = sinfo.PixelSpacing(1);
+                iop = sinfo.ImageOrientationPatient;
+                rowDir = iop(1:3);
+                imgPos = app.AppData.Localizer.Coronal.ImagePositions( ...
+                    app.AppData.CorSlice,:);
+                L1pos = imgPos + (app.AppData.L1_CorRow-1)*ps*rowDir;
+                L2pos = imgPos + (app.AppData.L2_CorRow-1)*ps*rowDir;
+                L12.L1_mm = L1pos(3); L12.L2_mm = L2pos(3);
+                L12.L1_L2_mid_mm = (L12.L1_mm+L12.L2_mm)/2;
+                L12.PixelSpacing_mm = [ps ps];
+            catch
             end
-            btn.BackgroundColor = clr;
-        end
-
-        function updateSliceSlider(app)
-            % Set slider max to the number of slices in the active tab.
-            tab = app.ImageTabGroup.SelectedTab;
-            nSlices = 1;
-            if ~isempty(app.AppData.ScoutVolume) && tab == app.ScoutTab
-                nSlices = size(app.AppData.ScoutVolume, 3);
-            elseif ~isempty(app.AppData.DixonWater) && tab == app.DixonTab
-                nSlices = size(app.AppData.DixonWater, 3);
-            elseif ~isempty(app.AppData.MREStiffness) && tab == app.MRETab
-                nSlices = size(app.AppData.MREStiffness, 3);
-            end
-            app.SldrSlice.Limits = [1 max(nSlices,2)];
-            app.SldrSlice.Value  = min(app.AppData.CurrentSlice, nSlices);
-        end
-
-        function refreshDisplayedSlice(app)
-            % PHASE 2: Render the current slice + any active overlays.
-            % Placeholder: axes are black until images are loaded.
-            s = app.AppData.CurrentSlice;
-            tab = app.ImageTabGroup.SelectedTab;
-
-            if tab == app.ScoutTab && ~isempty(app.AppData.ScoutVolume)
-                V = app.AppData.ScoutVolume;
-                s = min(s, size(V,3));
-                imshow(V(:,:,s), [], 'Parent', app.AxScoutAxial);
-                % Coronal and sagittal reconstructions would be added here.
-            end
-            % Additional cases for Dixon / MRE / L1-L2 / Overlay to be
-            % implemented in Phase 2.
-        end
-
-        function updateFeatureDisplay(app)
-            % Update all Val* labels from AppData.Features.
-            % Called after RunStage3Callback completes.
-            F = app.AppData.Features;
-            if isfield(F,'LiverVolume_mL')
-                app.ValLiverVol.Text  = sprintf('%.0f mL', F.LiverVolume_mL);
-            end
-            if isfield(F,'SpleenVolume_mL')
-                app.ValSpleenVol.Text = sprintf('%.0f mL', F.SpleenVolume_mL);
-            end
-            if isfield(F,'LiverSpleenRatio')
-                app.ValLSRatio.Text   = sprintf('%.2f', F.LiverSpleenRatio);
-            end
-            if isfield(F,'LiverPDFF_pct')
-                app.ValLiverPDFF.Text = sprintf('%.1f %%', F.LiverPDFF_pct);
-            end
-            if isfield(F,'LiverStiffness_kPa')
-                app.ValLiverStiff.Text  = sprintf('%.1f kPa', F.LiverStiffness_kPa);
-            end
-            if isfield(F,'SpleenStiffness_kPa')
-                app.ValSpleenStiff.Text = sprintf('%.1f kPa', F.SpleenStiffness_kPa);
-            end
-            if isfield(F,'StiffnessRatio')
-                app.ValStiffRatio.Text  = sprintf('%.2f', F.StiffnessRatio);
-            end
-            if isfield(F,'StiffnessIQR_kPa')
-                app.ValHetIQR.Text      = sprintf('%.1f kPa', F.StiffnessIQR_kPa);
-            end
-            if isfield(F,'MuscleArea_cm2')
-                app.ValMuscleArea.Text      = sprintf('%.1f cm²', F.MuscleArea_cm2);
-            end
-            if isfield(F,'SATArea_cm2')
-                app.ValSATArea.Text         = sprintf('%.1f cm²', F.SATArea_cm2);
-            end
-            if isfield(F,'MuscleFatRatio')
-                app.ValMuscleFatRatio.Text  = sprintf('%.2f', F.MuscleFatRatio);
-            end
-            if isfield(F,'MusclePDFF_pct')
-                app.ValMusclePDFF.Text      = sprintf('%.1f %%', F.MusclePDFF_pct);
-            end
-            if isfield(F,'L12MuscleArea_cm2')
-                app.ValL12MuscleArea.Text   = sprintf('%.1f cm²', F.L12MuscleArea_cm2);
-            end
-            if isfield(F,'L12SATArea_cm2')
-                app.ValL12SATArea.Text      = sprintf('%.1f cm²', F.L12SATArea_cm2);
-            end
-            if isfield(F,'L12MuscleFatRatio')
-                app.ValL12MuscleFat.Text    = sprintf('%.2f', F.L12MuscleFatRatio);
-            end
-            if isfield(F,'L12PDFF_pct')
-                app.ValL12PDFF.Text         = sprintf('%.1f %%', F.L12PDFF_pct);
-            end
-        end
-
-        function updateQCDisplay(app)
-            % Update QC labels from AppData.QCResults.
-            Q = app.AppData.QCResults;
-            if isfield(Q,'SegmentationConfidence')
-                score = Q.SegmentationConfidence;
-                app.ValSegConf.Text = sprintf('%.2f', score);
-                if score >= 0.85
-                    app.ValSegConf.FontColor = [0.10 0.55 0.20];
-                else
-                    app.ValSegConf.FontColor = [0.75 0.35 0.00];
-                end
-            end
-            if isfield(Q,'CoveragePass')
-                app.ValCoverage.Text = ternary(Q.CoveragePass, 'Pass ✓', 'FAIL ✗');
-                app.ValCoverage.FontColor = ternary(Q.CoveragePass, ...
-                    [0.10 0.55 0.20], [0.75 0.10 0.10]);
-            end
-            if isfield(Q,'RangePass')
-                app.ValRangeCheck.Text = ternary(Q.RangePass, 'Pass ✓', 'FAIL ✗');
-                app.ValRangeCheck.FontColor = ternary(Q.RangePass, ...
-                    [0.10 0.55 0.20], [0.75 0.10 0.10]);
-            end
-            if isfield(Q,'NeedsManualReview')
-                app.ValManualReview.Text = ternary(Q.NeedsManualReview, ...
-                    'Required ⚠', 'Not needed');
-                app.ValManualReview.FontColor = ternary(Q.NeedsManualReview, ...
-                    [0.75 0.35 0.00], [0.45 0.45 0.45]);
-            end
-        end
-
-    end % private helpers
-
-    % =====================================================================
-    %  STATIC UTILITIES
-    % =====================================================================
-    methods (Static, Access = private)
-        function out = ternary(cond, a, b)
-            if cond; out = a; else; out = b; end
         end
     end
 
     % =====================================================================
-    %  APP CONSTRUCTOR  (called by matlab.apps.AppBase infrastructure)
+    %  CONSTRUCTOR / DESTRUCTOR
     % =====================================================================
     methods (Access = public)
         function app = HepatosplenicMRE_App()
-            % Create and configure components
             createComponents(app);
-
-            % Register with App Designer infrastructure
             registerApp(app, app.UIFigure);
-
-            % Run startup
             runStartupFcn(app, @startupFcn);
-
-            % Show the figure
             app.UIFigure.Visible = 'on';
-
-            if nargout == 0
-                clear app;
-            end
+            if nargout == 0, clear app; end
         end
-
         function delete(app)
+            if ~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer)
+                stop(app.AppData.MRETimer); delete(app.AppData.MRETimer);
+            end
             delete(app.UIFigure);
         end
     end
 
 end % classdef
+
+
+% =========================================================================
+%  MODULE-LEVEL HELPERS
+% =========================================================================
+
+function setupDarkAxes(ax, titleStr)
+    ax.XTick=[]; ax.YTick=[]; ax.Box='on';
+    ax.Color=[0.06 0.06 0.06];
+    ax.XColor=[0.28 0.28 0.28]; ax.YColor=[0.28 0.28 0.28];
+    ax.BackgroundColor=[0.06 0.06 0.06];
+    colormap(ax,'gray');
+    title(ax,titleStr,'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
+end
+
+function showImg(ax, img, titleStr)
+    lo=min(img(:)); hi=max(img(:));
+    if hi>lo, img=(img-lo)./(hi-lo); end
+    imagesc(ax,img); colormap(ax,'gray'); axis(ax,'image');
+    ax.XTick=[]; ax.YTick=[];
+    title(ax,titleStr,'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
+end
+
+function btn = mkBtn(parent, col, txt, bg, fg, fs)
+    btn = uibutton(parent,'push');
+    btn.Layout.Column=col; btn.Text=txt;
+    btn.FontSize=fs; btn.FontWeight='bold';
+    btn.BackgroundColor=bg; btn.FontColor=fg;
+end
+
+function btn = roiBtn(parent, row, txt, bg, fg)
+    btn = uibutton(parent,'push');
+    btn.Layout.Row=row; btn.Text=txt;
+    btn.FontSize=12; btn.FontWeight='bold';
+    btn.BackgroundColor=bg; btn.FontColor=fg;
+end
+
+function clr = dixonROIColor(name)
+    switch name
+        case {'LiverDixon','MuscleL1','MuscleL2'}
+            clr=[0.15 0.75 0.15];
+        case {'SpleenDixon'}
+            clr=[0.15 0.55 0.90];
+        case {'SATL1','SATL2'}
+            clr=[0.95 0.65 0.10];
+        otherwise
+            clr=[1 1 0];
+    end
+end
+
+function clr = mreROIColor(name)
+    if contains(name,'Liver'),  clr=[0.15 0.85 0.15];
+    else,                       clr=[0.15 0.65 0.95];
+    end
+end
+
+function cmap = mreWaveCmap()
+    % Use awave if available, else symmetric blue-white-red
+    if exist('awave','file')==2
+        cmap = awave(256);
+    else
+        n=128; r=[linspace(0,1,n); ones(1,n)]';
+        g=[linspace(0,1,n); linspace(1,0,n)]';
+        b=[ones(1,n); linspace(1,0,n)]';
+        cmap=[r g b];
+    end
+end
+
+function cmap = mreStiffCmap()
+    if exist('aaasmo','file')==2
+        cmap = aaasmo(256);
+    else
+        cmap = hot(256);
+    end
+end
+
+function [x,y] = ginputAxes(ax)
+    % Single-point click capture within a uiaxes
+    x=NaN; y=NaN;
+    try
+        ax.ButtonDownFcn = @(~,e) assignin('base','_ginput_pt_',[e.IntersectionPoint(1) e.IntersectionPoint(2)]);
+        uiwait(ancestor(ax,'figure'), 5);   % 5 sec timeout
+        pt = evalin('base','_ginput_pt_');
+        x=pt(1); y=pt(2);
+        evalin('base','clear _ginput_pt_');
+    catch
+    end
+    ax.ButtonDownFcn = '';
+end
+
+function slices = removeSlice(slices, sl)
+    key = sprintf('sl%d',sl);
+    if isfield(slices,key)
+        slices = rmfield(slices,key);
+    end
+end

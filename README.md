@@ -1,8 +1,7 @@
-# HepatosplenicMRE Analysis Platform
+﻿# HepatosplenicMRE Analysis Platform
 
-**Mayo Clinic R01 — AI-Assisted Hepatosplenic MRE Image Analysis**  
+** AI-Assisted Hepatosplenic MRI/MRE Image Analysis**  
 Principal Investigator: Meng Yin, PhD  
-Collaborating Site: UCSD
 
 ---
 
@@ -139,3 +138,4 @@ transportability rather than processing differences.
 
 Mayo Clinic Internal Research Use. Not for clinical deployment without
 institutional review.
+
