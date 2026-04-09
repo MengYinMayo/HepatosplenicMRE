@@ -109,8 +109,12 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     vprint(opts, 'Dixon volumes loaded:');
     vprint(opts, '  Water:   %s', sizeStr(dixon.Water));
     vprint(opts, '  Fat:     %s', sizeStr(dixon.Fat));
-    vprint(opts, '  PDFF:    %s  (range %.1f-%.1f%%)', ...
-        sizeStr(dixon.PDFF), nanmin(dixon.PDFF(:)), nanmax(dixon.PDFF(:)));
+    if ~isempty(dixon.PDFF)
+        vprint(opts, '  PDFF:    %s  (range %.1f-%.1f%%)', ...
+            sizeStr(dixon.PDFF), nanmin(dixon.PDFF(:)), nanmax(dixon.PDFF(:)));
+    else
+        vprint(opts, '  PDFF:    []');
+    end
     vprint(opts, '  InPhase: %s', sizeStr(dixon.InPhase));
 end
 
@@ -149,8 +153,47 @@ function dixon = readMultiContrast(series, dixon, opts)
         end
     end
 
-    % Determine nContrasts and nSlices
+    % Determine nContrasts and nSlices.
+    % TemporalPositionIdentifier may not be populated on all GE IDEAL-IQ
+    % versions (all return 1). Fall back to NumberOfTemporalPositions tag,
+    % then to unique slice count inversion, then to the GE standard of 6.
     nContrasts = numel(unique(tempIds));
+    if nContrasts <= 1 && nFiles > 10
+        % Try NumberOfTemporalPositions from first header
+        try
+            hdr1 = dicominfo(files{1}, 'UseDictionaryVR', true);
+            if isfield(hdr1,'NumberOfTemporalPositions') && ~isempty(hdr1.NumberOfTemporalPositions)
+                nc = double(hdr1.NumberOfTemporalPositions);
+                if nc > 1 && mod(nFiles, nc) == 0
+                    nContrasts = nc;
+                    vprint(opts, '  Using NumberOfTemporalPositions=%d for nContrasts.', nc);
+                end
+            end
+        catch
+        end
+    end
+    % Last resort: infer from unique slice locations
+    if nContrasts <= 1
+        nSlicesEst = numel(unique(sliceLoc));
+        if nSlicesEst > 1 && mod(nFiles, nSlicesEst) == 0
+            nContrasts = nFiles / nSlicesEst;
+            vprint(opts, '  Inferred %d contrasts from %d unique slices.', nContrasts, nSlicesEst);
+        else
+            % GE IDEAL-IQ default: 6 contrasts
+            nContrasts = 6;
+            vprint(opts, '  Defaulting to %d contrasts (GE IDEAL-IQ standard).', nContrasts);
+        end
+    end
+    % When TemporalPositionIdentifier was unreliable (all 1), reassign by
+    % InstanceNumber modulo nContrasts (GE interleaves: img1=C1, img2=C2,...,
+    % imgN=CN, imgN+1=C1 for next slice — or all-slices-per-contrast ordering).
+    if numel(unique(tempIds)) <= 1 && nContrasts > 1
+        % Detect ordering: sort by SliceLocation, group in blocks of nContrasts
+        % Try contrast-major ordering first (C1S1,C2S1,...,CnS1, C1S2,...)
+        tempIds = mod(instNums - min(instNums), nContrasts) + 1;
+        vprint(opts, '  TemporalPositionIdentifier absent — using InstanceNumber mod %d.', nContrasts);
+    end
+
     nSlices    = round(nFiles / nContrasts);
     uniqueLocs = unique(sliceLoc);
 
@@ -211,12 +254,27 @@ function dixon = readMultiContrast(series, dixon, opts)
 end
 
 function labels = classifyContrastsByWindow(files, tempIds, nContrasts)
-%CLASSIFYCONTRASTSBYWINDOW  Identify contrast by WindowCenter heuristic.
-%   Fallback to GE standard order if classification is ambiguous.
-    labels = {'Water','Fat','InPhase','OutPhase','PDFF','T2star'};
-    labels = labels(1:nContrasts);   % default order
+%CLASSIFYCONTRASTSBYWINDOW  Assign GE IDEAL-IQ contrast labels by TemporalPositionIdentifier.
+%
+%   GE IDEAL-IQ standard TemporalPositionIdentifier order:
+%     1=Water  2=Fat  3=InPhase  4=OutPhase  5=PDFF(%)  6=T2*(ms)
+%
+%   We use this standard order as the default, then verify by scanning
+%   WindowCenter values. If a contrast has WindowCenter ≈ 50 (0-100 range,
+%   typical for PDFF %), we confirm/swap it to 'PDFF'.
 
-    wcs = zeros(1, nContrasts);
+    geOrder = {'Water','Fat','InPhase','OutPhase','PDFF','T2star'};
+
+    % Start with GE standard order, trimmed/extended to nContrasts
+    if nContrasts <= numel(geOrder)
+        labels = geOrder(1:nContrasts);
+    else
+        labels = [geOrder, repmat({'Unknown'}, 1, nContrasts - numel(geOrder))];
+    end
+
+    % Verify PDFF position by WindowCenter heuristic
+    % (only attempt if we can read at least one header per contrast)
+    wcs = nan(1, nContrasts);
     for c = 1:nContrasts
         idx = find(tempIds == c, 1);
         if isempty(idx), continue; end
@@ -229,16 +287,21 @@ function labels = classifyContrastsByWindow(files, tempIds, nContrasts)
         end
     end
 
-    % PDFF: WindowCenter typically 50 (centred on 50% fat fraction)
-    [~, pdffIdx] = min(abs(wcs - 50));
-    if wcs(pdffIdx) > 20 && wcs(pdffIdx) < 100
-        % Reassign the PDFF slot
-        tmpLabels = {'Water','Fat','InPhase','OutPhase','T2star','Extra'};
-        tmpLabels(1:nContrasts) = tmpLabels(1:nContrasts);
-        % Insert PDFF at detected position
-        newLabels = tmpLabels(1:nContrasts);
-        newLabels{pdffIdx} = 'PDFF';
-        labels = newLabels;
+    % If the detected PDFF position doesn't match the standard (position 5),
+    % find the contrast with WindowCenter in the PDFF range (20-100).
+    pdffCandidates = find(wcs >= 20 & wcs <= 100);
+    if ~isempty(pdffCandidates)
+        detectedPDFF = pdffCandidates(1);
+        if detectedPDFF ~= 5 && detectedPDFF <= nContrasts
+            % Swap labels: standard pos 5 gets the detected position's label,
+            % detected position gets 'PDFF'.
+            if nContrasts >= 5
+                labels{detectedPDFF} = labels{5};
+                labels{5}            = 'PDFF';
+            else
+                labels{detectedPDFF} = 'PDFF';
+            end
+        end
     end
 end
 

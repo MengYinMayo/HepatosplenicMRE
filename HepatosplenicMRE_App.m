@@ -1265,22 +1265,24 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             sl  = max(1, min(size(loc.Coronal.Volume,3), sl));
             img = double(loc.Coronal.Volume(:,:,sl));
             showImg(app.AxLocCoronal, img, sprintf('Coronal  slice %d',sl));
-            % Draw L1/L2 lines
+            % Draw L1/L2 lines (HitTest off so clicks pass through to axes)
             hold(app.AxLocCoronal,'on');
             nC = size(img,2);
             if ~isnan(app.AppData.L1_CorRow)
-                plot(app.AxLocCoronal,[1 nC],[app.AppData.L1_CorRow app.AppData.L1_CorRow], ...
+                hl = plot(app.AxLocCoronal,[1 nC],[app.AppData.L1_CorRow app.AppData.L1_CorRow], ...
                     '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
-                text(app.AxLocCoronal, nC-2, app.AppData.L1_CorRow-3,'L1', ...
+                ht = text(app.AxLocCoronal, nC-2, app.AppData.L1_CorRow-3,'L1', ...
                     'Color',[0.95 0.60 0.10],'FontSize',12,'FontWeight','bold', ...
                     'HorizontalAlignment','right');
+                try; hl.HitTest='off'; ht.HitTest='off'; catch; end
             end
             if ~isnan(app.AppData.L2_CorRow)
-                plot(app.AxLocCoronal,[1 nC],[app.AppData.L2_CorRow app.AppData.L2_CorRow], ...
+                hl = plot(app.AxLocCoronal,[1 nC],[app.AppData.L2_CorRow app.AppData.L2_CorRow], ...
                     '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
-                text(app.AxLocCoronal, nC-2, app.AppData.L2_CorRow-3,'L2', ...
+                ht = text(app.AxLocCoronal, nC-2, app.AppData.L2_CorRow-3,'L2', ...
                     'Color',[0.38 0.62 0.92],'FontSize',12,'FontWeight','bold', ...
                     'HorizontalAlignment','right');
+                try; hl.HitTest='off'; ht.HitTest='off'; catch; end
             end
             hold(app.AxLocCoronal,'off');
         end
@@ -1299,18 +1301,20 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             l1_sagRow = corRowToSagRow(app, app.AppData.L1_CorRow, sl);
             l2_sagRow = corRowToSagRow(app, app.AppData.L2_CorRow, sl);
             if ~isnan(l1_sagRow)
-                plot(app.AxLocSagittal,[1 nC],[l1_sagRow l1_sagRow], ...
+                hl = plot(app.AxLocSagittal,[1 nC],[l1_sagRow l1_sagRow], ...
                     '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
-                text(app.AxLocSagittal, nC-2, l1_sagRow-3,'L1', ...
+                ht = text(app.AxLocSagittal, nC-2, l1_sagRow-3,'L1', ...
                     'Color',[0.95 0.60 0.10],'FontSize',12,'FontWeight','bold', ...
                     'HorizontalAlignment','right');
+                try; hl.HitTest='off'; ht.HitTest='off'; catch; end
             end
             if ~isnan(l2_sagRow)
-                plot(app.AxLocSagittal,[1 nC],[l2_sagRow l2_sagRow], ...
+                hl = plot(app.AxLocSagittal,[1 nC],[l2_sagRow l2_sagRow], ...
                     '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
-                text(app.AxLocSagittal, nC-2, l2_sagRow-3,'L2', ...
+                ht = text(app.AxLocSagittal, nC-2, l2_sagRow-3,'L2', ...
                     'Color',[0.38 0.62 0.92],'FontSize',12,'FontWeight','bold', ...
                     'HorizontalAlignment','right');
+                try; hl.HitTest='off'; ht.HitTest='off'; catch; end
             end
             hold(app.AxLocSagittal,'off');
         end
@@ -1675,14 +1679,20 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         % -----------------------------------------------------------------
         %  L1/L2 CLICK HANDLER (fires from ButtonDownFcn on either axes)
         % -----------------------------------------------------------------
-        function onLocImageClick(app, event, plane, level)
+        function onLocImageClick(app, event, plane, level)  %#ok<INUSD>
             if ~strcmp(app.AppData.AwaitingClick, level), return; end
 
             % Clear armed state immediately
             cancelPendingClick(app);
 
-            pt   = event.IntersectionPoint;
-            rowY = pt(2);   % y in image data coordinates = row
+            % Use ax.CurrentPoint (reliable in App Designer uiaxes)
+            if strcmp(plane, 'cor')
+                ax = app.AxLocCoronal;
+            else
+                ax = app.AxLocSagittal;
+            end
+            cp   = ax.CurrentPoint;   % [2×3]: near/far plane in data coords
+            rowY = round(cp(1, 2));   % y coordinate = row
 
             if strcmp(plane, 'cor')
                 % Clicked on coronal — store directly as coronal row
@@ -1836,7 +1846,9 @@ end
 function showImg(ax, img, titleStr)
     lo=min(img(:)); hi=max(img(:));
     if hi>lo, img=(img-lo)./(hi-lo); end
-    imagesc(ax,img); colormap(ax,'gray'); axis(ax,'image');
+    h = imagesc(ax,img); colormap(ax,'gray'); axis(ax,'image');
+    % Make image non-intercepting so ButtonDownFcn on axes fires on click
+    try; h.HitTest='off'; h.PickableParts='none'; catch; end
     ax.XTick=[]; ax.YTick=[];
     title(ax,titleStr,'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
 end
