@@ -74,9 +74,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         % Dixon tab
         DixonTab            matlab.ui.container.Tab
         DixonGrid           matlab.ui.container.GridLayout
-        AxDixonWater        matlab.ui.control.UIAxes
+        AxDixon             matlab.ui.control.UIAxes   % single-panel display
+        AxDixonWater        matlab.ui.control.UIAxes   % kept for compatibility
         AxDixonPDFF         matlab.ui.control.UIAxes
         AxDixonIP           matlab.ui.control.UIAxes
+        DdlDixonContrast    matlab.ui.control.DropDown
         SldrDixon           matlab.ui.control.Slider
         LblDixonSlice       matlab.ui.control.Label
         LblDixonInfo        matlab.ui.control.Label
@@ -174,6 +176,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'MREPlaying',   false, ...
             'MRETimer',     [], ...
             'StiffCLim',    [0 8], ...
+            'DixonContrast', 'Water', ...  % 'Water'|'Fat'|'PDFF'|'InPhase'|'OutPhase'
             'ShowConfMask', false, ...
             'ROIs',         struct( ...   % all ROI masks
                 'LiverDixon',  struct('Slices',struct()), ...
@@ -213,7 +216,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BodyGrid = uigridlayout(outer,[1 3]);
             app.BodyGrid.Layout.Row    = 2;
             app.BodyGrid.Layout.Column = 1;
-            app.BodyGrid.ColumnWidth   = {200,'1x',230};
+            app.BodyGrid.ColumnWidth   = {260,'1x',230};
             app.BodyGrid.RowHeight     = {'1x'};
             app.BodyGrid.Padding       = [0 0 0 0];
             app.BodyGrid.ColumnSpacing = 0;
@@ -335,11 +338,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         % -----------------------------------------------------------------
         function createCenterPanel(app)
-            app.CenterPanel = uipanel(app.BodyGrid,'BorderType','none');
-            app.CenterPanel.Layout.Column = 2;
-
-            app.ImageTabGroup = uitabgroup(app.CenterPanel, ...
-                'Position',[0 0 1 1],'Units','normalized');
+            % Place the tab group directly in the body grid so it fills
+            % the full center column without any intermediate panel.
+            app.ImageTabGroup = uitabgroup(app.BodyGrid);
+            app.ImageTabGroup.Layout.Row    = 1;
+            app.ImageTabGroup.Layout.Column = 2;
             app.ImageTabGroup.FontSize = 13;
             app.ImageTabGroup.SelectionChangedFcn = @(~,e)app.onTabChange(e);
 
@@ -442,34 +445,49 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.DixonTab = uitab(app.ImageTabGroup,'Title','Dixon / Body Comp');
 
             app.DixonGrid = uigridlayout(app.DixonTab,[1 2]);
-            app.DixonGrid.ColumnWidth  = {'1x',180};
+            app.DixonGrid.ColumnWidth  = {'1x',190};
             app.DixonGrid.RowHeight    = {'1x'};
             app.DixonGrid.Padding      = [4 4 4 4];
             app.DixonGrid.ColumnSpacing = 6;
 
-            % Image area (3 panels stacked vertically within left column)
+            % Image area: contrast selector row + large single image + slice ctrl
             imgArea = uipanel(app.DixonGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
-            imgG = uigridlayout(imgArea,[2 3]);
-            imgG.RowHeight   = {'1x',34}; imgG.ColumnWidth = {'1x','1x','1x'};
-            imgG.Padding     = [0 0 0 0]; imgG.ColumnSpacing = 4;
+            imgG = uigridlayout(imgArea,[3 1]);
+            imgG.RowHeight   = {32,'1x',32}; imgG.ColumnWidth = {'1x'};
+            imgG.Padding     = [0 0 0 0]; imgG.RowSpacing = 4;
 
-            app.AxDixonWater = uiaxes(imgG);
-            app.AxDixonWater.Layout.Row=1; app.AxDixonWater.Layout.Column=1;
-            setupDarkAxes(app.AxDixonWater,'Water');
+            % Row 1: contrast selector
+            contRow = uigridlayout(imgG,[1 5]);
+            contRow.Layout.Row=1;
+            contRow.ColumnWidth = {70,'1x',60,120,80};
+            contRow.Padding=[0 2 0 2]; contRow.ColumnSpacing=6;
+            lcon = uilabel(contRow); lcon.Layout.Column=1;
+            lcon.Text='Contrast:'; lcon.FontSize=13; lcon.FontWeight='bold';
+            app.DdlDixonContrast = uidropdown(contRow);
+            app.DdlDixonContrast.Layout.Column=2;
+            app.DdlDixonContrast.Items     = {'Water','Fat','PDFF (%)','In-Phase','Out-Phase'};
+            app.DdlDixonContrast.ItemsData = {'Water','Fat','PDFF','InPhase','OutPhase'};
+            app.DdlDixonContrast.Value     = 'Water';
+            app.DdlDixonContrast.FontSize  = 13;
+            app.DdlDixonContrast.ValueChangedFcn = @(~,~)app.onDixonContrastChange();
 
-            app.AxDixonPDFF = uiaxes(imgG);
-            app.AxDixonPDFF.Layout.Row=1; app.AxDixonPDFF.Layout.Column=2;
-            setupDarkAxes(app.AxDixonPDFF,'PDFF (%)'); colormap(app.AxDixonPDFF,'hot');
+            app.LblDixonSlice = uilabel(contRow); app.LblDixonSlice.Layout.Column=3;
+            app.LblDixonSlice.Text='1/1'; app.LblDixonSlice.FontSize=12;
+            app.LblDixonSlice.HorizontalAlignment='center';
+            app.LblDixonInfo = uilabel(contRow); app.LblDixonInfo.Layout.Column=[4 5];
+            app.LblDixonInfo.Text='';
+            app.LblDixonInfo.FontSize=10; app.LblDixonInfo.FontColor=[0.5 0.5 0.5];
 
-            app.AxDixonIP = uiaxes(imgG);
-            app.AxDixonIP.Layout.Row=1; app.AxDixonIP.Layout.Column=3;
-            setupDarkAxes(app.AxDixonIP,'In-Phase');
+            % Row 2: large single image panel
+            app.AxDixon = uiaxes(imgG);
+            app.AxDixon.Layout.Row=2;
+            setupDarkAxes(app.AxDixon,'Water');
 
-            % Slice control
-            slCtrl = uigridlayout(imgG,[1 4]);
-            slCtrl.Layout.Row=2; slCtrl.Layout.Column=[1 3];
-            slCtrl.ColumnWidth={70,'1x',60,180}; slCtrl.Padding=[0 4 0 4];
+            % Row 3: slice slider
+            slCtrl = uigridlayout(imgG,[1 3]);
+            slCtrl.Layout.Row=3;
+            slCtrl.ColumnWidth={60,'1x',50}; slCtrl.Padding=[0 2 0 2];
             lsd = uilabel(slCtrl); lsd.Layout.Column=1;
             lsd.Text='Slice:'; lsd.FontSize=13; lsd.FontWeight='bold';
             app.SldrDixon = uislider(slCtrl);
@@ -477,12 +495,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.SldrDixon.Value=14; app.SldrDixon.MajorTicks=[];
             app.SldrDixon.MinorTicks=[];
             app.SldrDixon.ValueChangedFcn = @(src,~)app.onDixonSlide(src);
-            app.LblDixonSlice = uilabel(slCtrl); app.LblDixonSlice.Layout.Column=3;
-            app.LblDixonSlice.Text='14/28'; app.LblDixonSlice.FontSize=12;
-            app.LblDixonSlice.HorizontalAlignment='center';
-            app.LblDixonInfo = uilabel(slCtrl); app.LblDixonInfo.Layout.Column=4;
-            app.LblDixonInfo.Text='Pixel: 1.56mm  Slice: 8mm';
-            app.LblDixonInfo.FontSize=10; app.LblDixonInfo.FontColor=[0.5 0.5 0.5];
+            lsn2 = uilabel(slCtrl); lsn2.Layout.Column=3;
+            lsn2.Text=''; lsn2.FontSize=11;  % spacer
 
             % ROI panel (right column)
             roiPnl = uipanel(app.DixonGrid,'Title','ROI Tools', ...
@@ -880,12 +894,19 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 uialert(app.UIFigure,'Load a study first.','No Localizer');
                 return
             end
-            % Cancel any pending placement first
             cancelPendingClick(app);
+            % Place line immediately at 1/3 from top if not already set
+            if isnan(app.AppData.L1_CorRow)
+                nRows = size(app.AppData.Localizer.Coronal.Volume, 1);
+                app.AppData.L1_CorRow = max(1, round(nRows / 3));
+            end
+            refreshLocCoronal(app);
+            refreshLocSagittal(app);
+            % Arm click to reposition
             app.AppData.AwaitingClick = 'L1';
-            app.BtnPlaceL1.BackgroundColor = [1.0 0.95 0.2];  % highlight active
-            setStatus(app,'Click on the L1 vertebra in the coronal or sagittal image…');
-            app.LblL12Status.Text = 'Waiting for L1 click on either image…';
+            app.BtnPlaceL1.BackgroundColor = [1.0 0.95 0.2];
+            setStatus(app,'L1 line shown.  Click on coronal or sagittal image to reposition.');
+            app.LblL12Status.Text = 'L1 line shown — click image to reposition, scroll to navigate.';
             app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor','L1');
             app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag','L1');
         end
@@ -895,12 +916,19 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 uialert(app.UIFigure,'Load a study first.','No Localizer');
                 return
             end
-            % Cancel any pending placement first
             cancelPendingClick(app);
+            % Place line immediately at 2/3 from top if not already set (L2 is below L1)
+            if isnan(app.AppData.L2_CorRow)
+                nRows = size(app.AppData.Localizer.Coronal.Volume, 1);
+                app.AppData.L2_CorRow = max(1, round(nRows * 2 / 5));
+            end
+            refreshLocCoronal(app);
+            refreshLocSagittal(app);
+            % Arm click to reposition
             app.AppData.AwaitingClick = 'L2';
-            app.BtnPlaceL2.BackgroundColor = [0.80 0.95 1.0];  % highlight active
-            setStatus(app,'Click on the L2 vertebra in the coronal or sagittal image…');
-            app.LblL12Status.Text = 'Waiting for L2 click on either image…';
+            app.BtnPlaceL2.BackgroundColor = [0.80 0.95 1.0];
+            setStatus(app,'L2 line shown.  Click on coronal or sagittal image to reposition.');
+            app.LblL12Status.Text = 'L2 line shown — click image to reposition, scroll to navigate.';
             app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor','L2');
             app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag','L2');
         end
@@ -1021,10 +1049,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 end
             end
 
-            setStatus(app,sprintf('Draw %s ROI on the water image (freehand).  Double-click to close.', ...
+            setStatus(app,sprintf('Draw %s ROI on the image (freehand).  Double-click to close.', ...
                 strrep(roiName,'_',' ')));
             try
-                h = drawfreehand(app.AxDixonWater,'Color',dixonROIColor(roiName), ...
+                h = drawfreehand(app.AxDixon,'Color',dixonROIColor(roiName), ...
                     'LineWidth',2,'FaceAlpha',0.15);
                 wait(h);
                 nR = size(app.AppData.Dixon.Water,1);
@@ -1302,52 +1330,83 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblDixonSlice.Text = sprintf('%d/%d', dixMid, nZ);
             app.LblDixonInfo.Text  = sprintf('Pixel: %.2fmm  Slice: %.1fmm', ...
                 dix.PixelSpacing_mm(1), dix.SliceThickness_mm);
+            % Auto-select best available contrast
+            if ~isempty(dix.Water)
+                app.DdlDixonContrast.Value = 'Water';
+            elseif ~isempty(dix.Fat)
+                app.DdlDixonContrast.Value = 'Fat';
+            elseif ~isempty(dix.PDFF)
+                app.DdlDixonContrast.Value = 'PDFF';
+            end
+            app.AppData.DixonContrast = app.DdlDixonContrast.Value;
+            refreshDixon(app);
+        end
+
+        function onDixonContrastChange(app)
+            app.AppData.DixonContrast = app.DdlDixonContrast.Value;
             refreshDixon(app);
         end
 
         function refreshDixon(app)
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
-            sl = app.AppData.DixonSlice;
-            nZ = max(1, dix.nSlices);
-            sl = max(1, min(nZ, sl));
+            sl  = app.AppData.DixonSlice;
+            nZ  = max(1, dix.nSlices);
+            sl  = max(1, min(nZ, sl));
+            app.LblDixonSlice.Text = sprintf('%d/%d', sl, nZ);
 
-            % Water
-            if ~isempty(dix.Water)
-                img = double(dix.Water(:,:,min(sl,end)));
-                showImg(app.AxDixonWater, img, sprintf('Water  sl %d',sl));
-            end
-            % PDFF
-            if ~isempty(dix.PDFF)
-                img = double(dix.PDFF(:,:,min(sl,end)));
-                imagesc(app.AxDixonPDFF, img); clim(app.AxDixonPDFF,[0 100]);
-                colormap(app.AxDixonPDFF,'hot'); axis(app.AxDixonPDFF,'image');
-                app.AxDixonPDFF.XTick=[]; app.AxDixonPDFF.YTick=[];
-                title(app.AxDixonPDFF,sprintf('PDFF (%%)  sl %d',sl),'FontSize',12, ...
-                    'Color',[0.75 0.75 0.75],'FontWeight','normal');
-            end
-            % In-phase
-            if ~isempty(dix.InPhase)
-                img = double(dix.InPhase(:,:,min(sl,end)));
-                showImg(app.AxDixonIP, img, sprintf('In-Phase  sl %d',sl));
+            % Select image volume based on chosen contrast
+            contrast = app.AppData.DixonContrast;
+            switch contrast
+                case 'Water'
+                    vol = dix.Water;   cmap = 'gray';  climMode = 'auto';
+                case 'Fat'
+                    vol = dix.Fat;     cmap = 'gray';  climMode = 'auto';
+                case 'PDFF'
+                    vol = dix.PDFF;    cmap = 'hot';   climMode = 'fixed';
+                case 'InPhase'
+                    vol = dix.InPhase; cmap = 'gray';  climMode = 'auto';
+                case 'OutPhase'
+                    vol = dix.OutPhase;cmap = 'gray';  climMode = 'auto';
+                otherwise
+                    vol = dix.Water;   cmap = 'gray';  climMode = 'auto';
             end
 
-            % Overlay L1/L2 lines if available
+            ax = app.AxDixon;
+            if isempty(vol)
+                title(ax, sprintf('%s — not available', contrast), ...
+                    'FontSize',12,'Color',[0.7 0.4 0.2],'FontWeight','normal');
+                return
+            end
+
+            img = double(vol(:,:, min(sl, size(vol,3))));
+            imagesc(ax, img);
+            colormap(ax, cmap);
+            if strcmp(climMode,'fixed')
+                clim(ax, [0 100]);
+            else
+                lo = min(img(:)); hi = max(img(:));
+                if hi > lo, clim(ax, [lo hi]); end
+            end
+            axis(ax,'image');
+            ax.XTick=[]; ax.YTick=[];
+            title(ax, sprintf('%s   sl %d/%d', contrast, sl, nZ), ...
+                'FontSize',13,'Color',[0.78 0.78 0.78],'FontWeight','normal');
+
+            % Overlay L1/L2 slice markers
             l12d = app.AppData.L12_Dixon;
-            if ~isempty(l12d) && ~isnan(l12d.L1_sliceIdx)
-                for ax = [app.AxDixonWater, app.AxDixonPDFF, app.AxDixonIP]
-                    hold(ax,'on');
-                    nC = size(app.AppData.Dixon.Water,2);
-                    if sl == round(l12d.L1_sliceIdx)
-                        plot(ax,[1 nC],[nC/2 nC/2],'--','Color',[0.95 0.60 0.10],'LineWidth',1.5);
-                        text(ax,4,10,'L1','Color',[0.95 0.60 0.10],'FontSize',11,'FontWeight','bold');
-                    end
-                    if sl == round(l12d.L2_sliceIdx)
-                        plot(ax,[1 nC],[nC/2 nC/2],'--','Color',[0.38 0.62 0.92],'LineWidth',1.5);
-                        text(ax,4,10,'L2','Color',[0.38 0.62 0.92],'FontSize',11,'FontWeight','bold');
-                    end
-                    hold(ax,'off');
+            if ~isempty(l12d) && isfield(l12d,'L1_sliceIdx') && ~isnan(l12d.L1_sliceIdx)
+                nC = size(img, 2);
+                hold(ax,'on');
+                if sl == round(l12d.L1_sliceIdx)
+                    plot(ax,[1 nC],[4 4],'--','Color',[0.95 0.60 0.10],'LineWidth',2);
+                    text(ax,4,12,'L1','Color',[0.95 0.60 0.10],'FontSize',13,'FontWeight','bold');
                 end
+                if sl == round(l12d.L2_sliceIdx)
+                    plot(ax,[1 nC],[4 4],'--','Color',[0.38 0.62 0.92],'LineWidth',2);
+                    text(ax,4,12,'L2','Color',[0.38 0.62 0.92],'FontSize',13,'FontWeight','bold');
+                end
+                hold(ax,'off');
             end
         end
 
@@ -1486,13 +1545,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function overlayROIOnDixon(app, roiName, mask)
             bnd = bwboundaries(mask);
             clr = dixonROIColor(roiName);
-            for ax = [app.AxDixonWater, app.AxDixonPDFF, app.AxDixonIP]
-                hold(ax,'on');
-                for b=1:numel(bnd)
-                    plot(ax,bnd{b}(:,2),bnd{b}(:,1),'-','Color',clr,'LineWidth',2);
-                end
-                hold(ax,'off');
+            ax  = app.AxDixon;
+            hold(ax,'on');
+            for b = 1:numel(bnd)
+                plot(ax, bnd{b}(:,2), bnd{b}(:,1), '-','Color',clr,'LineWidth',2);
             end
+            hold(ax,'off');
         end
 
         function updateStudyBrowser(app, exam, selection)
