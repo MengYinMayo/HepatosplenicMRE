@@ -164,6 +164,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'L2_CorRow',    NaN, ...  % row index in coronal localizer
             'L1_SagRow',    NaN, ...  % row index in sagittal localizer
             'L2_SagRow',    NaN, ...
+            'LocHoverAxes', '', ...   % 'cor' | 'sag' | '' for scroll-wheel routing
+            'AwaitingClick','', ...   % 'L1' | 'L2' | '' placement mode
             'CorSlice',     1, ...    % current coronal slice index
             'SagSlice',     1, ...    % current sagittal slice index
             'DixonSlice',   1, ...
@@ -405,18 +407,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             app.BtnPlaceL1 = uibutton(ctrlGrid,'push');
             app.BtnPlaceL1.Layout.Column=1;
-            app.BtnPlaceL1.Text='Mark L1 on coronal';
+            app.BtnPlaceL1.Text='Mark L1';
             app.BtnPlaceL1.FontSize=12; app.BtnPlaceL1.FontWeight='bold';
             app.BtnPlaceL1.BackgroundColor=[0.92 0.60 0.12];
-            app.BtnPlaceL1.Tooltip='Click this then click on the L1 vertebra in the coronal image';
+            app.BtnPlaceL1.Tooltip='Click, then click on L1 in either the coronal or sagittal image';
             app.BtnPlaceL1.ButtonPushedFcn = @(~,~)app.placeL1();
 
             app.BtnPlaceL2 = uibutton(ctrlGrid,'push');
             app.BtnPlaceL2.Layout.Column=2;
-            app.BtnPlaceL2.Text='Mark L2 on coronal';
+            app.BtnPlaceL2.Text='Mark L2';
             app.BtnPlaceL2.FontSize=12; app.BtnPlaceL2.FontWeight='bold';
             app.BtnPlaceL2.BackgroundColor=[0.38 0.62 0.92];
-            app.BtnPlaceL2.Tooltip='Click this then click on the L2 vertebra in the coronal image';
+            app.BtnPlaceL2.Tooltip='Click, then click on L2 in either the coronal or sagittal image';
             app.BtnPlaceL2.ButtonPushedFcn = @(~,~)app.placeL2();
 
             app.BtnClearL12 = uibutton(ctrlGrid,'push');
@@ -427,8 +429,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             app.LblL12Status = uilabel(ctrlGrid);
             app.LblL12Status.Layout.Column=[4 5];
-            app.LblL12Status.Text='No L1/L2 placed yet.  Use sliders to navigate, then click Mark L1/L2.';
+            app.LblL12Status.Text='Scroll wheel over image to navigate.  Click Mark L1/L2, then click in coronal or sagittal.';
             app.LblL12Status.FontSize=12; app.LblL12Status.FontColor=[0.4 0.4 0.4];
+
+            % Scroll-wheel and mouse-hover tracking (figure-level, registered once)
+            app.UIFigure.WindowScrollWheelFcn   = @(~,e)app.onScrollWheel(e);
+            app.UIFigure.WindowButtonMotionFcn  = @(~,~)app.onMouseMove();
         end
 
         % ── DIXON TAB ────────────────────────────────────────────────────
@@ -853,14 +859,14 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function onLocCorSlide(app, src)
             sl = round(src.Value);
             app.AppData.CorSlice = sl;
-            app.LblLocCor.Text = sprintf('%d',sl);
+            app.LblLocCor.Text = sprintf('%d/%d', sl, round(src.Limits(2)));
             refreshLocCoronal(app);
         end
 
         function onLocSagSlide(app, src)
             sl = round(src.Value);
             app.AppData.SagSlice = sl;
-            app.LblLocSag.Text = sprintf('%d',sl);
+            app.LblLocSag.Text = sprintf('%d/%d', sl, round(src.Limits(2)));
             refreshLocSagittal(app);
         end
 
@@ -869,17 +875,14 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 uialert(app.UIFigure,'Load a study first.','No Localizer');
                 return
             end
-            setStatus(app,'Click on the L1 vertebra centre in the coronal image...');
-            % Use ginput-style: user clicks on the coronal axes
-            figure(app.UIFigure);
-            [~, rowY] = ginputAxes(app.AxLocCoronal);
-            if ~isnan(rowY)
-                app.AppData.L1_CorRow = rowY;
-                refreshLocCoronal(app);
-                setStatus(app,sprintf('L1 marked at row %.0f on coronal slice %d.  Now mark L2.', ...
-                    rowY, app.AppData.CorSlice));
-                app.LblL12Status.Text = sprintf('L1 @ row %.0f  |  L2: not placed', rowY);
-            end
+            % Cancel any pending placement first
+            cancelPendingClick(app);
+            app.AppData.AwaitingClick = 'L1';
+            app.BtnPlaceL1.BackgroundColor = [1.0 0.95 0.2];  % highlight active
+            setStatus(app,'Click on the L1 vertebra in the coronal or sagittal image…');
+            app.LblL12Status.Text = 'Waiting for L1 click on either image…';
+            app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor','L1');
+            app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag','L1');
         end
 
         function placeL2(app)
@@ -887,27 +890,50 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 uialert(app.UIFigure,'Load a study first.','No Localizer');
                 return
             end
-            setStatus(app,'Click on the L2 vertebra centre in the coronal image...');
-            figure(app.UIFigure);
-            [~, rowY] = ginputAxes(app.AxLocCoronal);
-            if ~isnan(rowY)
-                app.AppData.L2_CorRow = rowY;
-                refreshLocCoronal(app);
-                l1r = app.AppData.L1_CorRow;
-                setStatus(app,sprintf('L2 marked at row %.0f.  Click Confirm L1-L2 in toolbar.', rowY));
-                if ~isnan(l1r)
-                    app.LblL12Status.Text = sprintf('L1 @ row %.0f  |  L2 @ row %.0f  — press Confirm L1-L2', ...
-                        l1r, rowY);
-                end
-            end
+            % Cancel any pending placement first
+            cancelPendingClick(app);
+            app.AppData.AwaitingClick = 'L2';
+            app.BtnPlaceL2.BackgroundColor = [0.80 0.95 1.0];  % highlight active
+            setStatus(app,'Click on the L2 vertebra in the coronal or sagittal image…');
+            app.LblL12Status.Text = 'Waiting for L2 click on either image…';
+            app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor','L2');
+            app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag','L2');
+        end
+
+        function cancelPendingClick(app)
+            % Clear any previously armed ButtonDownFcn on localizer axes
+            try; app.AxLocCoronal.ButtonDownFcn  = ''; catch; end
+            try; app.AxLocSagittal.ButtonDownFcn = ''; catch; end
+            app.AppData.AwaitingClick = '';
+            app.BtnPlaceL1.BackgroundColor = [0.92 0.60 0.12];
+            app.BtnPlaceL2.BackgroundColor = [0.38 0.62 0.92];
         end
 
         function clearL12(app)
+            cancelPendingClick(app);
             app.AppData.L1_CorRow = NaN;
             app.AppData.L2_CorRow = NaN;
+            app.AppData.L1_SagRow = NaN;
+            app.AppData.L2_SagRow = NaN;
             refreshLocCoronal(app);
+            refreshLocSagittal(app);
             app.LblL12Status.Text = 'L1/L2 cleared.';
             setStatus(app,'L1-L2 cleared.');
+        end
+
+        function updateL12Status(app)
+            l1r = app.AppData.L1_CorRow;
+            l2r = app.AppData.L2_CorRow;
+            if isnan(l1r) && isnan(l2r)
+                app.LblL12Status.Text = 'No L1/L2 placed yet.';
+            elseif isnan(l2r)
+                app.LblL12Status.Text = sprintf('L1 placed  |  L2: not placed yet.  Click Mark L2.');
+            elseif isnan(l1r)
+                app.LblL12Status.Text = sprintf('L1: not placed  |  L2 placed.  Click Mark L1.');
+            else
+                app.LblL12Status.Text = sprintf('L1 placed  |  L2 placed  — press Confirm L1-L2 in toolbar.');
+                app.BtnConfirmL12.Enable = 'on';
+            end
         end
 
         function confirmL12(app)
@@ -1186,6 +1212,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.SldrLocSag.Value  = round(nSag/2);
             app.AppData.CorSlice  = round(nCor/2);
             app.AppData.SagSlice  = round(nSag/2);
+            app.LblLocCor.Text = sprintf('%d/%d', round(nCor/2), nCor);
+            app.LblLocSag.Text = sprintf('%d/%d', round(nSag/2), nSag);
 
             refreshLocCoronal(app);
             refreshLocSagittal(app);
@@ -1222,9 +1250,30 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             loc = app.AppData.Localizer;
             if isempty(loc) || isempty(loc.Sagittal.Volume), return; end
             sl  = app.AppData.SagSlice;
-            sl  = max(1, min(size(loc.Sagittal.Volume,3), sl));
+            nSl = size(loc.Sagittal.Volume,3);
+            sl  = max(1, min(nSl, sl));
             img = double(loc.Sagittal.Volume(:,:,sl));
-            showImg(app.AxLocSagittal, img, sprintf('Sagittal  slice %d',sl));
+            showImg(app.AxLocSagittal, img, sprintf('Sagittal  %d/%d',sl,nSl));
+            % Overlay L1/L2 lines, converted from coronal mm coordinates
+            hold(app.AxLocSagittal,'on');
+            nC = size(img,2);
+            l1_sagRow = corRowToSagRow(app, app.AppData.L1_CorRow, sl);
+            l2_sagRow = corRowToSagRow(app, app.AppData.L2_CorRow, sl);
+            if ~isnan(l1_sagRow)
+                plot(app.AxLocSagittal,[1 nC],[l1_sagRow l1_sagRow], ...
+                    '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
+                text(app.AxLocSagittal, nC-2, l1_sagRow-3,'L1', ...
+                    'Color',[0.95 0.60 0.10],'FontSize',12,'FontWeight','bold', ...
+                    'HorizontalAlignment','right');
+            end
+            if ~isnan(l2_sagRow)
+                plot(app.AxLocSagittal,[1 nC],[l2_sagRow l2_sagRow], ...
+                    '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
+                text(app.AxLocSagittal, nC-2, l2_sagRow-3,'L2', ...
+                    'Color',[0.38 0.62 0.92],'FontSize',12,'FontWeight','bold', ...
+                    'HorizontalAlignment','right');
+            end
+            hold(app.AxLocSagittal,'off');
         end
 
         function populateDixonTab(app)
@@ -1497,6 +1546,181 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             catch
             end
         end
+
+        % -----------------------------------------------------------------
+        %  SCROLL-WHEEL NAVIGATION
+        % -----------------------------------------------------------------
+        function onScrollWheel(app, event)
+            % Route scroll wheel to the image the cursor is currently over.
+            delta = -event.VerticalScrollCount;   % positive = scroll up = next slice
+            switch app.AppData.LocHoverAxes
+                case 'cor'
+                    nMax = round(app.SldrLocCor.Limits(2));
+                    sl   = max(1, min(nMax, app.AppData.CorSlice + delta));
+                    app.AppData.CorSlice = sl;
+                    app.SldrLocCor.Value = sl;
+                    app.LblLocCor.Text   = sprintf('%d/%d', sl, nMax);
+                    refreshLocCoronal(app);
+                case 'sag'
+                    nMax = round(app.SldrLocSag.Limits(2));
+                    sl   = max(1, min(nMax, app.AppData.SagSlice + delta));
+                    app.AppData.SagSlice = sl;
+                    app.SldrLocSag.Value = sl;
+                    app.LblLocSag.Text   = sprintf('%d/%d', sl, nMax);
+                    refreshLocSagittal(app);
+            end
+        end
+
+        function onMouseMove(app)
+            % Determine which localizer axes the mouse is hovering over.
+            % Uses CurrentPoint in data-space compared to axis limits.
+            try
+                cp = app.AxLocCoronal.CurrentPoint;
+                xl = app.AxLocCoronal.XLim;
+                yl = app.AxLocCoronal.YLim;
+                if cp(1,1) >= xl(1) && cp(1,1) <= xl(2) && ...
+                   cp(1,2) >= yl(1) && cp(1,2) <= yl(2)
+                    app.AppData.LocHoverAxes = 'cor';
+                    return
+                end
+            catch; end
+            try
+                cp = app.AxLocSagittal.CurrentPoint;
+                xl = app.AxLocSagittal.XLim;
+                yl = app.AxLocSagittal.YLim;
+                if cp(1,1) >= xl(1) && cp(1,1) <= xl(2) && ...
+                   cp(1,2) >= yl(1) && cp(1,2) <= yl(2)
+                    app.AppData.LocHoverAxes = 'sag';
+                    return
+                end
+            catch; end
+            app.AppData.LocHoverAxes = '';
+        end
+
+        % -----------------------------------------------------------------
+        %  L1/L2 CLICK HANDLER (fires from ButtonDownFcn on either axes)
+        % -----------------------------------------------------------------
+        function onLocImageClick(app, event, plane, level)
+            if ~strcmp(app.AppData.AwaitingClick, level), return; end
+
+            % Clear armed state immediately
+            cancelPendingClick(app);
+
+            pt   = event.IntersectionPoint;
+            rowY = pt(2);   % y in image data coordinates = row
+
+            if strcmp(plane, 'cor')
+                % Clicked on coronal — store directly as coronal row
+                corRow = rowY;
+                sagRow = corRowToSagRow(app, corRow);
+            else
+                % Clicked on sagittal — convert to coronal row via mm
+                corRow = sagRowToCorRow(app, rowY, app.AppData.SagSlice);
+                sagRow = rowY;
+            end
+
+            if strcmp(level, 'L1')
+                app.AppData.L1_CorRow = corRow;
+                app.AppData.L1_SagRow = sagRow;
+            else
+                app.AppData.L2_CorRow = corRow;
+                app.AppData.L2_SagRow = sagRow;
+            end
+
+            refreshLocCoronal(app);
+            refreshLocSagittal(app);
+            updateL12Status(app);
+        end
+
+        % -----------------------------------------------------------------
+        %  COORDINATE CONVERSION HELPERS
+        % -----------------------------------------------------------------
+        function sagRow = corRowToSagRow(app, corRow, sagSliceOverride)
+            % Convert a coronal row index to the equivalent sagittal row index
+            % using patient-coordinate Z positions.
+            sagRow = NaN;
+            if isnan(corRow), return; end
+            loc = app.AppData.Localizer;
+            if isempty(loc), return; end
+
+            % --- coronal row → Z mm ---
+            try
+                cor    = loc.Coronal;
+                corSl  = app.AppData.CorSlice;
+                corSl  = max(1, min(size(cor.Volume,3), corSl));
+                ps     = cor.SpatialInfo.PixelSpacing(1);
+                iop    = cor.SpatialInfo.ImageOrientationPatient;
+                rowDir = iop(1:3);
+                imgPos = cor.ImagePositions(corSl, :);
+                ptMm   = imgPos + (corRow - 1) * ps * rowDir;
+                z_mm   = ptMm(3);
+            catch
+                return
+            end
+
+            % --- Z mm → sagittal row ---
+            try
+                sag    = loc.Sagittal;
+                if nargin < 3 || isempty(sagSliceOverride)
+                    sagSl = app.AppData.SagSlice;
+                else
+                    sagSl = sagSliceOverride;
+                end
+                sagSl  = max(1, min(size(sag.Volume,3), sagSl));
+                ps2    = sag.SpatialInfo.PixelSpacing(1);
+                iop2   = sag.SpatialInfo.ImageOrientationPatient;
+                rowDir2= iop2(1:3);
+                imgPos2= sag.ImagePositions(sagSl, :);
+                dz     = rowDir2(3);
+                if abs(dz) < 1e-6, return; end
+                sagRow = round(1 + (z_mm - imgPos2(3)) / (ps2 * dz));
+                nRows  = size(sag.Volume, 1);
+                if sagRow < 1 || sagRow > nRows, sagRow = NaN; end
+            catch
+                return
+            end
+        end
+
+        function corRow = sagRowToCorRow(app, sagRow, sagSlice)
+            % Convert a sagittal row index (on given slice) to a coronal row index.
+            corRow = NaN;
+            if isnan(sagRow), return; end
+            loc = app.AppData.Localizer;
+            if isempty(loc), return; end
+
+            % --- sagittal row → Z mm ---
+            try
+                sag    = loc.Sagittal;
+                sagSl  = max(1, min(size(sag.Volume,3), sagSlice));
+                ps     = sag.SpatialInfo.PixelSpacing(1);
+                iop    = sag.SpatialInfo.ImageOrientationPatient;
+                rowDir = iop(1:3);
+                imgPos = sag.ImagePositions(sagSl, :);
+                ptMm   = imgPos + (sagRow - 1) * ps * rowDir;
+                z_mm   = ptMm(3);
+            catch
+                return
+            end
+
+            % --- Z mm → coronal row ---
+            try
+                cor    = loc.Coronal;
+                corSl  = app.AppData.CorSlice;
+                corSl  = max(1, min(size(cor.Volume,3), corSl));
+                ps2    = cor.SpatialInfo.PixelSpacing(1);
+                iop2   = cor.SpatialInfo.ImageOrientationPatient;
+                rowDir2= iop2(1:3);
+                imgPos2= cor.ImagePositions(corSl, :);
+                dz     = rowDir2(3);
+                if abs(dz) < 1e-6, return; end
+                corRow = round(1 + (z_mm - imgPos2(3)) / (ps2 * dz));
+                nRows  = size(cor.Volume, 1);
+                if corRow < 1 || corRow > nRows, corRow = NaN; end
+            catch
+                return
+            end
+        end
+
     end
 
     % =====================================================================
