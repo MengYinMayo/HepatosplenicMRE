@@ -789,13 +789,17 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 app.AppData.Selection = selection;
 
                 dlg = uiprogressdlg(app.UIFigure,'Title','Building Data', ...
-                    'Message','Building MRE MAT file...','Indeterminate','on');
+                    'Message','Loading series data...','Indeterminate','on');
 
-                % 4. Build MRE MAT
-                dlg.Message = 'Building MRE MAT file...';
                 matOpts = struct('outputDir',folderPath,'verbose',false, ...
                                  'forceRebuild',false,'interpolateWave',true);
-                matPath = mre_buildMATFile(selection, matOpts);
+                matPath = '';
+
+                % 4. Build MRE MAT (only if MRE series was selected)
+                if ~isempty(selection.MRE)
+                    dlg.Message = 'Building MRE MAT file...';
+                    matPath = mre_buildMATFile(exam, matOpts);
+                end
                 app.AppData.MATPath = matPath;
 
                 % 5. Load Localizer
@@ -815,7 +819,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 end
 
                 % 7. Load MRE .mat
-                if isfile(matPath)
+                if ~isempty(matPath) && isfile(matPath)
                     dlg.Message = 'Loading MRE data...';
                     tmp = load(matPath,'M','W','S','LapC','H');
                     app.AppData.MRE = tmp;
@@ -1206,14 +1210,20 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Set slider ranges
             nCor = size(loc.Coronal.Volume,3);
             nSag = size(loc.Sagittal.Volume,3);
+            if nCor == 0 && nSag == 0
+                setStatus(app,'Localizer loaded but no images decoded (check DICOM path)');
+                return
+            end
+            corMid = max(1, round(nCor/2));
+            sagMid = max(1, round(nSag/2));
             app.SldrLocCor.Limits = [1 max(nCor,2)];
             app.SldrLocSag.Limits = [1 max(nSag,2)];
-            app.SldrLocCor.Value  = round(nCor/2);
-            app.SldrLocSag.Value  = round(nSag/2);
-            app.AppData.CorSlice  = round(nCor/2);
-            app.AppData.SagSlice  = round(nSag/2);
-            app.LblLocCor.Text = sprintf('%d/%d', round(nCor/2), nCor);
-            app.LblLocSag.Text = sprintf('%d/%d', round(nSag/2), nSag);
+            app.SldrLocCor.Value  = corMid;
+            app.SldrLocSag.Value  = sagMid;
+            app.AppData.CorSlice  = corMid;
+            app.AppData.SagSlice  = sagMid;
+            app.LblLocCor.Text = sprintf('%d/%d', corMid, max(nCor,1));
+            app.LblLocSag.Text = sprintf('%d/%d', sagMid, max(nSag,1));
 
             refreshLocCoronal(app);
             refreshLocSagittal(app);
@@ -1279,11 +1289,16 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function populateDixonTab(app)
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
-            nZ = max(1, dix.nSlices);
+            if dix.nSlices == 0
+                setStatus(app,'Dixon loaded but no slices decoded (check DICOM path)');
+                return
+            end
+            nZ = dix.nSlices;
+            dixMid = max(1, round(nZ/2));
             app.SldrDixon.Limits = [1 max(nZ,2)];
-            app.SldrDixon.Value  = round(nZ/2);
-            app.AppData.DixonSlice = round(nZ/2);
-            app.LblDixonSlice.Text = sprintf('%d/%d',round(nZ/2),nZ);
+            app.SldrDixon.Value  = dixMid;
+            app.AppData.DixonSlice = dixMid;
+            app.LblDixonSlice.Text = sprintf('%d/%d', dixMid, nZ);
             app.LblDixonInfo.Text  = sprintf('Pixel: %.2fmm  Slice: %.1fmm', ...
                 dix.PixelSpacing_mm(1), dix.SliceThickness_mm);
             refreshDixon(app);
@@ -1339,10 +1354,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             mre = app.AppData.MRE;
             if isempty(mre), return; end
             nZ = max(1, size(mre.S,3));
+            mreMid = max(1, round(nZ/2));
             app.SldrMRE.Limits = [1 max(nZ,2)];
-            app.SldrMRE.Value  = round(nZ/2);
-            app.AppData.MRESlice = round(nZ/2);
-            app.LblMRESlice.Text = sprintf('%d/%d',round(nZ/2),nZ);
+            app.SldrMRE.Value  = mreMid;
+            app.AppData.MRESlice = mreMid;
+            app.LblMRESlice.Text = sprintf('%d/%d', mreMid, nZ);
             refreshMRE(app);
         end
 

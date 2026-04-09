@@ -131,6 +131,8 @@ function matPath = mre_buildMATFile(exam, opts)
 
     % ── 5.  Build DICOM header struct ─────────────────────────────────
     H = buildHeaderStruct(wmSeries.Header, sinfo);
+    % Embed full spatial info in H for cross-series co-localization
+    H.SpatialInfo = sinfo;
 
     % ── 6.  Match S and LapC dimensions to W/M ────────────────────────
     [nR, nC, nZ] = size(W, 1, 2, 3);
