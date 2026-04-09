@@ -106,6 +106,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnConfMap          matlab.ui.control.StateButton
         BtnROI_LiverMRE     matlab.ui.control.Button
         BtnROI_SpleenMRE    matlab.ui.control.Button
+        BtnMREDrawROI       matlab.ui.control.Button
         BtnClearMREROIs     matlab.ui.control.Button
 
         % Results tab
@@ -176,7 +177,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'MREPlaying',   false, ...
             'MRETimer',     [], ...
             'StiffCLim',    [0 8], ...
-            'DixonContrast', 'Water', ...  % 'Water'|'Fat'|'PDFF'|'InPhase'|'OutPhase'
+            'DixonContrast', 'PDFF', ...  % 'PDFF'|'Water'|'Fat'|'T2star'|'InPhase'|'OutPhase'
             'ShowConfMask', false, ...
             'ROIs',         struct( ...   % all ROI masks
                 'LiverDixon',  struct('Slices',struct()), ...
@@ -466,9 +467,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             lcon.Text='Contrast:'; lcon.FontSize=13; lcon.FontWeight='bold';
             app.DdlDixonContrast = uidropdown(contRow);
             app.DdlDixonContrast.Layout.Column=2;
-            app.DdlDixonContrast.Items     = {'Water','Fat','PDFF (%)','In-Phase','Out-Phase'};
-            app.DdlDixonContrast.ItemsData = {'Water','Fat','PDFF','InPhase','OutPhase'};
-            app.DdlDixonContrast.Value     = 'Water';
+            app.DdlDixonContrast.Items     = {'PDFF (%)','Water','Fat','T2* (ms)','In-Phase','Out-Phase'};
+            app.DdlDixonContrast.ItemsData = {'PDFF','Water','Fat','T2star','InPhase','OutPhase'};
+            app.DdlDixonContrast.Value     = 'PDFF';
             app.DdlDixonContrast.FontSize  = 13;
             app.DdlDixonContrast.ValueChangedFcn = @(~,~)app.onDixonContrastChange();
 
@@ -625,8 +626,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             roiPnl = uipanel(app.MREGrid,'Title','MRE ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[8 1]);
-            rg.RowHeight   = repmat({36},1,8); rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
+            rg = uigridlayout(roiPnl,[9 1]);
+            rg.RowHeight   = repmat({36},1,9); rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
             uilabel(rg,'Text','Stiffness ROIs:','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
@@ -639,16 +640,25 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 [0.20 0.50 0.70],[1 1 1]);
             app.BtnROI_SpleenMRE.ButtonPushedFcn = @(~,~)app.drawMREROI('SpleenMRE');
 
+            app.BtnMREDrawROI = uibutton(rg,'push');
+            app.BtnMREDrawROI.Layout.Row=4;
+            app.BtnMREDrawROI.Text='ROI GUI (mmdi)';
+            app.BtnMREDrawROI.FontSize=12; app.BtnMREDrawROI.FontWeight='bold';
+            app.BtnMREDrawROI.BackgroundColor=[0.55 0.22 0.70];
+            app.BtnMREDrawROI.FontColor=[1 1 1];
+            app.BtnMREDrawROI.Tooltip='Open interactive 3-panel MRE ROI tool (mmdi_roi_gui)';
+            app.BtnMREDrawROI.ButtonPushedFcn = @(~,~)app.launchMmdiROIGui();
+
             uilabel(rg,'Text','ROI info:','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
 
             app.LblMREInfo = uilabel(rg);
-            app.LblMREInfo.Layout.Row=[5 7];
-            app.LblMREInfo.Text='Draw ROI on wave image (inner) or magnitude (contour).  ROI saved per slice.';
+            app.LblMREInfo.Layout.Row=[6 8];
+            app.LblMREInfo.Text='Use "ROI GUI (mmdi)" for the full interactive 3-panel workflow.  Draw ROI on wave image (inner) or magnitude (contour).  ROI saved per slice.';
             app.LblMREInfo.FontSize=11; app.LblMREInfo.WordWrap='on';
             app.LblMREInfo.FontColor=[0.45 0.45 0.45];
 
-            app.BtnClearMREROIs = roiBtn(rg,8,'Clear this slice', ...
+            app.BtnClearMREROIs = roiBtn(rg,9,'Clear this slice', ...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearMREROIs.ButtonPushedFcn = @(~,~)app.clearMRESlice();
         end
@@ -1154,6 +1164,38 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             setStatus(app,sprintf('MRE ROIs cleared for slice %d.',sl));
         end
 
+        function launchMmdiROIGui(app)
+            % Launch the interactive mmdi_roi_gui for full MRE ROI workflow.
+            if isempty(app.AppData.MATPath) || ~isfile(app.AppData.MATPath)
+                uialert(app.UIFigure, ...
+                    'No MRE MAT file loaded. Please load an MRE study first.', ...
+                    'No MRE Data', 'Icon','warning');
+                return
+            end
+            matPath = app.AppData.MATPath;
+            % Build meta struct for mmdi_roi_gui
+            meta = struct();
+            meta.SeriesDir = fileparts(matPath);
+            if ~isempty(app.AppData.Selection) && ~isempty(app.AppData.Selection.MRE)
+                meta.SeriesNumber = app.AppData.Selection.MRE.SeriesNumber;
+                meta.SeriesDescription = app.AppData.Selection.MRE.SeriesDescription;
+            end
+            if ~isempty(app.AppData.Exam)
+                meta.PatientID = app.AppData.Exam.PatientID;
+                meta.StudyDate = app.AppData.Exam.StudyDate;
+            end
+            setStatus(app,'Launching mmdi_roi_gui...');
+            try
+                status = mmdi_roi_gui(matPath, meta);
+                setStatus(app,sprintf('mmdi_roi_gui returned: %s', status));
+                % Reload MRE data in case ROI files were updated
+                refreshMRE(app);
+            catch ME
+                uialert(app.UIFigure, ME.message, 'mmdi_roi_gui Error', 'Icon','error');
+                setStatus(app,['mmdi_roi_gui error: ' ME.message]);
+            end
+        end
+
         function setStiffScale(app, clim)
             app.AppData.StiffCLim = clim;
             if ~isempty(app.AppData.MRE)
@@ -1269,20 +1311,24 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             hold(app.AxLocCoronal,'on');
             nC = size(img,2);
             if ~isnan(app.AppData.L1_CorRow)
+                z1 = corRowToZmm(app, app.AppData.L1_CorRow);
+                lbl1 = ['L1 ' siCoordStr(z1)];
                 hl = plot(app.AxLocCoronal,[1 nC],[app.AppData.L1_CorRow app.AppData.L1_CorRow], ...
                     '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
-                ht = text(app.AxLocCoronal, nC-2, app.AppData.L1_CorRow-3,'L1', ...
+                ht = text(app.AxLocCoronal, nC-2, app.AppData.L1_CorRow-3, lbl1, ...
                     'Color',[0.95 0.60 0.10],'FontSize',12,'FontWeight','bold', ...
                     'HorizontalAlignment','right');
-                try; hl.HitTest='off'; ht.HitTest='off'; catch; end
+                try; hl.HitTest='off'; hl.PickableParts='none'; ht.HitTest='off'; ht.PickableParts='none'; catch; end
             end
             if ~isnan(app.AppData.L2_CorRow)
+                z2 = corRowToZmm(app, app.AppData.L2_CorRow);
+                lbl2 = ['L2 ' siCoordStr(z2)];
                 hl = plot(app.AxLocCoronal,[1 nC],[app.AppData.L2_CorRow app.AppData.L2_CorRow], ...
                     '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
-                ht = text(app.AxLocCoronal, nC-2, app.AppData.L2_CorRow-3,'L2', ...
+                ht = text(app.AxLocCoronal, nC-2, app.AppData.L2_CorRow-3, lbl2, ...
                     'Color',[0.38 0.62 0.92],'FontSize',12,'FontWeight','bold', ...
                     'HorizontalAlignment','right');
-                try; hl.HitTest='off'; ht.HitTest='off'; catch; end
+                try; hl.HitTest='off'; hl.PickableParts='none'; ht.HitTest='off'; ht.PickableParts='none'; catch; end
             end
             hold(app.AxLocCoronal,'off');
         end
@@ -1301,20 +1347,24 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             l1_sagRow = corRowToSagRow(app, app.AppData.L1_CorRow, sl);
             l2_sagRow = corRowToSagRow(app, app.AppData.L2_CorRow, sl);
             if ~isnan(l1_sagRow)
+                z1 = corRowToZmm(app, app.AppData.L1_CorRow);
+                lbl1 = ['L1 ' siCoordStr(z1)];
                 hl = plot(app.AxLocSagittal,[1 nC],[l1_sagRow l1_sagRow], ...
                     '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
-                ht = text(app.AxLocSagittal, nC-2, l1_sagRow-3,'L1', ...
+                ht = text(app.AxLocSagittal, nC-2, l1_sagRow-3, lbl1, ...
                     'Color',[0.95 0.60 0.10],'FontSize',12,'FontWeight','bold', ...
                     'HorizontalAlignment','right');
-                try; hl.HitTest='off'; ht.HitTest='off'; catch; end
+                try; hl.HitTest='off'; hl.PickableParts='none'; ht.HitTest='off'; ht.PickableParts='none'; catch; end
             end
             if ~isnan(l2_sagRow)
+                z2 = corRowToZmm(app, app.AppData.L2_CorRow);
+                lbl2 = ['L2 ' siCoordStr(z2)];
                 hl = plot(app.AxLocSagittal,[1 nC],[l2_sagRow l2_sagRow], ...
                     '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
-                ht = text(app.AxLocSagittal, nC-2, l2_sagRow-3,'L2', ...
+                ht = text(app.AxLocSagittal, nC-2, l2_sagRow-3, lbl2, ...
                     'Color',[0.38 0.62 0.92],'FontSize',12,'FontWeight','bold', ...
                     'HorizontalAlignment','right');
-                try; hl.HitTest='off'; ht.HitTest='off'; catch; end
+                try; hl.HitTest='off'; hl.PickableParts='none'; ht.HitTest='off'; ht.PickableParts='none'; catch; end
             end
             hold(app.AxLocSagittal,'off');
         end
@@ -1334,13 +1384,13 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblDixonSlice.Text = sprintf('%d/%d', dixMid, nZ);
             app.LblDixonInfo.Text  = sprintf('Pixel: %.2fmm  Slice: %.1fmm', ...
                 dix.PixelSpacing_mm(1), dix.SliceThickness_mm);
-            % Auto-select best available contrast
-            if ~isempty(dix.Water)
+            % Auto-select best available contrast (PDFF preferred)
+            if ~isempty(dix.PDFF)
+                app.DdlDixonContrast.Value = 'PDFF';
+            elseif ~isempty(dix.Water)
                 app.DdlDixonContrast.Value = 'Water';
             elseif ~isempty(dix.Fat)
                 app.DdlDixonContrast.Value = 'Fat';
-            elseif ~isempty(dix.PDFF)
-                app.DdlDixonContrast.Value = 'PDFF';
             end
             app.AppData.DixonContrast = app.DdlDixonContrast.Value;
             refreshDixon(app);
@@ -1362,12 +1412,17 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Select image volume based on chosen contrast
             contrast = app.AppData.DixonContrast;
             switch contrast
+                case 'PDFF'
+                    vol = dix.PDFF;    cmap = 'hot';   climMode = 'pdff';
                 case 'Water'
                     vol = dix.Water;   cmap = 'gray';  climMode = 'auto';
                 case 'Fat'
                     vol = dix.Fat;     cmap = 'gray';  climMode = 'auto';
-                case 'PDFF'
-                    vol = dix.PDFF;    cmap = 'hot';   climMode = 'fixed';
+                case 'T2star'
+                    f = fieldnames(dix);
+                    t2f = f(strcmpi(f,'T2star'));
+                    if ~isempty(t2f), vol = dix.(t2f{1}); else, vol = []; end
+                    cmap = 'turbo';    climMode = 't2s';
                 case 'InPhase'
                     vol = dix.InPhase; cmap = 'gray';  climMode = 'auto';
                 case 'OutPhase'
@@ -1386,11 +1441,14 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             img = double(vol(:,:, min(sl, size(vol,3))));
             imagesc(ax, img);
             colormap(ax, cmap);
-            if strcmp(climMode,'fixed')
-                clim(ax, [0 100]);
-            else
-                lo = min(img(:)); hi = max(img(:));
-                if hi > lo, clim(ax, [lo hi]); end
+            switch climMode
+                case 'pdff'
+                    clim(ax, [0 100]);
+                case 't2s'
+                    clim(ax, [0 50]);  % 0-50 ms T2* range
+                otherwise
+                    lo = min(img(:)); hi = max(img(:));
+                    if hi > lo, clim(ax, [lo hi]); end
             end
             axis(ax,'image');
             ax.XTick=[]; ax.YTick=[];
@@ -1563,20 +1621,27 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 sprintf('%s  %s  (%s)', exam.PatientID, exam.StudyDate, exam.MREType));
             root.NodeData = exam;
             if ~isempty(selection.Localizer)
-                uitreenode(root,'Text',sprintf('[Localizer] S%d  %s', ...
+                uitreenode(root,'Text',sprintf('[Localizer]  S%d  %s', ...
                     selection.Localizer.SeriesNumber, selection.Localizer.SeriesDescription));
             end
             if ~isempty(selection.Dixon)
-                uitreenode(root,'Text',sprintf('[Dixon anchor] S%d  %s', ...
-                    selection.Dixon.SeriesNumber, selection.Dixon.SeriesDescription));
+                dixNode = uitreenode(root,'Text', ...
+                    sprintf('[Dixon / IDEAL-IQ]  %d series', numel(selection.DixonGroup)));
+                for k = 1:numel(selection.DixonGroup)
+                    s = selection.DixonGroup(k);
+                    roleDisp = strrep(s.Role,'IDEALIQ_','');
+                    uitreenode(dixNode,'Text',sprintf('  S%d  %-12s  %s', ...
+                        s.SeriesNumber, roleDisp, s.SeriesDescription));
+                end
             end
             if ~isempty(selection.MRE)
-                uitreenode(root,'Text',sprintf('[MRE anchor] S%d  %s', ...
-                    selection.MRE.SeriesNumber, selection.MRE.SeriesDescription));
-                for k=1:numel(selection.MREGroup)
-                    s=selection.MREGroup(k);
-                    uitreenode(root,'Text',sprintf('  S%d  %-22s %s', ...
-                        s.SeriesNumber, s.Role, s.SeriesDescription));
+                mreNode = uitreenode(root,'Text', ...
+                    sprintf('[MRE]  %d series', numel(selection.MREGroup)));
+                for k = 1:numel(selection.MREGroup)
+                    s = selection.MREGroup(k);
+                    roleDisp = strrep(strrep(s.Role,'GRE_',''),'EPI_','');
+                    uitreenode(mreNode,'Text',sprintf('  S%d  %-14s  %s', ...
+                        s.SeriesNumber, roleDisp, s.SeriesDescription));
                 end
             end
             expand(root,'all');
@@ -1766,6 +1831,27 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             end
         end
 
+        function z_mm = corRowToZmm(app, corRow)
+            % Convert a coronal row index to patient Z coordinate (mm, LPS).
+            % Positive = Superior, Negative = Inferior.
+            z_mm = NaN;
+            if isnan(corRow), return; end
+            loc = app.AppData.Localizer;
+            if isempty(loc), return; end
+            try
+                cor    = loc.Coronal;
+                corSl  = app.AppData.CorSlice;
+                corSl  = max(1, min(size(cor.Volume,3), corSl));
+                ps     = cor.SpatialInfo.PixelSpacing(1);
+                iop    = cor.SpatialInfo.ImageOrientationPatient;
+                rowDir = iop(1:3);
+                imgPos = cor.ImagePositions(corSl, :);
+                ptMm   = imgPos + (corRow - 1) * ps * rowDir;
+                z_mm   = round(ptMm(3));
+            catch
+            end
+        end
+
         function corRow = sagRowToCorRow(app, sagRow, sagSlice)
             % Convert a sagittal row index (on given slice) to a coronal row index.
             corRow = NaN;
@@ -1833,6 +1919,18 @@ end % classdef
 % =========================================================================
 %  MODULE-LEVEL HELPERS
 % =========================================================================
+
+function s = siCoordStr(z_mm)
+% Format a patient Z coordinate (mm) as "S123" (Superior) or "I45" (Inferior).
+% Returns '' if z_mm is NaN.
+    if isnan(z_mm)
+        s = '';
+    elseif z_mm >= 0
+        s = sprintf('S%d', abs(round(z_mm)));
+    else
+        s = sprintf('I%d', abs(round(z_mm)));
+    end
+end
 
 function setupDarkAxes(ax, titleStr)
     ax.XTick=[]; ax.YTick=[]; ax.Box='on';

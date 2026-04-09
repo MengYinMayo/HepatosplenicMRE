@@ -168,12 +168,19 @@ function entry = classifySeries(entry)
         end
 
         if contains(itype, 'derived') && bits == 16
-            % Distinguish by series number pattern and nImages
-            % Wave+Mag: large series (nImages = nSlices × nPhases × 2)
-            % Stiffness: moderate series, NOT wave pattern
-            % ConfMap / ProcWave: small series (nImages = nSlices or nPhases)
-
-            if isWaveMagSeries(entry)
+            % Primary classifier: last 2 digits of SeriesNumber encode type
+            %   mod=1 → Stiffness (x001)
+            %   mod=5 → Processed wave (x005, post-processed 8-phase, no magnitude)
+            %   mod=7 → Confidence map (x007)
+            %   other → fall through to heuristics
+            snMod = mod(sn, 100);
+            if snMod == 1
+                entry.Role = 'EPI_Stiffness';
+            elseif snMod == 5
+                entry.Role = 'EPI_ProcWave';
+            elseif snMod == 7
+                entry.Role = 'EPI_ConfMap';
+            elseif isWaveMagSeries(entry)
                 entry.Role = 'EPI_WaveMag';
             elseif isStiffnessSeries(entry)
                 entry.Role = 'EPI_Stiffness';
@@ -194,12 +201,27 @@ function entry = classifySeries(entry)
        contains(desc, 'gre mre') || contains(desc, '2d gre mre')
 
         if contains(itype, 'original')
+            % ORIGINAL: raw wave + magnitude (S700 = GRE_WaveMag)
+            % First half of images = wave_raw, second half = mag_raw
+            % (the split is performed by mre_readWaveMagSeries.m)
             entry.Role = 'GRE_WaveMag';
             return
         end
 
         if contains(itype, 'derived') && bits == 16
-            if isWaveMagSeries(entry)
+            % Primary classifier: last 2 digits of SeriesNumber encode type
+            %   mod=1 → Stiffness (x001, no confidence mask)
+            %   mod=5 → Processed wave (x005, post-processed 8-phase, no magnitude)
+            %   mod=7 → Confidence map (x007)
+            %   other → fall through to heuristics
+            snMod = mod(sn, 100);
+            if snMod == 1
+                entry.Role = 'GRE_Stiffness';
+            elseif snMod == 5
+                entry.Role = 'GRE_ProcWave';
+            elseif snMod == 7
+                entry.Role = 'GRE_ConfMap';
+            elseif isWaveMagSeries(entry)
                 entry.Role = 'GRE_ProcWave';
             elseif isStiffnessSeries(entry)
                 entry.Role = 'GRE_Stiffness';
