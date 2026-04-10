@@ -614,8 +614,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             % Row 2: colorbar strip only under stiffness panel (col 3)
             % Cols 1-2 get empty spacers so stiffness stays same width
-            uilabel(imgG,'Text','','Layout',struct('Row',2,'Column',1));
-            uilabel(imgG,'Text','','Layout',struct('Row',2,'Column',2));
+            sp1 = uilabel(imgG,'Text',''); sp1.Layout.Row=2; sp1.Layout.Column=1;
+            sp2 = uilabel(imgG,'Text',''); sp2.Layout.Row=2; sp2.Layout.Column=2;
             app.AxMREStiff.Colorbar = colorbar(app.AxMREStiff, ...
                 'Location','southoutside', ...
                 'FontSize',9,'Color',[0.7 0.7 0.7]);
