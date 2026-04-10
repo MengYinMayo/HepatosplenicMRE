@@ -174,38 +174,43 @@ function [W, M, spatialInfo, phases_rad] = mre_readWaveMagSeries(seriesEntry, op
     % ------------------------------------------------------------------
     % 5.  Read wave pixels and reshape
     % ------------------------------------------------------------------
-    % Sort wave files: primary by SliceLocation (spatial), secondary by
-    % TemporalPositionIdentifier (phase). This gives a consistent
-    % [slices × phases] ordering regardless of acquisition order.
+    % GE GRE-MRE uses phase-major acquisition order: all slices are acquired
+    % at phase 1, then all slices at phase 2, etc.  TemporalPositionIdentifier
+    % is often 0/absent.  The only reliable approach:
+    %   1) For each unique SliceLocation, collect that slice's wave files.
+    %   2) Sort those files by InstanceNumber → gives phase order.
+    %   3) Assign phase 1,2,...,nPhases in that InstanceNumber order.
+    % This works for both phase-major and slice-major GE acquisitions.
+
     waveSliceLocs = [waveHdrs.SliceLocation];
-    wavePhasIds   = [waveHdrs.TemporalPositionIdentifier];
+    waveInstNums  = [waveHdrs.InstanceNumber];
 
     uniqueSliceLocs = unique(waveSliceLocs);
-    if numel(uniqueSliceLocs) ~= nSlices
-        % Recompute nSlices from actual unique positions
-        nSlices = numel(uniqueSliceLocs);
-        nPhases = round(nWaveFiles / nSlices);
-        vprint(opts, 'Adjusted after slice-loc count: %d slices × %d phases', nSlices, nPhases);
-    end
+    nSlices = numel(uniqueSliceLocs);
+    nPhases = max(1, round(nWaveFiles / nSlices));
+
+    vprint(opts, 'Wave geometry: %d slices × %d phases  (unsigned=%d)', ...
+        nSlices, nPhases, isUnsignedWave);
 
     W = zeros(nRow, nCol, nSlices, nPhases, 'double');
 
-    for k = 1:numel(waveFiles)
-        try
-            pxData = double(dicomread(waveFiles{k}));
-        catch
-            continue
+    for slIdx = 1:nSlices
+        % Files belonging to this slice (by SliceLocation)
+        slMask      = (waveSliceLocs == uniqueSliceLocs(slIdx));
+        slFiles     = waveFiles(slMask);
+        slInstNums  = waveInstNums(slMask);
+        % Sort by InstanceNumber → correct phase order for this slice
+        [~, phSortIdx] = sort(slInstNums);
+        slFiles = slFiles(phSortIdx);
+        for ph = 1:min(numel(slFiles), nPhases)
+            try
+                pxData = double(dicomread(slFiles{ph}));
+            catch
+                continue
+            end
+            % Convert to radians: subtract DC (=0 for signed EPI; =ww/2 for unsigned GRE)
+            W(:,:,slIdx,ph) = (pxData - waveDC) .* waveScale;
         end
-        % Slice index from SliceLocation
-        sl = find(uniqueSliceLocs == waveSliceLocs(k), 1);
-        % Phase index: use TemporalPositionIdentifier if valid, else modulo
-        ph = wavePhasIds(k);
-        if isempty(ph) || ph < 1 || ph > nPhases
-            ph = mod(k-1, nPhases) + 1;
-        end
-        if isempty(sl), sl = mod(floor((k-1)/nPhases), nSlices) + 1; end
-        % Convert to radians: subtract DC offset (0 for signed, ww/2 for unsigned)
-        W(:,:,sl,ph) = (pxData - waveDC) .* waveScale;
     end
 
     % ------------------------------------------------------------------
@@ -347,9 +352,9 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
     nCol = double(hdr1.Columns);
 
     % Determine nSlices and nPhases
-    % Collect all slice locations to count unique slices
+    % Collect SliceLocation and InstanceNumber from every header.
     sliceLocs = zeros(1, nFiles);
-    tempIds   = ones(1,  nFiles);
+    instNums  = (1:nFiles);   % fallback if tag absent
     for k = 1:nFiles
         try
             info = dicominfo(files{k}, 'UseDictionaryVR', true);
@@ -358,9 +363,8 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
             else
                 sliceLocs(k) = k;
             end
-            if isfield(info,'TemporalPositionIdentifier') && ...
-               ~isempty(info.TemporalPositionIdentifier)
-                tempIds(k) = double(info.TemporalPositionIdentifier);
+            if isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
+                instNums(k) = double(info.InstanceNumber);
             end
         catch
             sliceLocs(k) = k;
@@ -369,7 +373,7 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
 
     uniqueLocs = unique(sliceLocs);
     nSlices    = numel(uniqueLocs);
-    nPhases    = round(nFiles / nSlices);
+    nPhases    = max(1, round(nFiles / nSlices));
 
     vprint(opts, 'Proc wave geometry: %d rows × %d cols × %d slices × %d phases', ...
         nRow, nCol, nSlices, nPhases);
@@ -378,10 +382,6 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
     ww = 10000;   % default for processed wave
     if isfield(hdr1,'WindowWidth') && ~isempty(hdr1.WindowWidth)
         ww = double(hdr1.WindowWidth(1));
-    end
-    wc = 0;
-    if isfield(hdr1,'WindowCenter') && ~isempty(hdr1.WindowCenter)
-        wc = double(hdr1.WindowCenter(1));
     end
     % DC offset for unsigned storage
     pixRep = 0;
@@ -398,20 +398,24 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
     phases_rad = linspace(0, 2*pi, nPhases+1);
     phases_rad = phases_rad(1:nPhases);
 
-    % Read all files
+    % Read all files — assign phases within each slice by InstanceNumber order
+    % (same phase-major-safe logic as the raw wave reader)
     W = zeros(nRow, nCol, nSlices, nPhases, 'double');
 
-    for k = 1:nFiles
-        try
-            pxData = double(dicomread(files{k}));
-        catch
-            continue
+    for slIdx = 1:nSlices
+        slMask     = (sliceLocs == uniqueLocs(slIdx));
+        slFiles    = files(slMask);
+        slInstNums = instNums(slMask);
+        [~, phSortIdx] = sort(slInstNums);
+        slFiles = slFiles(phSortIdx);
+        for ph = 1:min(numel(slFiles), nPhases)
+            try
+                pxData = double(dicomread(slFiles{ph}));
+            catch
+                continue
+            end
+            W(:,:,slIdx,ph) = (pxData - waveDC) .* waveScale;
         end
-        sl = find(uniqueLocs == sliceLocs(k), 1);
-        ph = tempIds(k);
-        if isempty(sl), sl = mod(floor((k-1)/nPhases), nSlices)+1; end
-        if ph < 1 || ph > nPhases, ph = mod(k-1, nPhases)+1; end
-        W(:,:,sl,ph) = (pxData - waveDC) .* waveScale;
     end
 
     % No magnitude available from proc wave — return empty
