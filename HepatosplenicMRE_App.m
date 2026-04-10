@@ -80,8 +80,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         AxDixonIP           matlab.ui.control.UIAxes
         DdlDixonContrast    matlab.ui.control.DropDown
         DdlDixonCmap        matlab.ui.control.DropDown   % colormap for PDFF/current
-        EdtDixonMin         matlab.ui.control.EditField  % display min
-        EdtDixonMax         matlab.ui.control.EditField  % display max
+        EdtDixonMin         matlab.ui.control.NumericEditField  % display min
+        EdtDixonMax         matlab.ui.control.NumericEditField  % display max
         SldrDixon           matlab.ui.control.Slider
         LblDixonSlice       matlab.ui.control.Label
         LblDixonInfo        matlab.ui.control.Label
