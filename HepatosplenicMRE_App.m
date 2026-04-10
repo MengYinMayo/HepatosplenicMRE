@@ -106,7 +106,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnConfMap          matlab.ui.control.StateButton
         BtnROI_LiverMRE     matlab.ui.control.Button
         BtnROI_SpleenMRE    matlab.ui.control.Button
-        BtnMREDrawROI       matlab.ui.control.Button
         BtnClearMREROIs     matlab.ui.control.Button
 
         % Results tab
@@ -626,10 +625,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             roiPnl = uipanel(app.MREGrid,'Title','MRE ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[9 1]);
-            rg.RowHeight   = repmat({36},1,9); rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
+            rg = uigridlayout(roiPnl,[8 1]);
+            rg.RowHeight   = repmat({36},1,8); rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
-            uilabel(rg,'Text','Stiffness ROIs:','FontSize',11, ...
+            uilabel(rg,'Text','Stiffness ROIs (2-stage):','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
 
             app.BtnROI_LiverMRE = roiBtn(rg,2,'Liver stiffness', ...
@@ -640,25 +639,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 [0.20 0.50 0.70],[1 1 1]);
             app.BtnROI_SpleenMRE.ButtonPushedFcn = @(~,~)app.drawMREROI('SpleenMRE');
 
-            app.BtnMREDrawROI = uibutton(rg,'push');
-            app.BtnMREDrawROI.Layout.Row=4;
-            app.BtnMREDrawROI.Text='ROI GUI (mmdi)';
-            app.BtnMREDrawROI.FontSize=12; app.BtnMREDrawROI.FontWeight='bold';
-            app.BtnMREDrawROI.BackgroundColor=[0.55 0.22 0.70];
-            app.BtnMREDrawROI.FontColor=[1 1 1];
-            app.BtnMREDrawROI.Tooltip='Open interactive 3-panel MRE ROI tool (mmdi_roi_gui)';
-            app.BtnMREDrawROI.ButtonPushedFcn = @(~,~)app.launchMmdiROIGui();
-
-            uilabel(rg,'Text','ROI info:','FontSize',11, ...
+            uilabel(rg,'Text','Workflow:','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
 
             app.LblMREInfo = uilabel(rg);
-            app.LblMREInfo.Layout.Row=[6 8];
-            app.LblMREInfo.Text='Use "ROI GUI (mmdi)" for the full interactive 3-panel workflow.  Draw ROI on wave image (inner) or magnitude (contour).  ROI saved per slice.';
+            app.LblMREInfo.Layout.Row=[5 7];
+            app.LblMREInfo.Text=sprintf(['Stage 1: polygon on Magnitude → organ boundary\n' ...
+                'Stage 2: auto-eroded polygon on Stiffness → measurement ROI\n' ...
+                'LapC masking applied automatically.']);
             app.LblMREInfo.FontSize=11; app.LblMREInfo.WordWrap='on';
             app.LblMREInfo.FontColor=[0.45 0.45 0.45];
 
-            app.BtnClearMREROIs = roiBtn(rg,9,'Clear this slice', ...
+            app.BtnClearMREROIs = roiBtn(rg,8,'Clear this slice', ...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearMREROIs.ButtonPushedFcn = @(~,~)app.clearMRESlice();
         end
@@ -822,7 +814,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 % 4. Build MRE MAT (only if MRE series was selected)
                 if ~isempty(selection.MRE)
                     dlg.Message = 'Building MRE MAT file...';
-                    matPath = mre_buildMATFile(exam, matOpts);
+                    % Pass selection (not exam) so user-chosen series group is used
+                    matPath = mre_buildMATFile(selection, matOpts);
                 end
                 app.AppData.MATPath = matPath;
 
@@ -1135,25 +1128,72 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function drawMREROI(app, roiName)
+            % Two-stage MRE ROI workflow (adapted from mmdi_roi_gui):
+            %   Stage 1 — draw outer organ contour on Magnitude (drawpolygon)
+            %   Stage 2 — auto-erode to inner stiffness ROI, editable on Stiffness
             if isempty(app.AppData.MRE)
                 uialert(app.UIFigure,'No MRE data loaded.','No Data');
                 return
             end
-            sl = app.AppData.MRESlice;
-            setStatus(app,sprintf('Draw %s ROI on the wave image.  Double-click to close.',roiName));
+            mre = app.AppData.MRE;
+            sl  = app.AppData.MRESlice;
+            nR  = size(mre.M, 1);
+            nC  = size(mre.M, 2);
+            roiColor = mreROIColor(roiName);
+
+            % ── Stage 1: outer organ contour on Magnitude ──────────────
+            setStatus(app, sprintf('Stage 1: Draw outer %s boundary on Magnitude. Double-click to confirm.', roiName));
             try
-                h = drawfreehand(app.AxMREWave,'Color',mreROIColor(roiName), ...
-                    'LineWidth',2,'FaceAlpha',0.15);
-                wait(h);
-                nR = size(app.AppData.MRE.M,1);
-                nC = size(app.AppData.MRE.M,2);
-                mask = logical(h.createMask());
-                storeROI(app, roiName, sl, mask, nR, nC);
-                computeMREROIStats(app, roiName, mask, sl);
-                setStatus(app,sprintf('%s ROI placed on slice %d.',roiName,sl));
-            catch ME
-                setStatus(app,['ROI error: ' ME.message]);
+                h1 = drawpolygon(app.AxMREMag, ...
+                    'Color', roiColor, 'LineWidth', 2, 'FaceAlpha', 0.15);
+                wait(h1);
+                if ~isvalid(h1) || isempty(h1.Position)
+                    setStatus(app, 'ROI cancelled.'); return
+                end
+                outerPts = h1.Position;
+                delete(h1);
+            catch
+                setStatus(app, 'ROI cancelled.'); return
             end
+            if size(outerPts, 1) < 3
+                setStatus(app, 'Too few points — cancelled.'); return
+            end
+
+            % Create outer mask
+            outerMask = poly2mask(outerPts(:,1)', outerPts(:,2)', nR, nC);
+            if ~any(outerMask(:))
+                setStatus(app, 'Empty outer ROI — cancelled.'); return
+            end
+
+            % ── Stage 2: erode to inner stiffness ROI ──────────────────
+            erodePx = 3;
+            se = strel('disk', erodePx);
+            innerMask = imerode(outerMask, se);
+            if ~any(innerMask(:)), innerMask = outerMask; end
+
+            % Overlay eroded ROI on Stiffness panel for editing
+            refreshMRE(app);
+            setStatus(app, sprintf('Stage 2: Adjust inner stiffness ROI on Stiffness panel. Double-click to confirm.'));
+            try
+                innerPts = mreROIMaskToPolygon(innerMask);
+                h2 = drawpolygon(app.AxMREStiff, ...
+                    'Position', innerPts, ...
+                    'Color', roiColor, 'LineWidth', 2, 'FaceAlpha', 0.15);
+                wait(h2);
+                if isvalid(h2) && ~isempty(h2.Position)
+                    p2 = h2.Position;
+                    innerMask = poly2mask(p2(:,1)', p2(:,2)', nR, nC);
+                end
+                if isvalid(h2), delete(h2); end
+            catch ME
+                warning('MRE:innerROI', '%s', ME.message);
+            end
+
+            % ── Store and compute stats ─────────────────────────────────
+            storeROI(app, roiName, sl, outerMask, nR, nC);
+            computeMREROIStats(app, roiName, innerMask, sl);
+            refreshMRE(app);
+            setStatus(app, sprintf('%s ROI placed on slice %d.', roiName, sl));
         end
 
         function clearMRESlice(app)
@@ -1162,38 +1202,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AppData.ROIs.SpleenMRE.Slices = removeSlice(app.AppData.ROIs.SpleenMRE.Slices, sl);
             refreshMRE(app);
             setStatus(app,sprintf('MRE ROIs cleared for slice %d.',sl));
-        end
-
-        function launchMmdiROIGui(app)
-            % Launch the interactive mmdi_roi_gui for full MRE ROI workflow.
-            if isempty(app.AppData.MATPath) || ~isfile(app.AppData.MATPath)
-                uialert(app.UIFigure, ...
-                    'No MRE MAT file loaded. Please load an MRE study first.', ...
-                    'No MRE Data', 'Icon','warning');
-                return
-            end
-            matPath = app.AppData.MATPath;
-            % Build meta struct for mmdi_roi_gui
-            meta = struct();
-            meta.SeriesDir = fileparts(matPath);
-            if ~isempty(app.AppData.Selection) && ~isempty(app.AppData.Selection.MRE)
-                meta.SeriesNumber = app.AppData.Selection.MRE.SeriesNumber;
-                meta.SeriesDescription = app.AppData.Selection.MRE.SeriesDescription;
-            end
-            if ~isempty(app.AppData.Exam)
-                meta.PatientID = app.AppData.Exam.PatientID;
-                meta.StudyDate = app.AppData.Exam.StudyDate;
-            end
-            setStatus(app,'Launching mmdi_roi_gui...');
-            try
-                status = mmdi_roi_gui(matPath, meta);
-                setStatus(app,sprintf('mmdi_roi_gui returned: %s', status));
-                % Reload MRE data in case ROI files were updated
-                refreshMRE(app);
-            catch ME
-                uialert(app.UIFigure, ME.message, 'mmdi_roi_gui Error', 'Icon','error');
-                setStatus(app,['mmdi_roi_gui error: ' ME.message]);
-            end
         end
 
         function setStiffScale(app, clim)
@@ -1475,7 +1483,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function populateMRETab(app)
             mre = app.AppData.MRE;
             if isempty(mre), return; end
-            nZ = max(1, size(mre.S,3));
+            % Use the consistent slice count across M, W, S
+            nZM = size(mre.M, 3);
+            nZW = size(mre.W, 3);
+            nZS = 1;
+            if isfield(mre,'S') && ~isempty(mre.S), nZS = size(mre.S,3); end
+            nZ = max(1, max([nZM nZW nZS]));
             mreMid = max(1, round(nZ/2));
             app.SldrMRE.Limits = [1 max(nZ,2)];
             app.SldrMRE.Value  = mreMid;
@@ -1487,34 +1500,73 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function refreshMRE(app)
             mre = app.AppData.MRE;
             if isempty(mre) || ~isfield(mre,'M'), return; end
-            sl = app.AppData.MRESlice;
-            sl = max(1, min(size(mre.M,3), sl));
-            ph = max(1, min(size(mre.W,4), app.AppData.MREPhase));
 
-            % Magnitude
-            showImg(app.AxMREMag, double(mre.M(:,:,sl)), ...
-                sprintf('Magnitude  sl %d',sl));
+            % Determine valid slice index against each volume independently
+            nZM = size(mre.M,3); nZW = size(mre.W,3);
+            nZS = 1; if isfield(mre,'S')&&~isempty(mre.S), nZS=size(mre.S,3); end
+            nZL = 1; if isfield(mre,'LapC')&&~isempty(mre.LapC), nZL=size(mre.LapC,3); end
+            sl  = max(1, app.AppData.MRESlice);
+            ph  = max(1, min(size(mre.W,4), app.AppData.MREPhase));
+            nPh = size(mre.W, 4);
 
-            % Wave
-            img = double(mre.W(:,:,sl,ph));
-            imagesc(app.AxMREWave, img);
+            % Magnitude (squeeze to 2D — M may be [nR nC nZ] or [nR nC nZ 1])
+            Msl = double(squeeze(mre.M(:,:, min(sl,nZM), 1)));
+            showImg(app.AxMREMag, Msl, sprintf('Magnitude  sl %d/%d',sl,nZM));
+
+            % Wave — symmetric colormap centred on 0
+            Wsl = double(mre.W(:,:, min(sl,nZW), ph));
+            imagesc(app.AxMREWave, Wsl);
             colormap(app.AxMREWave, mreWaveCmap());
+            wMax = max(abs(Wsl(:)));
+            if wMax > 0, clim(app.AxMREWave, [-wMax wMax]); end
             axis(app.AxMREWave,'image');
             app.AxMREWave.XTick=[]; app.AxMREWave.YTick=[];
-            title(app.AxMREWave,sprintf('Wave  sl %d  ph %d/%d',sl,ph,size(mre.W,4)), ...
+            title(app.AxMREWave,sprintf('Wave  sl %d  ph %d/%d',sl,ph,nPh), ...
                 'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
 
-            % Stiffness
-            S = double(mre.S(:,:,sl));
-            if app.AppData.ShowConfMask && isfield(mre,'LapC') && ~isempty(mre.LapC)
-                LapC = double(mre.LapC(:,:,min(sl,end)));
-                S(LapC < 0.95) = 0;
+            % Stiffness with optional LapC mask
+            if isfield(mre,'S') && ~isempty(mre.S)
+                S = double(mre.S(:,:, min(sl,nZS)));
+                if app.AppData.ShowConfMask && isfield(mre,'LapC') && ~isempty(mre.LapC)
+                    LapC = double(mre.LapC(:,:, min(sl,nZL)));
+                    S(LapC < 0.95) = 0;
+                end
+            else
+                S = zeros(size(Msl));
             end
-            imagesc(app.AxMREStiff, S); clim(app.AxMREStiff, app.AppData.StiffCLim);
-            colormap(app.AxMREStiff, mreStiffCmap()); axis(app.AxMREStiff,'image');
+            imagesc(app.AxMREStiff, S);
+            clim(app.AxMREStiff, app.AppData.StiffCLim);
+            colormap(app.AxMREStiff, mreStiffCmap());
+            axis(app.AxMREStiff,'image');
             app.AxMREStiff.XTick=[]; app.AxMREStiff.YTick=[];
-            title(app.AxMREStiff,sprintf('Stiffness (kPa)  sl %d',sl), ...
+            title(app.AxMREStiff,sprintf('Stiffness (kPa)  sl %d/%d',sl,nZS), ...
                 'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+
+            % Overlay existing ROI boundaries
+            mreOverlayROI(app, sl);
+        end
+
+        function mreOverlayROI(app, sl)
+            % Draw stored ROI boundaries on all 3 MRE panels.
+            key = sprintf('sl%d', sl);
+            for panel = {app.AxMREMag, app.AxMREWave, app.AxMREStiff}
+                ax = panel{1};
+                hold(ax, 'on');
+                for rName = {'LiverMRE','SpleenMRE'}
+                    rn = rName{1};
+                    slices = app.AppData.ROIs.(rn).Slices;
+                    if isfield(slices, key)
+                        mask = slices.(key);
+                        B = bwboundaries(mask, 'noholes');
+                        for b = 1:numel(B)
+                            pts = B{b};   % [row col]
+                            plot(ax, pts(:,2), pts(:,1), '-', ...
+                                'Color', mreROIColor(rn), 'LineWidth', 1.5);
+                        end
+                    end
+                end
+                hold(ax, 'off');
+            end
         end
 
         function storeROI(app, roiName, sl, mask, nR, nC)
@@ -1571,22 +1623,29 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function computeMREROIStats(app, roiName, mask, sl)
             mre = app.AppData.MRE;
             if isempty(mre) || ~isfield(mre,'S'), return; end
-            S = double(mre.S(:,:,min(sl,end)));
-            if app.AppData.ShowConfMask && isfield(mre,'LapC')
-                LapC = double(mre.LapC(:,:,min(sl,end)));
+            nZ = size(mre.S, 3);
+            S = double(mre.S(:,:, max(1, min(sl, nZ))));
+            % Apply LapC confidence mask (always, if available)
+            if isfield(mre,'LapC') && ~isempty(mre.LapC)
+                LapC = double(mre.LapC(:,:, max(1, min(sl, size(mre.LapC,3)))));
                 S(LapC < 0.95) = NaN;
             end
-            validPx = S(mask & isfinite(S));
+            % Resize mask to match S if needed
+            if ~isequal(size(mask), [size(S,1) size(S,2)])
+                mask = imresize(logical(mask), [size(S,1) size(S,2)], 'nearest');
+            end
+            validPx = S(mask(:) & isfinite(S(:)));
             if isempty(validPx), return; end
-            stiff = nanmean(validPx);
-            iqr_  = iqr(validPx);
+            stiff  = median(validPx);
+            iqr_   = iqr(validPx);
+            nPx    = numel(validPx);
             switch roiName
                 case 'LiverMRE'
-                    app.ValLiverStiff.Text   = sprintf('%.1f kPa',stiff);
-                    app.ValLiverStiffIQR.Text = sprintf('%.1f kPa',iqr_);
+                    app.ValLiverStiff.Text   = sprintf('%.2f kPa (med)',stiff);
+                    app.ValLiverStiffIQR.Text = sprintf('%.2f kPa IQR  n=%d',iqr_,nPx);
                 case 'SpleenMRE'
-                    app.ValSpleenStiff.Text   = sprintf('%.1f kPa',stiff);
-                    app.ValSpleenStiffIQR.Text = sprintf('%.1f kPa',iqr_);
+                    app.ValSpleenStiff.Text   = sprintf('%.2f kPa (med)',stiff);
+                    app.ValSpleenStiffIQR.Text = sprintf('%.2f kPa IQR  n=%d',iqr_,nPx);
             end
         end
 
@@ -1981,6 +2040,23 @@ end
 function clr = mreROIColor(name)
     if contains(name,'Liver'),  clr=[0.15 0.85 0.15];
     else,                       clr=[0.15 0.65 0.95];
+    end
+end
+
+function pts = mreROIMaskToPolygon(mask)
+% Convert a binary mask to a simplified polygon for drawpolygon initialization.
+% Returns [N×2] [x y] = [col row] array.
+    pts = [1 1];  % fallback
+    try
+        B = bwboundaries(mask, 'noholes');
+        if isempty(B), return; end
+        bnd = B{1};   % [row col]
+        % Simplify to ~60 vertices using uniform subsampling
+        nPts = min(60, size(bnd,1));
+        idx  = round(linspace(1, size(bnd,1), nPts));
+        bnd  = bnd(idx,:);
+        pts  = [bnd(:,2) bnd(:,1)];   % [col row] = [x y]
+    catch
     end
 end
 

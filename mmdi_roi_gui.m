@@ -117,10 +117,7 @@ isReviewMode = false;
 if isfile(roiPathMeas) && isfile(roiPathContour)
 
     choice = questdlg( ...
-        sprintf('ROI files already exist for:\
-%s / %s\
-\
-What would you like to do?', meta.ExamId, meta.SeriesId), ...
+        sprintf('ROI files already exist for:\\n%s / %s\\n\\nWhat would you like to do?', meta.ExamId, meta.SeriesId), ...
         'ROIs found', ...
         'Review/Edit ROIs', 'Export only', 'Skip', ...
         'Review/Edit ROIs');
@@ -137,10 +134,7 @@ What would you like to do?', meta.ExamId, meta.SeriesId), ...
     end
 
 elseif isfile(roiPathMeas) || isfile(roiPathContour)
-    warndlg(sprintf(['ROI file exists but is incomplete:\
-%s\
-%s\
-' ...
+    warndlg(sprintf(['ROI file exists but is incomplete:\\n%s\\n%s\\n' ...
         'Delete both to redraw, or ensure both are present.'], roiPathMeas, roiPathContour), 'ROI exists');
     status = 'skipped';
     return;
@@ -210,8 +204,7 @@ nT_W = 1; if numel(szW) >= 4, nT_W = szW(4); end
 % Use W's time dimension for GUI (smoother animation with 8 frames)
 nT = nT_W;  
 
-fprintf('Data loaded: M[%d\u00d7%d\u00d7%d\u00d7%d], W[%d\u00d7%d\u00d7%d\u00d7%d], using nT=%d for display\
-', ...
+fprintf('Data loaded: M[%d\u00d7%d\u00d7%d\u00d7%d], W[%d\u00d7%d\u00d7%d\u00d7%d], using nT=%d for display\\n', ...
     nRow, nCol, nZ, nT_M, nRow, nCol, nZ, nT_W, nT);
 
 isS4D = (numel(szS) >= 4) && (szS(4) > 1);
@@ -320,8 +313,7 @@ hRoiBoundZ     = gobjects(0);   % inner ROI boundaries on zoom
 
 % ---------- Export-only mode (ROIs already exist) ----------
 if exportOnly
-    fprintf('ROI exists (%s): %s/%s -- exporting reports only...\
-', upper(organ), meta.ExamId, meta.SeriesId);
+    fprintf('ROI exists (%s): %s/%s -- exporting reports only...\\n', upper(organ), meta.ExamId, meta.SeriesId);
 
     % Load existing ROI MAT-files (saved with .roi extension)
     tmpMeas = tryLoadMat(roiPathMeas);
@@ -352,8 +344,7 @@ end
 
 % ---------- Review/Edit mode (ROIs already exist) ----------
 if loadExistingROIs
-    fprintf('ROI exists (%s): %s/%s -- opening GUI for review/edit...\
-', upper(organ), meta.ExamId, meta.SeriesId);
+    fprintf('ROI exists (%s): %s/%s -- opening GUI for review/edit...\\n', upper(organ), meta.ExamId, meta.SeriesId);
 
     % Load existing INNER ROI
     tmpMeas = tryLoadMat(roiPathMeas);
@@ -783,95 +774,9 @@ uiwait(fig);
         naw = reshape(aw,3,256);
         naw = naw./255;
 
-        r = [naw(1,:)'];
-        g = [naw(2,:)'];
-        b = [naw(3,:)'];
-
-        h = [r g b];
-        h = flipdim(h,1);
-        indx = round(linspace(1,256,m));
-        h = h(indx,:);
-    end
-
-    function h = aaasmo(m)
-        % AAASMO    LFE Look-Up table
-        %   AAASMO(M) returns an M-by-3 matrix containing an "aaasmo" colormap.
-        if (nargin < 1)
-            m = size(get(gcf,'colormap'),1);
-        end
-
-        aw = [ '00'; '00'; '00'; '22'; '00'; '55'; '24'; '00'; '55'; '26'; '00'; '56';
-            '28'; '00'; '56'; '29'; '00'; '57'; '2b'; '00'; '57'; '2d'; '00'; '58';
-            '2f'; '00'; '58'; '31'; '00'; '59'; '33'; '00'; '59'; '34'; '00'; '5a';
-            '36'; '00'; '5a'; '38'; '00'; '5b'; '3a'; '00'; '5b'; '3c'; '00'; '5b';
-            '3e'; '00'; '5c'; '3f'; '00'; '5c'; '41'; '00'; '5d'; '43'; '00'; '5d';
-            '45'; '00'; '5e'; '47'; '00'; '5e'; '49'; '00'; '5f'; '4a'; '00'; '5f';
-            '4c'; '00'; '60'; '4e'; '00'; '60'; '50'; '00'; '60'; '52'; '00'; '61';
-            '54'; '00'; '61'; '55'; '00'; '62'; '57'; '00'; '62'; '59'; '00'; '63';
-            '5b'; '00'; '63'; '5d'; '00'; '64'; '5f'; '00'; '64'; '60'; '00'; '65';
-            '62'; '00'; '65'; '64'; '00'; '66'; '66'; '00'; '66'; '66'; '00'; '6a';
-            '66'; '00'; '6f'; '66'; '00'; '73'; '66'; '00'; '77'; '66'; '00'; '7b';
-            '66'; '00'; '80'; '66'; '00'; '84'; '66'; '00'; '88'; '66'; '00'; '8c';
-            '66'; '00'; '91'; '66'; '00'; '95'; '66'; '00'; '99'; '5e'; '00'; '9c';
-            '56'; '00'; '9e'; '4e'; '00'; 'a1'; '47'; '00'; 'a3'; '3f'; '00'; 'a6';
-            '37'; '00'; 'a9'; '2f'; '00'; 'ab'; '27'; '00'; 'ae'; '1f'; '00'; 'b1';
-            '18'; '00'; 'b3'; '10'; '00'; 'b6'; '08'; '00'; 'b8'; '00'; '00'; 'bb';
-            '00'; '06'; 'c1'; '00'; '0b'; 'c6'; '00'; '11'; 'cc'; '00'; '17'; 'd2';
-            '00'; '1c'; 'd7'; '00'; '22'; 'dd'; '00'; '28'; 'e3'; '00'; '2d'; 'e8';
-            '00'; '33'; 'ee'; '00'; '39'; 'f4'; '00'; '3e'; 'f9'; '00'; '44'; 'ff';
-            '00'; '48'; 'fb'; '00'; '4d'; 'f7'; '00'; '51'; 'f2'; '00'; '55'; 'ee';
-            '00'; '59'; 'ea'; '00'; '5e'; 'e6'; '00'; '62'; 'e1'; '00'; '66'; 'dd';
-            '00'; '6a'; 'd9'; '00'; '6f'; 'd5'; '00'; '73'; 'd0'; '00'; '77'; 'cc';
-            '00'; '7b'; 'c8'; '00'; '7e'; 'c5'; '00'; '82'; 'c1'; '00'; '86'; 'bd';
-            '00'; '89'; 'ba'; '00'; '8d'; 'b6'; '00'; '91'; 'b3'; '00'; '94'; 'af';
-            '00'; '98'; 'ab'; '00'; '9b'; 'a8'; '00'; '9f'; 'a4'; '00'; 'a3'; 'a0';
-            '00'; 'a6'; '9d'; '00'; 'aa'; '99'; '00'; 'aa'; '8c'; '00'; 'aa'; '80';
-            '00'; 'aa'; '73'; '00'; 'aa'; '66'; '00'; 'aa'; '59'; '00'; 'aa'; '4d';
-            '00'; 'aa'; '40'; '00'; 'aa'; '33'; '00'; 'aa'; '26'; '00'; 'aa'; '1a';
-            '00'; 'aa'; '0d'; '00'; 'aa'; '00'; '00'; 'ae'; '00'; '00'; 'b3'; '00';
-            '00'; 'b7'; '00'; '00'; 'bb'; '00'; '00'; 'bf'; '00'; '00'; 'c4'; '00';
-            '00'; 'c8'; '00'; '00'; 'cc'; '00'; '00'; 'd0'; '00'; '00'; 'd5'; '00';
-            '00'; 'd9'; '00'; '00'; 'dd'; '00'; '0a'; 'e0'; '00'; '15'; 'e2'; '00';
-            '1f'; 'e5'; '00'; '2a'; 'e7'; '00'; '34'; 'ea'; '00'; '3f'; 'ed'; '00';
-            '49'; 'ef'; '00'; '54'; 'f2'; '00'; '5e'; 'f5'; '00'; '69'; 'f7'; '00';
-            '73'; 'fa'; '00'; '7e'; 'fc'; '00'; '88'; 'ff'; '00'; '8d'; 'ff'; '00';
-            '92'; 'ff'; '00'; '98'; 'ff'; '00'; '9d'; 'ff'; '00'; 'a2'; 'ff'; '00';
-            'a7'; 'ff'; '00'; 'ad'; 'ff'; '00'; 'b2'; 'ff'; '00'; 'b7'; 'ff'; '00';
-            'bc'; 'ff'; '00'; 'c2'; 'ff'; '00'; 'c7'; 'ff'; '00'; 'cc'; 'ff'; '00';
-            'd0'; 'ff'; '00'; 'd5'; 'ff'; '00'; 'd9'; 'ff'; '00'; 'dd'; 'ff'; '00';
-            'e1'; 'ff'; '00'; 'e6'; 'ff'; '00'; 'ea'; 'ff'; '00'; 'ee'; 'ff'; '00';
-            'f2'; 'ff'; '00'; 'f7'; 'ff'; '00'; 'fb'; 'ff'; '00'; 'ff'; 'ff'; '00';
-            'ff'; 'fd'; '00'; 'ff'; 'fb'; '00'; 'ff'; 'f9'; '00'; 'ff'; 'f7'; '00';
-            'ff'; 'f5'; '00'; 'ff'; 'f3'; '00'; 'ff'; 'f1'; '00'; 'ff'; 'ef'; '00';
-            'ff'; 'ed'; '00'; 'ff'; 'eb'; '00'; 'ff'; 'e9'; '00'; 'ff'; 'e7'; '00';
-            'ff'; 'e4'; '00'; 'ff'; 'e2'; '00'; 'ff'; 'e0'; '00'; 'ff'; 'de'; '00';
-            'ff'; 'dc'; '00'; 'ff'; 'da'; '00'; 'ff'; 'd8'; '00'; 'ff'; 'd6'; '00';
-            'ff'; 'd4'; '00'; 'ff'; 'd2'; '00'; 'ff'; 'd0'; '00'; 'ff'; 'ce'; '00';
-            'ff'; 'cc'; '00'; 'ff'; 'c9'; '00'; 'ff'; 'c7'; '00'; 'ff'; 'c4'; '00';
-            'ff'; 'c2'; '00'; 'ff'; 'bf'; '00'; 'ff'; 'bc'; '00'; 'ff'; 'ba'; '00';
-            'ff'; 'b7'; '00'; 'ff'; 'b4'; '00'; 'ff'; 'b2'; '00'; 'ff'; 'af'; '00';
-            'ff'; 'ad'; '00'; 'ff'; 'aa'; '00'; 'ff'; 'a7'; '00'; 'ff'; 'a4'; '00';
-            'ff'; 'a2'; '00'; 'ff'; '9f'; '00'; 'ff'; '9c'; '00'; 'ff'; '99'; '00';
-            'ff'; '96'; '00'; 'ff'; '93'; '00'; 'ff'; '91'; '00'; 'ff'; '8e'; '00';
-            'ff'; '8b'; '00'; 'ff'; '88'; '00'; 'fe'; '80'; '00'; 'fc'; '78'; '00';
-            'fb'; '70'; '00'; 'fa'; '69'; '00'; 'f8'; '61'; '00'; 'f7'; '59'; '00';
-            'f6'; '51'; '00'; 'f5'; '49'; '00'; 'f3'; '41'; '00'; 'f2'; '3a'; '00';
-            'f1'; '32'; '00'; 'ef'; '2a'; '00'; 'ee'; '22'; '00'; 'ef'; '1f'; '00';
-            'f1'; '1c'; '00'; 'f2'; '1a'; '00'; 'f4'; '17'; '00'; 'f5'; '14'; '00';
-            'f7'; '11'; '00'; 'f8'; '0e'; '00'; 'f9'; '0b'; '00'; 'fb'; '09'; '00';
-            'fc'; '06'; '00'; 'fe'; '03'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';
-            'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';
-            'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';
-            'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';
-            'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';];
-
-        aw = hex2dec(aw);
-        naw = reshape(aw,3,256);
-        naw = naw./255;
-
-        r = [naw(1,:)'];
-        g = [naw(2,:)'];
-        b = [naw(3,:)'];
+        r = [naw(1,:)'];\n        g = [naw(2,:)'];
+        b = [naw(3,:)'];\n\n        h = [r g b];\n        h = flipdim(h,1);\n        indx = round(linspace(1,256,m));\n        h = h(indx,:);\n    end\n\n    function h = aaasmo(m)\n        % AAASMO    LFE Look-Up table\n        %   AAASMO(M) returns an M-by-3 matrix containing an "aaasmo" colormap.\n        if (nargin < 1)\n            m = size(get(gcf,'colormap'),1);\n        end\n\n        aw = [ '00'; '00'; '00'; '22'; '00'; '55'; '24'; '00'; '55'; '26'; '00'; '56';\n            '28'; '00'; '56'; '29'; '00'; '57'; '2b'; '00'; '57'; '2d'; '00'; '58';\n            '2f'; '00'; '58'; '31'; '00'; '59'; '33'; '00'; '59'; '34'; '00'; '5a';\n            '36'; '00'; '5a'; '38'; '00'; '5b'; '3a'; '00'; '5b'; '3c'; '00'; '5b';\n            '3e'; '00'; '5c'; '3f'; '00'; '5c'; '41'; '00'; '5d'; '43'; '00'; '5d';\n            '45'; '00'; '5e'; '47'; '00'; '5e'; '49'; '00'; '5f'; '4a'; '00'; '5f';\n            '4c'; '00'; '60'; '4e'; '00'; '60'; '50'; '00'; '60'; '52'; '00'; '61';\n            '54'; '00'; '61'; '55'; '00'; '62'; '57'; '00'; '62'; '59'; '00'; '63';\n            '5b'; '00'; '63'; '5d'; '00'; '64'; '5f'; '00'; '64'; '60'; '00'; '65';\n            '62'; '00'; '65'; '64'; '00'; '66'; '66'; '00'; '66'; '66'; '00'; '6a';\n            '66'; '00'; '6f'; '66'; '00'; '73'; '66'; '00'; '77'; '66'; '00'; '7b';\n            '66'; '00'; '80'; '66'; '00'; '84'; '66'; '00'; '88'; '66'; '00'; '8c';\n            '66'; '00'; '91'; '66'; '00'; '95'; '66'; '00'; '99'; '5e'; '00'; '9c';\n            '56'; '00'; '9e'; '4e'; '00'; 'a1'; '47'; '00'; 'a3'; '3f'; '00'; 'a6';\n            '37'; '00'; 'a9'; '2f'; '00'; 'ab'; '27'; '00'; 'ae'; '1f'; '00'; 'b1';\n            '18'; '00'; 'b3'; '10'; '00'; 'b6'; '08'; '00'; 'b8'; '00'; '00'; 'bb';\n            '00'; '06'; 'c1'; '00'; '0b'; 'c6'; '00'; '11'; 'cc'; '00'; '17'; 'd2';\n            '00'; '1c'; 'd7'; '00'; '22'; 'dd'; '00'; '28'; 'e3'; '00'; '2d'; 'e8';\n            '00'; '33'; 'ee'; '00'; '39'; 'f4'; '00'; '3e'; 'f9'; '00'; '44'; 'ff';\n            '00'; '48'; 'fb'; '00'; '4d'; 'f7'; '00'; '51'; 'f2'; '00'; '55'; 'ee';\n            '00'; '59'; 'ea'; '00'; '5e'; 'e6'; '00'; '62'; 'e1'; '00'; '66'; 'dd';\n            '00'; '6a'; 'd9'; '00'; '6f'; 'd5'; '00'; '73'; 'd0'; '00'; '77'; 'cc';\n            '00'; '7b'; 'c8'; '00'; '7e'; 'c5'; '00'; '82'; 'c1'; '00'; '86'; 'bd';\n            '00'; '89'; 'ba'; '00'; '8d'; 'b6'; '00'; '91'; 'b3'; '00'; '94'; 'af';\n            '00'; '98'; 'ab'; '00'; '9b'; 'a8'; '00'; '9f'; 'a4'; '00'; 'a3'; 'a0';\n            '00'; 'a6'; '9d'; '00'; 'aa'; '99'; '00'; 'aa'; '8c'; '00'; 'aa'; '80';\n            '00'; 'aa'; '73'; '00'; 'aa'; '66'; '00'; 'aa'; '59'; '00'; 'aa'; '4d';\n            '00'; 'aa'; '40'; '00'; 'aa'; '33'; '00'; 'aa'; '26'; '00'; 'aa'; '1a';\n            '00'; 'aa'; '0d'; '00'; 'aa'; '00'; '00'; 'ae'; '00'; '00'; 'b3'; '00';\n            '00'; 'b7'; '00'; '00'; 'bb'; '00'; '00'; 'bf'; '00'; '00'; 'c4'; '00';\n            '00'; 'c8'; '00'; '00'; 'cc'; '00'; '00'; 'd0'; '00'; '00'; 'd5'; '00';\n            '00'; 'd9'; '00'; '00'; 'dd'; '00'; '0a'; 'e0'; '00'; '15'; 'e2'; '00';\n            '1f'; 'e5'; '00'; '2a'; 'e7'; '00'; '34'; 'ea'; '00'; '3f'; 'ed'; '00';\n            '49'; 'ef'; '00'; '54'; 'f2'; '00'; '5e'; 'f5'; '00'; '69'; 'f7'; '00';\n            '73'; 'fa'; '00'; '7e'; 'fc'; '00'; '88'; 'ff'; '00'; '8d'; 'ff'; '00';\n            '92'; 'ff'; '00'; '98'; 'ff'; '00'; '9d'; 'ff'; '00'; 'a2'; 'ff'; '00';\n            'a7'; 'ff'; '00'; 'ad'; 'ff'; '00'; 'b2'; 'ff'; '00'; 'b7'; 'ff'; '00';\n            'bc'; 'ff'; '00'; 'c2'; 'ff'; '00'; 'c7'; 'ff'; '00'; 'cc'; 'ff'; '00';\n            'd0'; 'ff'; '00'; 'd5'; 'ff'; '00'; 'd9'; 'ff'; '00'; 'dd'; 'ff'; '00';\n            'e1'; 'ff'; '00'; 'e6'; 'ff'; '00'; 'ea'; 'ff'; '00'; 'ee'; 'ff'; '00';\n            'f2'; 'ff'; '00'; 'f7'; 'ff'; '00'; 'fb'; 'ff'; '00'; 'ff'; 'ff'; '00';\n            'ff'; 'fd'; '00'; 'ff'; 'fb'; '00'; 'ff'; 'f9'; '00'; 'ff'; 'f7'; '00';\n            'ff'; 'f5'; '00'; 'ff'; 'f3'; '00'; 'ff'; 'f1'; '00'; 'ff'; 'ef'; '00';\n            'ff'; 'ed'; '00'; 'ff'; 'eb'; '00'; 'ff'; 'e9'; '00'; 'ff'; 'e7'; '00';\n            'ff'; 'e4'; '00'; 'ff'; 'e2'; '00'; 'ff'; 'e0'; '00'; 'ff'; 'de'; '00';\n            'ff'; 'dc'; '00'; 'ff'; 'da'; '00'; 'ff'; 'd8'; '00'; 'ff'; 'd6'; '00';\n            'ff'; 'd4'; '00'; 'ff'; 'd2'; '00'; 'ff'; 'd0'; '00'; 'ff'; 'ce'; '00';\n            'ff'; 'cc'; '00'; 'ff'; 'c9'; '00'; 'ff'; 'c7'; '00'; 'ff'; 'c4'; '00';\n            'ff'; 'c2'; '00'; 'ff'; 'bf'; '00'; 'ff'; 'bc'; '00'; 'ff'; 'ba'; '00';\n            'ff'; 'b7'; '00'; 'ff'; 'b4'; '00'; 'ff'; 'b2'; '00'; 'ff'; 'af'; '00';\n            'ff'; 'ad'; '00'; 'ff'; 'aa'; '00'; 'ff'; 'a7'; '00'; 'ff'; 'a4'; '00';\n            'ff'; 'a2'; '00'; 'ff'; '9f'; '00'; 'ff'; '9c'; '00'; 'ff'; '99'; '00';\n            'ff'; '96'; '00'; 'ff'; '93'; '00'; 'ff'; '91'; '00'; 'ff'; '8e'; '00';\n            'ff'; '8b'; '00'; 'ff'; '88'; '00'; 'fe'; '80'; '00'; 'fc'; '78'; '00';\n            'fb'; '70'; '00'; 'fa'; '69'; '00'; 'f8'; '61'; '00'; 'f7'; '59'; '00';\n            'f6'; '51'; '00'; 'f5'; '49'; '00'; 'f3'; '41'; '00'; 'f2'; '3a'; '00';\n            'f1'; '32'; '00'; 'ef'; '2a'; '00'; 'ee'; '22'; '00'; 'ef'; '1f'; '00';\n            'f1'; '1c'; '00'; 'f2'; '1a'; '00'; 'f4'; '17'; '00'; 'f5'; '14'; '00';\n            'f7'; '11'; '00'; 'f8'; '0e'; '00'; 'f9'; '0b'; '00'; 'fb'; '09'; '00';\n            'fc'; '06'; '00'; 'fe'; '03'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';\n            'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';\n            'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';\n            'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';\n            'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00'; 'ff'; '00'; '00';];\n\n        aw = hex2dec(aw);\n        naw = reshape(aw,3,256);\n        naw = naw./255;\n\n        r = [naw(1,:)'];
+        g = [naw(2,:)'];\n        b = [naw(3,:)'];
 
         h = [r g b];
         indx = round(linspace(1,256,m));
@@ -885,13 +790,11 @@ uiwait(fig);
             % Invalid input, reset to current value
             set(edtVertices,'String',num2str(vertexCount));
             beep;
-            fprintf('Vertex count must be between %d and %d\
-', minVertexCount, maxVertexCount);
+            fprintf('Vertex count must be between %d and %d\\n', minVertexCount, maxVertexCount);
             return;
         end
         vertexCount = val;
-        fprintf('Vertex count set to %d\
-', vertexCount);
+        fprintf('Vertex count set to %d\\n', vertexCount);
         updateStatus();  % Update display to show new value
     end
 
@@ -1393,14 +1296,12 @@ uiwait(fig);
 
         if nT_slice_M < nT_slice_W
             % Interpolate M to match W (e.g., 3 \u2192 8 frames)
-            fprintf('  Slice %d: Interpolating M from %d to %d frames to match W\
-', ...
+            fprintf('  Slice %d: Interpolating M from %d to %d frames to match W\\n', ...
                 z, nT_slice_M, nT_slice_W);
             Msl = interpolateTimeDim(Msl, nT_slice_W);
         elseif nT_slice_W < nT_slice_M
             % Interpolate W to match M (unlikely but handle it)
-            fprintf('  Slice %d: Interpolating W from %d to %d frames to match M\
-', ...
+            fprintf('  Slice %d: Interpolating W from %d to %d frames to match M\\n', ...
                 z, nT_slice_W, nT_slice_M);
 
             % For wave data, use complex reconstruction if possible
@@ -1791,16 +1692,11 @@ uiwait(fig);
         end
 
         set(txt,'String',sprintf([ ...
-            'Workflow: Draw OUTER organ contour on M (yellow) then INNER roi on W/S (cyan)\
-' ...
-            'Hotkeys: z=zoom | d=seed | f=freehand | i=include | x=exclude | v=copyPrev | e=edit | n=next pending | a=skip anatomy | s=skip MRE | c=clear | space=play/pause | ESC=cancel/abort\
-' ...
-            'Organ: %s | %s/%s | z=%d/%d (%s)%s%s|| Contour: done=%d | No-organ=%d | Pending=%d  ||  MRE: done=%d | TechSkip=%d\
-' ...
-            'MAG W/L (%s): [%.3g  %.3g] Polygon vertices = %d (range: %d-%d). Edit box in bottom-right to change. Inner ROI erosion = %d pixels (min %d). Use + / - to adjust.\
-' ...
-            'Finish outputs: %s\
-'], ...
+            'Workflow: Draw OUTER organ contour on M (yellow) then INNER roi on W/S (cyan)\\n' ...
+            'Hotkeys: z=zoom | d=seed | f=freehand | i=include | x=exclude | v=copyPrev | e=edit | n=next pending | a=skip anatomy | s=skip MRE | c=clear | space=play/pause | ESC=cancel/abort\\n' ...
+            'Organ: %s | %s/%s | z=%d/%d (%s)%s%s|| Contour: done=%d | No-organ=%d | Pending=%d  ||  MRE: done=%d | TechSkip=%d\\n' ...
+            'MAG W/L (%s): [%.3g  %.3g] Polygon vertices = %d (range: %d-%d). Edit box in bottom-right to change. Inner ROI erosion = %d pixels (min %d). Use + / - to adjust.\\n' ...
+            'Finish outputs: %s\\n'], ...
             upper(organ), meta.ExamId, meta.SeriesId, state.z, nZ, tag, liveMsg, unsavedMsg, ...
             nC_done, nC_skip, nC_pend, nM_done, nM_skip, ...
             wlTag, climM(1), climM(2),vertexCount, minVertexCount, maxVertexCount, erodePx, minErodePx, ...
@@ -1816,10 +1712,8 @@ uiwait(fig);
 
         % Instruction: draw seed circle in magnitude panel
         set(txt,'String',sprintf([ ...
-            'Step 1: Draw a SEED CIRCLE inside %s on MAG panel (slice z=%d).\
-' ...
-            'Tip: First drag the MAG colorbar to adjust W/L if needed.\
-' ...
+            'Step 1: Draw a SEED CIRCLE inside %s on MAG panel (slice z=%d).\\n' ...
+            'Tip: First drag the MAG colorbar to adjust W/L if needed.\\n' ...
             'Double-click the circle to accept.'], upper(organ), state.z));
         drawnow;
 
@@ -1929,10 +1823,8 @@ uiwait(fig);
         % Instruction for user
         try
             set(txt,'String',sprintf([ ...
-                'FREEHAND OUTER CONTOUR (Slice z=%d)\
-' ...
-                'Draw on magnitude panel (far left image). release to finish.\
-' ...
+                'FREEHAND OUTER CONTOUR (Slice z=%d)\\n' ...
+                'Draw on magnitude panel (far left image). release to finish.\\n' ...
                 'Then adjust on elastogram panel (far right image) and double-click on elastogram to commit.' ], state.z));
             drawnow;
         catch
@@ -1975,8 +1867,7 @@ uiwait(fig);
         % Inner ROI only makes sense after an outer contour exists for this slice
         if isempty(roiVerticesContour{state.z})
             beep;
-            fprintf(2,'No outer contour on this slice. Draw OUTER contour first (d or f on M panel).\
-');
+            fprintf(2,'No outer contour on this slice. Draw OUTER contour first (d or f on M panel).\\n');
             updateStatus();
             return;
         end
@@ -1984,314 +1875,8 @@ uiwait(fig);
         cancelLiveROI();
 
         % fprintf('Manual INNER ROI: draw on W panel (double-click to finish).\
-');
-        try
-            hFH = drawfreehand(axW,'Color',[1 1 0],'LineWidth',1.5);
-            pos = hFH.Position;
-            delete(hFH);
-        catch
-            updateStatus();
-            return;
-        end
-
-        if isempty(pos) || size(pos,1) < 3
-            updateStatus();
-            return;
-        end
-
-        pos = decimatePolyline(pos, vertexCount);
-        startLiveROI(pos, 'meas');
-        updateStatus();
-    end
-
-    function onCopyPrevROI()
-        % Copy previous INNER (measurement) ROI
-        zPrev = findPrevRoiSlice(state.z);
-        if isempty(zPrev)
-            beep;
-            return;
-        end
-        posPrev = roiVertices{zPrev};
-        if isempty(posPrev)
-            beep;
-            return;
-        end
-        startLiveROI(posPrev, 'meas');
-    end
-
-    function onEditCurrentROI()
-        pos = roiVertices{state.z};
-        if isempty(pos)
-            beep;
-            return;
-        end
-        startLiveROI(pos, 'meas');
-    end
-
-    function onComplexAdd()
-        % Add a freehand region into INNER ROI on the current slice (union).
-        if ~any(roiMask(:,:,state.z), 'all')
-            warndlg('No INNER ROI on this slice yet. Create/confirm INNER ROI first, then use Add/Exclude.', 'Complex ROI');
-            return;
-        end
-
-        applyComplexFreehand('add');
-    end
-
-    function onComplexExclude()
-        % Exclude a freehand region from INNER ROI on the current slice (subtract).
-        if ~any(roiMask(:,:,state.z), 'all')
-            warndlg('No INNER ROI on this slice yet. Create/confirm INNER ROI first, then use Add/Exclude.', 'Complex ROI');
-            return;
-        end
-
-        applyComplexFreehand('exclude');
-    end
-
-    function applyComplexFreehand(mode)
-        % mode: 'add' or 'exclude'
-        z = state.z;
-
-        % Snapshot current ROI mask so preview is non-destructive until finish
-        mBase = roiMask(:,:,z);
-
-        % Draw on stiffness map for speed
-        ax = axS;
-        if isZoom
-            ax = axZ;     % draw complex ROI on zoomed view
-        end
-
-        % Choose colors for clarity
-        if strcmp(mode,'add')
-            col = [0 1 0];      % green
-            ttl = 'Draw freehand region to ADD (double-click to finish)';
-        else
-            col = [1 0 1];      % magenta
-            ttl = 'Draw freehand region to EXCLUDE (double-click to finish)';
-        end
-
-        % Optional: message
-        try, title(axS, ttl); catch, end
-
-        % Draw freehand ROI (fallback to polygon if drawfreehand not available)
-        if exist('drawfreehand','file') == 2
-            hFH = drawfreehand(ax, 'Color', col, 'LineWidth', 1.8);
-        else
-            hFH = drawpolygon(ax, 'Color', col, 'LineWidth', 1.8);
-        end
-
-        % --- LIVE PREVIEW DURING DRAWING (sync all 3 panels) ---
-        lMove = [];
-        lDone = [];
-        try
-            % Update continuously while drawing/moving
-            lMove = addlistener(hFH,'MovingROI', @(~,~) previewComplexMask());
-            % Also update after each "edit step" (vertex add/remove/end move)
-            lDone = addlistener(hFH,'ROIMoved',  @(~,~) previewComplexMask());
-        catch
-            % If listener events are not supported, preview will just update at the end.
-        end
-
-        % Draw an initial preview immediately
-        previewComplexMask();
-
-        % Wait until user completes (double-click)
-        try
-            wait(hFH);
-            % Remove listeners (avoid leaks)
-            try, if ~isempty(lMove), delete(lMove); end, catch, end
-            try, if ~isempty(lDone), delete(lDone); end, catch, end
-        catch
-            % older versions sometimes do not support wait well; just proceed
-        end
-
-        % If deleted/cancelled, bail
-        if isempty(hFH) || ~isvalid(hFH)
-            return;
-        end
-
-        pos = hFH.Position;
-        try, delete(hFH); catch, end
-        if isempty(pos) || size(pos,1) < 3
-            return;
-        end
-
-        % Convert to mask
-        x = min(max(pos(:,1), 1), nCol);
-        y = min(max(pos(:,2), 1), nRow);
-        mNew = poly2mask(x, y, nRow, nCol);
-
-        % Keep edits inside OUTER contour if present (recommended)
-        if any(roiMaskContour(:,:,z), 'all')
-            mNew = mNew & roiMaskContour(:,:,z);
-        end
-
-        % Apply LapC reliability mask if your code has it enabled
-        % (This prevents "Add" from re-introducing invalid pixels)
-        if exist('hasLapC','var') && hasLapC
-            mNew = mNew & getLapCgoodMask(z);
-        end
-
-        % Update INNER ROI mask
-        mOld = roiMask(:,:,z);
-        if strcmp(mode,'add')
-            mFinal = mOld | mNew;
-        else
-            mFinal = mOld & ~mNew;
-        end
-
-        roiMask(:,:,z) = mFinal;
-        sliceState(z) = int8(1);
-
-        % Update displayed INNER ROI polygon to match the new mask (best-effort)
-        pos2 = maskToPolygon(mFinal);
-        if ~isempty(pos2)
-            roiVertices{z} = pos2;
-        else
-            roiVertices{z} = [];
-        end
-
-        forceOverlayRedraw();
-        updateAll();
-
-        hasUnsavedChanges = true;
-        fprintf('[ComplexROI] z=%d %s applied. ROI pixels now = %d\
-', z, mode, nnz(mFinal));
-
-        function previewComplexMask()
-            if isempty(hFH) || ~isvalid(hFH)
-                return;
-            end
-
-            posP = hFH.Position;
-            if isempty(posP) || size(posP,1) < 3
-                return;
-            end
-
-            % Convert current freehand to mask (in image pixel coordinates)
-            xP = min(max(posP(:,1), 1), nCol);
-            yP = min(max(posP(:,2), 1), nRow);
-            mNewP = poly2mask(xP, yP, nRow, nCol);
-
-            % Restrict inside OUTER contour if present
-            if any(roiMaskContour(:,:,z), 'all')
-                mNewP = mNewP & roiMaskContour(:,:,z);
-            end
-
-            % Restrict by LapC-good mask if enabled
-            if exist('hasLapC','var') && hasLapC
-                mNewP = mNewP & getLapCgoodMask(z);
-            end
-
-            % Preview final mask relative to baseline
-            if strcmp(mode,'add')
-                mPrev = mBase | mNewP;
-            else
-                mPrev = mBase & ~mNewP;
-            end
-
-            % Write preview into the displayed mask + polygon so overlays refresh
-            roiMask(:,:,z) = mPrev;
-
-            posPrev = maskToPolygon(mPrev);
-            if ~isempty(posPrev)
-                roiVertices{z} = posPrev;
-            else
-                roiVertices{z} = [];
-            end
-
-            % Force overlay refresh + keep UI responsive
-            updateOverlay();
-            updateStatus();
-            drawnow limitrate nocallbacks;
-        end
-    end
-
-    function onSkipSlice()
-        if isLiveRoiActive()
-            cancelLiveROI();
-        end
-        % MRE skip (technical failure / unreliable stiffness):
-        % keep OUTER contour (anatomy) if present, clear INNER ROI.
-        roiVertices{state.z}   = [];
-        roiMask(:,:,state.z)  = false(nRow,nCol);
-        sliceState(state.z)   = int8(-1);
-        updateAll();
-    end
-
-    function onSkipAnatomy()
-        if isLiveRoiActive()
-            cancelLiveROI();
-        end
-        % Anatomy skip (no spleen/organ): clear BOTH contour + measurement.
-        roiVerticesContour{state.z} = [];
-        roiMaskContour(:,:,state.z) = false(nRow,nCol);
-        sliceStateContour(state.z)  = int8(-1);
-
-        roiVertices{state.z}  = [];
-        roiMask(:,:,state.z) = false(nRow,nCol);
-        sliceState(state.z)  = int8(0);   % MRE becomes N/A for anatomy-skip slices
-        updateAll();
-    end
-
-    function onClearSlice()
-        if isLiveRoiActive()
-            cancelLiveROI();
-        end
-        roiVerticesContour{state.z} = [];
-        roiMaskContour(:,:,state.z) = false(nRow,nCol);
-
-        sliceStateContour(state.z)  = int8(0);
-
-        roiVertices{state.z} = [];
-        roiMask(:,:,state.z) = false(nRow,nCol);
-        sliceState(state.z)  = int8(0);
-        updateAll();
-    end
-
-    function startLiveROI(posInit, stage)
-        liveStage = stage;
-
-        % --- NEW: when editing inner ROI, show live polyline overlays on all 3 axes
-        if strcmp(stage,'meas')
-            setRoiBoundaryVisible(false);     % hide mask boundaries during live editing
-            set([hRoiM hRoiW hRoiS], 'Visible','on');  % ensure polylines show
-        end
-
-        % set ROI color
-        if strcmp(stage,'contour')
-            roiColor = [1 1 0];   % yellow
-        else
-            roiColor = [0 1 1];   % cyan
-        end
-
-        cancelLiveROI();
-
-        % Choose which axes to draw the editable ROI on
-        axDraw = axS;   % default
-
-        if strcmp(stage,'contour')
-            axDraw = axM;   % outer contour is on magnitude
-        else
-            axDraw = axS;   % inner/meas/complex is on stiffness
-        end
-
-        % If zoom is active, draw on zoom axes instead (so you edit on big view)
-        if isZoom
-            axDraw = axZ;
-        end
-
-
-        % Create editable polygon
-        hLiveRoi = drawpolygon(axDraw, 'Position', posInit, 'LineWidth', 1.8, 'Color', roiColor);
-
-        if isempty(hLiveRoi) || ~isvalid(hLiveRoi)
-            cancelLiveROI();
-            updateAll();
-            return;
-        end
-        % Disable built-in ROI context menu ("Delete vertex") so RIGHT click can be used as an eraser.
-        % (MATLAB otherwise pops up the ROI's default context menu on right-click.)
+');\n        try\n            hFH = drawfreehand(axW,'Color',[1 1 0],'LineWidth',1.5);\n            pos = hFH.Position;\n            delete(hFH);\n        catch\n            updateStatus();\n            return;\n        end\n\n        if isempty(pos) || size(pos,1) < 3\n            updateStatus();\n            return;\n        end\n\n        pos = decimatePolyline(pos, vertexCount);\n        startLiveROI(pos, 'meas');\n        updateStatus();\n    end\n\n    function onCopyPrevROI()\n        % Copy previous INNER (measurement) ROI\n        zPrev = findPrevRoiSlice(state.z);\n        if isempty(zPrev)\n            beep;\n            return;\n        end\n        posPrev = roiVertices{zPrev};\n        if isempty(posPrev)\n            beep;\n            return;\n        end\n        startLiveROI(posPrev, 'meas');\n    end\n\n    function onEditCurrentROI()\n        pos = roiVertices{state.z};\n        if isempty(pos)\n            beep;\n            return;\n        end\n        startLiveROI(pos, 'meas');\n    end\n\n    function onComplexAdd()\n        % Add a freehand region into INNER ROI on the current slice (union).\n        if ~any(roiMask(:,:,state.z), 'all')\n            warndlg('No INNER ROI on this slice yet. Create/confirm INNER ROI first, then use Add/Exclude.', 'Complex ROI');\n            return;\n        end\n\n        applyComplexFreehand('add');\n    end\n\n    function onComplexExclude()\n        % Exclude a freehand region from INNER ROI on the current slice (subtract).\n        if ~any(roiMask(:,:,state.z), 'all')\n            warndlg('No INNER ROI on this slice yet. Create/confirm INNER ROI first, then use Add/Exclude.', 'Complex ROI');\n            return;\n        end\n\n        applyComplexFreehand('exclude');\n    end\n\n    function applyComplexFreehand(mode)\n        % mode: 'add' or 'exclude'\n        z = state.z;\n\n        % Snapshot current ROI mask so preview is non-destructive until finish\n        mBase = roiMask(:,:,z);\n\n        % Draw on stiffness map for speed\n        ax = axS;\n        if isZoom\n            ax = axZ;     % draw complex ROI on zoomed view\n        end\n\n        % Choose colors for clarity\n        if strcmp(mode,'add')\n            col = [0 1 0];      % green\n            ttl = 'Draw freehand region to ADD (double-click to finish)';\n        else\n            col = [1 0 1];      % magenta\n            ttl = 'Draw freehand region to EXCLUDE (double-click to finish)';\n        end\n\n        % Optional: message\n        try, title(axS, ttl); catch, end\n\n        % Draw freehand ROI (fallback to polygon if drawfreehand not available)\n        if exist('drawfreehand','file') == 2\n            hFH = drawfreehand(ax, 'Color', col, 'LineWidth', 1.8);\n        else\n            hFH = drawpolygon(ax, 'Color', col, 'LineWidth', 1.8);\n        end\n\n        % --- LIVE PREVIEW DURING DRAWING (sync all 3 panels) ---\n        lMove = [];\n        lDone = [];\n        try\n            % Update continuously while drawing/moving\n            lMove = addlistener(hFH,'MovingROI', @(~,~) previewComplexMask());\n            % Also update after each "edit step" (vertex add/remove/end move)\n            lDone = addlistener(hFH,'ROIMoved',  @(~,~) previewComplexMask());\n        catch\n            % If listener events are not supported, preview will just update at the end.\n        end\n\n        % Draw an initial preview immediately\n        previewComplexMask();\n\n        % Wait until user completes (double-click)\n        try\n            wait(hFH);\n            % Remove listeners (avoid leaks)\n            try, if ~isempty(lMove), delete(lMove); end, catch, end\n            try, if ~isempty(lDone), delete(lDone); end, catch, end\n        catch\n            % older versions sometimes do not support wait well; just proceed\n        end\n\n        % If deleted/cancelled, bail\n        if isempty(hFH) || ~isvalid(hFH)\n            return;\n        end\n\n        pos = hFH.Position;\n        try, delete(hFH); catch, end\n        if isempty(pos) || size(pos,1) < 3\n            return;\n        end\n\n        % Convert to mask\n        x = min(max(pos(:,1), 1), nCol);\n        y = min(max(pos(:,2), 1), nRow);\n        mNew = poly2mask(x, y, nRow, nCol);\n\n        % Keep edits inside OUTER contour if present (recommended)\n        if any(roiMaskContour(:,:,z), 'all')\n            mNew = mNew & roiMaskContour(:,:,z);\n        end\n\n        % Apply LapC reliability mask if your code has it enabled\n        % (This prevents "Add" from re-introducing invalid pixels)\n        if exist('hasLapC','var') && hasLapC\n            mNew = mNew & getLapCgoodMask(z);\n        end\n\n        % Update INNER ROI mask\n        mOld = roiMask(:,:,z);\n        if strcmp(mode,'add')\n            mFinal = mOld | mNew;\n        else\n            mFinal = mOld & ~mNew;\n        end\n\n        roiMask(:,:,z) = mFinal;\n        sliceState(z) = int8(1);\n\n        % Update displayed INNER ROI polygon to match the new mask (best-effort)\n        pos2 = maskToPolygon(mFinal);\n        if ~isempty(pos2)\n            roiVertices{z} = pos2;\n        else\n            roiVertices{z} = [];\n        end\n\n        forceOverlayRedraw();\n        updateAll();\n\n        hasUnsavedChanges = true;\n        fprintf('[ComplexROI] z=%d %s applied. ROI pixels now = %d\
+', z, mode, nnz(mFinal));\n\n        function previewComplexMask()\n            if isempty(hFH) || ~isvalid(hFH)\n                return;\n            end\n\n            posP = hFH.Position;\n            if isempty(posP) || size(posP,1) < 3\n                return;\n            end\n\n            % Convert current freehand to mask (in image pixel coordinates)\n            xP = min(max(posP(:,1), 1), nCol);\n            yP = min(max(posP(:,2), 1), nRow);\n            mNewP = poly2mask(xP, yP, nRow, nCol);\n\n            % Restrict inside OUTER contour if present\n            if any(roiMaskContour(:,:,z), 'all')\n                mNewP = mNewP & roiMaskContour(:,:,z);\n            end\n\n            % Restrict by LapC-good mask if enabled\n            if exist('hasLapC','var') && hasLapC\n                mNewP = mNewP & getLapCgoodMask(z);\n            end\n\n            % Preview final mask relative to baseline\n            if strcmp(mode,'add')\n                mPrev = mBase | mNewP;\n            else\n                mPrev = mBase & ~mNewP;\n            end\n\n            % Write preview into the displayed mask + polygon so overlays refresh\n            roiMask(:,:,z) = mPrev;\n\n            posPrev = maskToPolygon(mPrev);\n            if ~isempty(posPrev)\n                roiVertices{z} = posPrev;\n            else\n                roiVertices{z} = [];\n            end\n\n            % Force overlay refresh + keep UI responsive\n            updateOverlay();\n            updateStatus();\n            drawnow limitrate nocallbacks;\n        end\n    end\n\n    function onSkipSlice()\n        if isLiveRoiActive()\n            cancelLiveROI();\n        end\n        % MRE skip (technical failure / unreliable stiffness):\n        % keep OUTER contour (anatomy) if present, clear INNER ROI.\n        roiVertices{state.z}   = [];\n        roiMask(:,:,state.z)  = false(nRow,nCol);\n        sliceState(state.z)   = int8(-1);\n        updateAll();\n    end\n\n    function onSkipAnatomy()\n        if isLiveRoiActive()\n            cancelLiveROI();\n        end\n        % Anatomy skip (no spleen/organ): clear BOTH contour + measurement.\n        roiVerticesContour{state.z} = [];\n        roiMaskContour(:,:,state.z) = false(nRow,nCol);\n        sliceStateContour(state.z)  = int8(-1);\n\n        roiVertices{state.z}  = [];\n        roiMask(:,:,state.z) = false(nRow,nCol);\n        sliceState(state.z)  = int8(0);   % MRE becomes N/A for anatomy-skip slices\n        updateAll();\n    end\n\n    function onClearSlice()\n        if isLiveRoiActive()\n            cancelLiveROI();\n        end\n        roiVerticesContour{state.z} = [];\n        roiMaskContour(:,:,state.z) = false(nRow,nCol);\n\n        sliceStateContour(state.z)  = int8(0);\n\n        roiVertices{state.z} = [];\n        roiMask(:,:,state.z) = false(nRow,nCol);\n        sliceState(state.z)  = int8(0);\n        updateAll();\n    end\n\n    function startLiveROI(posInit, stage)\n        liveStage = stage;\n\n        % --- NEW: when editing inner ROI, show live polyline overlays on all 3 axes\n        if strcmp(stage,'meas')\n            setRoiBoundaryVisible(false);     % hide mask boundaries during live editing\n            set([hRoiM hRoiW hRoiS], 'Visible','on');  % ensure polylines show\n        end\n\n        % set ROI color\n        if strcmp(stage,'contour')\n            roiColor = [1 1 0];   % yellow\n        else\n            roiColor = [0 1 1];   % cyan\n        end\n\n        cancelLiveROI();\n\n        % Choose which axes to draw the editable ROI on\n        axDraw = axS;   % default\n\n        if strcmp(stage,'contour')\n            axDraw = axM;   % outer contour is on magnitude\n        else\n            axDraw = axS;   % inner/meas/complex is on stiffness\n        end\n\n        % If zoom is active, draw on zoom axes instead (so you edit on big view)\n        if isZoom\n            axDraw = axZ;\n        end\n\n\n        % Create editable polygon\n        hLiveRoi = drawpolygon(axDraw, 'Position', posInit, 'LineWidth', 1.8, 'Color', roiColor);\n\n        if isempty(hLiveRoi) || ~isvalid(hLiveRoi)\n            cancelLiveROI();\n            updateAll();\n            return;\n        end\n        % Disable built-in ROI context menu ("Delete vertex") so RIGHT click can be used as an eraser.\n        % (MATLAB otherwise pops up the ROI's default context menu on right-click.)
         try
             cm = uicontextmenu(fig);   % empty menu (no items)
             try
@@ -2462,8 +2047,7 @@ uiwait(fig);
 
             % Optional feedback
             if hasLapC
-                fprintf('[LapC] z=%d: ROI pixels %d -> %d after LapC >= %.2f\
-', ...
+                fprintf('[LapC] z=%d: ROI pixels %d -> %d after LapC >= %.2f\\n', ...
                     z, nnz(mask0), nnz(mask), lapCutoff);
             end
         else
@@ -2472,8 +2056,7 @@ uiwait(fig);
             sliceState(z)  = int8(0);
 
             if hasLapC
-                fprintf('[LapC] z=%d: ROI became empty after LapC >= %.2f (original %d px). Redraw ROI.\
-', ...
+                fprintf('[LapC] z=%d: ROI became empty after LapC >= %.2f (original %d px). Redraw ROI.\\n', ...
                     z, lapCutoff, nnz(mask0));
             end
             beep;
@@ -2597,8 +2180,7 @@ uiwait(fig);
 
     function gotoNextUnprocessed()
         if isLiveRoiActive()
-            fprintf('[NextPend] blocked: live ROI active (commit/cancel it first)\
-'); % DEBUG beep source
+            fprintf('[NextPend] blocked: live ROI active (commit/cancel it first)\\n'); % DEBUG beep source
             beep; return;
         end
         z0 = state.z;
@@ -2619,8 +2201,7 @@ uiwait(fig);
             if z > nZ, z = 1; end
             setSlice(z);
         else
-            fprintf('[NextPend] no pending slice found. isReviewMode=%d\
-', isReviewMode); % DEBUG beep source
+            fprintf('[NextPend] no pending slice found. isReviewMode=%d\\n', isReviewMode); % DEBUG beep source
             beep;
         end
     end
@@ -2845,19 +2426,14 @@ uiwait(fig);
         stiffRaw  = cache.S;    % Static
         nTimeFinal = size(magRaw, 3);  % Should be 8
 
-        fprintf('=== GIF Export ===\
-');
-        fprintf('magRaw:  %s\
-', mat2str(size(magRaw)));
-        fprintf('waveRaw: %s\
-', mat2str(size(waveRaw)));
-        fprintf('Frames for GIF: %d\
-', nTimeFinal);
+        fprintf('=== GIF Export ===\\n');
+        fprintf('magRaw:  %s\\n', mat2str(size(magRaw)));
+        fprintf('waveRaw: %s\\n', mat2str(size(waveRaw)));
+        fprintf('Frames for GIF: %d\\n', nTimeFinal);
 
         % Check for animation viability
         if nTimeFinal <= 1
-            fprintf('Slice %d has only 1 time phase -- nothing to animate.\
-', z);
+            fprintf('Slice %d has only 1 time phase -- nothing to animate.\\n', z);
             return;
         end
 
@@ -2872,13 +2448,11 @@ uiwait(fig);
         if hasROIfiles
             [xContour, yContour] = boundaryFromMask(getMaskSafe(roiMaskContour, z));
             [xMeas, yMeas]       = boundaryFromMask(getMaskSafe(roiMask, z));
-            fprintf('ROI files found - will overlay boundaries on GIF\
-');
+            fprintf('ROI files found - will overlay boundaries on GIF\\n');
         else
             xContour = []; yContour = [];
             xMeas = []; yMeas = [];
-            fprintf('No ROI files - GIF will be created without ROI overlays\
-');
+            fprintf('No ROI files - GIF will be created without ROI overlays\\n');
         end
 
         % ===== Display settings =====
@@ -2934,8 +2508,7 @@ uiwait(fig);
             end
         end
 
-        fprintf('\u2713 GIF saved (%d frames): %s\
-', nTimeFinal, gifPath);
+        fprintf('\u2713 GIF saved (%d frames): %s\\n', nTimeFinal, gifPath);
 
     end
 
@@ -3003,412 +2576,7 @@ uiwait(fig);
         nColors = size(cmap, 1);
 
         % Vertical gradient: row 1 = max value, row end = min value
-        vals = linspace(clim(2), clim(1), stripH)';  % top-to-bottom = high-to-low
-        idx = round((vals - clim(1)) / (clim(2) - clim(1)) * (nColors - 1)) + 1;
-        idx = max(1, min(nColors, idx));
-
-        % Map to RGB
-        rgbCol = cmap(idx, :);
-        if max(rgbCol(:)) <= 1.0
-            rgbCol = rgbCol * 255;
-        end
-        rgbCol = uint8(rgbCol);  % [stripH x 3]
-
-        % Replicate across width
-        strip = repmat(reshape(rgbCol, [stripH, 1, 3]), [1, stripW, 1]);
-
-        % Add numeric labels at TOP and BOTTOM edges
-        % Use black background rectangles for white text visibility
-        labelHi = sprintf('%d', clim(2));
-        labelLo = sprintf('%d', clim(1));
-
-        % Black background rectangles for labels (small, just enough for text)
-        textH = 16;  % Height for text area
-        textW = stripW;  % Full width of colorbar
-        
-        % Create black rectangles at top and bottom edges
-        % Top label area (rows 1 to textH)
-        strip(1:textH, :, :) = 0;  % Black background
-        
-        % Bottom label area (rows end-textH+1 to end)
-        strip(end-textH+1:end, :, :) = 0;  % Black background
-        
-        % Burn WHITE text onto black backgrounds
-        strip = burnTextWhite(strip, labelHi, 2, 2);              % Top label
-        strip = burnTextWhite(strip, labelLo, stripH-textH+2, 2); % Bottom label
-    end
-
-    function img = burnText(img, txt, row, col)
-        % Minimal black-on-white text burner using a tiny 3x5 font.
-        % Supports: 0-9, k, P, a, space, dash
-        glyphs = getGlyphs();
-        cx = col;
-        for i = 1:numel(txt)
-            ch = txt(i);
-            if isKey(glyphs, ch)
-                g = glyphs(ch);  % 5x3 logical
-            else
-                g = false(5,3);  % unknown char = blank
-            end
-            [gh, gw] = size(g);
-            for gr = 1:gh
-                for gc = 1:gw
-                    rr = row + gr - 1;
-                    cc = cx + gc - 1;
-                    if rr >= 1 && rr <= size(img,1) && cc >= 1 && cc <= size(img,2) && g(gr,gc)
-                        img(rr, cc, :) = 0;  % black pixel
-                    end
-                end
-            end
-            cx = cx + gw + 1;  % advance cursor + 1px spacing
-        end
-    end
-
-    function img = burnTextWhite(img, txt, row, col)
-        % WHITE text burner for black backgrounds (for GIF colorbar labels)
-        % Supports: 0-9, k, P, a, space, dash
-        glyphs = getGlyphs();
-        cx = col;
-        for i = 1:numel(txt)
-            ch = txt(i);
-            if isKey(glyphs, ch)
-                g = glyphs(ch);  % 5x3 logical
-            else
-                g = false(5,3);  % unknown char = blank
-            end
-            [gh, gw] = size(g);
-            for gr = 1:gh
-                for gc = 1:gw
-                    rr = row + gr - 1;
-                    cc = cx + gc - 1;
-                    if rr >= 1 && rr <= size(img,1) && cc >= 1 && cc <= size(img,2) && g(gr,gc)
-                        img(rr, cc, :) = 255;  % WHITE pixel (instead of black)
-                    end
-                end
-            end
-            cx = cx + gw + 1;  % advance cursor + 1px spacing
-        end
-    end
-
-    function g = getGlyphs()
-        % Tiny 5x3 bitmap font for digits and a few letters
-        g = containers.Map('KeyType','char','ValueType','any');
-        g('0') = [1 1 1; 1 0 1; 1 0 1; 1 0 1; 1 1 1];
-        g('1') = [0 1 0; 1 1 0; 0 1 0; 0 1 0; 1 1 1];
-        g('2') = [1 1 1; 0 0 1; 1 1 1; 1 0 0; 1 1 1];
-        g('3') = [1 1 1; 0 0 1; 1 1 1; 0 0 1; 1 1 1];
-        g('4') = [1 0 1; 1 0 1; 1 1 1; 0 0 1; 0 0 1];
-        g('5') = [1 1 1; 1 0 0; 1 1 1; 0 0 1; 1 1 1];
-        g('6') = [1 1 1; 1 0 0; 1 1 1; 1 0 1; 1 1 1];
-        g('7') = [1 1 1; 0 0 1; 0 0 1; 0 0 1; 0 0 1];
-        g('8') = [1 1 1; 1 0 1; 1 1 1; 1 0 1; 1 1 1];
-        g('9') = [1 1 1; 1 0 1; 1 1 1; 0 0 1; 1 1 1];
-        g('k') = [1 0 1; 1 0 1; 1 1 0; 1 0 1; 1 0 1];
-        g('P') = [1 1 1; 1 0 1; 1 1 1; 1 0 0; 1 0 0];
-        g('a') = [0 0 0; 0 1 1; 1 0 1; 1 1 1; 1 0 1];
-        g(' ') = [0 0 0; 0 0 0; 0 0 0; 0 0 0; 0 0 0];
-        g('-') = [0 0 0; 0 0 0; 1 1 1; 0 0 0; 0 0 0];
-    end
-
-    function onStiffScaleToggle()
-        if get(btnStiffScale, 'Value') == 1
-            % Switched to 0-20 kPa
-            stiffCLim = [0 20];
-            set(btnStiffScale, 'String', '0-20 kPa');
-        else
-            % Switched back to 0-8 kPa
-            stiffCLim = [0 8];
-            set(btnStiffScale, 'String', '0-8 kPa');
-        end
-        % Update axes and colorbar
-        set(axS, 'CLim', stiffCLim);
-        if stiffCLim(2) == 20
-            cbS.Ticks = 0:2:20;
-        else
-            cbS.Ticks = 0:1:8;
-        end
-        % Refresh display
-        updateAll();
-    end
-
-    function restartTimerIfNeeded(wasRunning)
-        % Restart animation timer after GIF export if it was running before
-        if wasRunning
-            try
-                if exist('tmr','var') && isa(tmr,'timer') && isvalid(tmr)
-                    start(tmr);
-                end
-            catch
-            end
-        end
-    end
-
-    function export_summary_and_voxels_ROIonly()
-        % ---- Load S ONCE to avoid matfile partial-loading warning spam ----
-        tmpS = load(matPath, 'S');     % loads whole variable once (quiet)
-        Sfull = double(tmpS.S);
-        clear tmpS;
-
-        sheetName = 'Stiffness';
-
-        if isfile(xlsxPath)
-            try, delete(xlsxPath); catch, end
-        end
-
-        valsBySlice = cell(nZ,1);
-        nPix = zeros(nZ,1);
-        mu   = nan(nZ,1);
-        med  = nan(nZ,1);
-        sd   = nan(nZ,1);
-
-        for z = 1:nZ
-            if sliceState(z) ~= 1
-                continue;
-            end
-            mask = roiMask(:,:,z);
-            if hasLapC
-                mask = mask & getLapCgoodMask(z);
-            end
-            if ~any(mask(:))
-                continue;
-            end
-
-            if ndims(Sfull) == 4
-                % If S is 4D, match your display logic (mean over last dim)
-                tmp = squeeze(Sfull(:,:,z,:));         % [row col t]
-                Sslice = mean(tmp, 3, 'omitnan');
-            else
-                Sslice = Sfull(:,:,z);
-            end
-
-            v = double(Sslice(mask));
-            v = v(isfinite(v) & v > 0);
-
-            valsBySlice{z} = v(:);
-            nPix(z) = numel(v);
-
-            if nPix(z) > 0
-                mu(z)  = mean(v);
-                med(z) = median(v);
-                sd(z)  = std(v);
-            end
-        end
-
-        roiZ = find(sliceState == 1 & nPix > 0);
-
-        if isempty(roiZ)
-            writecell({sprintf('No ROI slices with valid voxels for %s.', upper(organ))}, ...
-                xlsxPath, 'Sheet', sheetName, 'Range', 'A1');
-            return;
-        end
-
-        maxN = max(nPix(roiZ));
-
-        nHeaderCols = 5;
-        nCols = nHeaderCols + maxN;
-        nRows = 4 + numel(roiZ);
-
-        out = cell(nRows, nCols);
-
-        out{1,1} = sprintf('ROI VOXEL VALUES BY SLICE (%s)  %s_%s', upper(organ), meta.ExamId, meta.SeriesId);
-
-        out(3,1:nHeaderCols) = {'SliceZ','NumPixels','Mean','Median','Std'};
-        for k = 1:maxN
-            out{3, nHeaderCols + k} = sprintf('V%d', k);
-        end
-
-        allVals = vertcat(valsBySlice{roiZ});
-        out{4,1} = 0;
-        out{4,2} = numel(allVals);
-        out{4,3} = mean(allVals);
-        out{4,4} = median(allVals);
-        out{4,5} = std(allVals);
-
-        r = 5;
-        for i = 1:numel(roiZ)
-            z = roiZ(i);
-            v = valsBySlice{z};
-
-            out{r,1} = z;
-            out{r,2} = nPix(z);
-            out{r,3} = mu(z);
-            out{r,4} = med(z);
-            out{r,5} = sd(z);
-
-            for k = 1:numel(v)
-                out{r, nHeaderCols + k} = v(k);
-            end
-
-            r = r + 1;
-        end
-
-        writecell(out, xlsxPath, 'Sheet', sheetName, 'Range', 'A1');
-    end
-
-
-    function export_contour_shape_metrics()
-        % Export shape-based radiomics + curvature metrics from OUTER contour ROI.
-        % Writes into the SAME <organ>.xlsx as extra sheets:
-        %   - ContourMetrics : overall 3D metrics
-        %   - ContourBySlice : per-slice area/perimeter/curvature
-        %
-        % Uses Hhdr (optional) for voxel spacing.
-
-        sheetMetrics = 'ContourMetrics';
-        sheetBySlice = 'ContourBySlice';
-
-        if ~any(roiMaskContour(:))
-            try
-                writecell({sprintf('No contour ROI found for %s.', upper(organ))}, ...
-                    xlsxPath, 'Sheet', sheetMetrics, 'Range', 'A1');
-            catch
-            end
-            return;
-        end
-
-        % --- voxel spacing (mm) ---
-        if ~exist('H','var') || isempty(H)
-            tmpH = load(matPath,'H');
-            if isfield(tmpH,'H'), H = tmpH.H; else, H = []; end
-        end
-
-        [fov, dx, dy, dz] = voxelSizeFromH(H, nRow, nCol);
-
-        % --- use largest connected component (robust to small islands) ---
-        BW = roiMaskContour;
-        try
-            BW = keepLargestComponent3D(BW);
-        catch
-        end
-
-        voxCount = nnz(BW);
-        vol_mm3  = voxCount * dx * dy * dz;
-        vol_mL   = vol_mm3 / 1000;
-
-        % ---------- Surface area + shape metrics (robust + always-defined) ----------
-        % Make sure dx_mm, dy_mm, dz_mm exist BEFORE this block.
-        dx_mm = dx; dy_mm = dy; dz_mm = dz;
-
-        % Make sure roiMaskContour (or mask3d) is a logical 3D mask.
-        sa_mm2 = NaN;  % <-- critical: prevents "Unrecognized variable 'sa_mm2'"
-        mask3d = logical(roiMaskContour);  % or: mask3d = logical(mask3d);
-
-        % Volume (mm^3)
-        vol_mm3 = nnz(mask3d) * dx_mm * dy_mm * dz_mm;
-
-        % Surface area via isosurface + triangle areas
-        if any(mask3d(:))
-            fv = isosurface(double(mask3d), 0.5);   % use double to be safe
-            if ~isempty(fv.vertices) && ~isempty(fv.faces)
-                V = double(fv.vertices);
-                F = double(fv.faces);
-
-                % isosurface vertices are in voxel coordinates:
-                % V(:,1)=x=col, V(:,2)=y=row, V(:,3)=z=slice
-                V(:,1) = V(:,1) * dx_mm;
-                V(:,2) = V(:,2) * dy_mm;
-                V(:,3) = V(:,3) * dz_mm;
-
-                sa_mm2 = triMeshSurfaceArea(V, F);
-            end
-        end
-
-        % --- derived 3D shape metrics ---
-        sphericity = NaN;
-        compactnessSphere = NaN;  % 1 for a perfect sphere
-        saToVol = NaN;
-        if isfinite(sa_mm2) && sa_mm2 > 0 && vol_mm3 > 0
-            sphericity = (pi^(1/3) * (6*vol_mm3)^(2/3)) / sa_mm2;
-            compactnessSphere = (36*pi*(vol_mm3^2)) / (sa_mm2^3);
-            saToVol = sa_mm2 / vol_mm3;
-        end
-
-        [L1, L2, L3, elongation, flatness] = principalAxesFromMask(BW, dx, dy, dz);
-
-        % --- per-slice metrics ---
-        zList = find(squeeze(any(any(BW,1),2)));
-        nSlicesUsed = numel(zList);
-
-        outBySlice = cell(nSlicesUsed + 1, 8);
-        outBySlice(1,:) = {'SliceZ','Area_px','Area_mm2','Perimeter_mm', ...
-            'MeanAbsCurv_1mm','MedianAbsCurv_1mm','MaxAbsCurv_1mm','NumVertices'};
-
-        for ii = 1:nSlicesUsed
-            z = zList(ii);
-            m2 = BW(:,:,z);
-
-            area_px  = nnz(m2);
-            area_mm2 = area_px * dx * dy;
-
-            pos = [];
-            if z <= numel(roiVerticesContour)
-                pos = roiVerticesContour{z};
-            end
-            if isempty(pos)
-                pos = maskToPolygon(m2);
-            end
-
-            per_mm = NaN; meanK = NaN; medK = NaN; maxK = NaN; nV = 0;
-            if ~isempty(pos)
-                nV = size(pos,1);
-                [per_mm, kstats] = boundaryPerimeterAndCurvature(pos, dx, dy);
-                meanK = kstats.meanAbs;
-                medK  = kstats.medianAbs;
-                maxK  = kstats.maxAbs;
-            end
-
-            outBySlice(ii+1,:) = {z, area_px, area_mm2, per_mm, meanK, medK, maxK, nV};
-        end
-
-        % perimeter-weighted mean curvature across slices
-        curvWmean = NaN;
-        try
-            perims = cell2mat(outBySlice(2:end,4));
-            kmean  = cell2mat(outBySlice(2:end,5));
-            ok = isfinite(perims) & isfinite(kmean) & perims > 0;
-            if any(ok)
-                curvWmean = sum(perims(ok) .* kmean(ok)) / sum(perims(ok));
-            end
-        catch
-        end
-
-        outMetrics = {
-            'ExamId', meta.ExamId;
-            'SeriesId', meta.SeriesId;
-            'Organ', upper(organ);
-            'FOV_mm', fov;
-            'dx_mm', dx;
-            'dy_mm', dy;
-            'dz_mm', dz;
-            'NumSlicesContour', nSlicesUsed;
-            'VoxelCount', voxCount;
-            'Volume_mm3', vol_mm3;
-            'Volume_mL', vol_mL;
-            'SurfaceArea_mm2', sa_mm2;
-            'SurfaceToVolume_1_per_mm', saToVol;
-            'Sphericity', sphericity;
-            'CompactnessSphere', compactnessSphere;
-            'PrincipalAxis1_mm', L1;
-            'PrincipalAxis2_mm', L2;
-            'PrincipalAxis3_mm', L3;
-            'Elongation_L2_over_L1', elongation;
-            'Flatness_L3_over_L1', flatness;
-            'PerimWeightedMeanAbsCurv_1mm', curvWmean;
-            };
-
-        % Write Excel (append new sheets; file may already exist)
-        try
-            writecell(outMetrics, xlsxPath, 'Sheet', sheetMetrics, 'Range', 'A1');
-            writecell(outBySlice, xlsxPath, 'Sheet', sheetBySlice, 'Range', 'A1');
-        catch ME
-            warning('Failed to write contour metrics to Excel: %s', ME.message);
-        end
-    end
-
-    function onClose()
-        % This is called when user clicks the X button - always abort
-        stopTimerSafe();
-        % Only set status to 'abort' if it hasn't already been locked as 'saved'
+        vals = linspace(clim(2), clim(1), stripH)';  % top-to-bottom = high-to-low\n        idx = round((vals - clim(1)) / (clim(2) - clim(1)) * (nColors - 1)) + 1;\n        idx = max(1, min(nColors, idx));\n\n        % Map to RGB\n        rgbCol = cmap(idx, :);\n        if max(rgbCol(:)) <= 1.0\n            rgbCol = rgbCol * 255;\n        end\n        rgbCol = uint8(rgbCol);  % [stripH x 3]\n\n        % Replicate across width\n        strip = repmat(reshape(rgbCol, [stripH, 1, 3]), [1, stripW, 1]);\n\n        % Add numeric labels at TOP and BOTTOM edges\n        % Use black background rectangles for white text visibility\n        labelHi = sprintf('%d', clim(2));\n        labelLo = sprintf('%d', clim(1));\n\n        % Black background rectangles for labels (small, just enough for text)\n        textH = 16;  % Height for text area\n        textW = stripW;  % Full width of colorbar\n        \n        % Create black rectangles at top and bottom edges\n        % Top label area (rows 1 to textH)\n        strip(1:textH, :, :) = 0;  % Black background\n        \n        % Bottom label area (rows end-textH+1 to end)\n        strip(end-textH+1:end, :, :) = 0;  % Black background\n        \n        % Burn WHITE text onto black backgrounds\n        strip = burnTextWhite(strip, labelHi, 2, 2);              % Top label\n        strip = burnTextWhite(strip, labelLo, stripH-textH+2, 2); % Bottom label\n    end\n\n    function img = burnText(img, txt, row, col)\n        % Minimal black-on-white text burner using a tiny 3x5 font.\n        % Supports: 0-9, k, P, a, space, dash\n        glyphs = getGlyphs();\n        cx = col;\n        for i = 1:numel(txt)\n            ch = txt(i);\n            if isKey(glyphs, ch)\n                g = glyphs(ch);  % 5x3 logical\n            else\n                g = false(5,3);  % unknown char = blank\n            end\n            [gh, gw] = size(g);\n            for gr = 1:gh\n                for gc = 1:gw\n                    rr = row + gr - 1;\n                    cc = cx + gc - 1;\n                    if rr >= 1 && rr <= size(img,1) && cc >= 1 && cc <= size(img,2) && g(gr,gc)\n                        img(rr, cc, :) = 0;  % black pixel\n                    end\n                end\n            end\n            cx = cx + gw + 1;  % advance cursor + 1px spacing\n        end\n    end\n\n    function img = burnTextWhite(img, txt, row, col)\n        % WHITE text burner for black backgrounds (for GIF colorbar labels)\n        % Supports: 0-9, k, P, a, space, dash\n        glyphs = getGlyphs();\n        cx = col;\n        for i = 1:numel(txt)\n            ch = txt(i);\n            if isKey(glyphs, ch)\n                g = glyphs(ch);  % 5x3 logical\n            else\n                g = false(5,3);  % unknown char = blank\n            end\n            [gh, gw] = size(g);\n            for gr = 1:gh\n                for gc = 1:gw\n                    rr = row + gr - 1;\n                    cc = cx + gc - 1;\n                    if rr >= 1 && rr <= size(img,1) && cc >= 1 && cc <= size(img,2) && g(gr,gc)\n                        img(rr, cc, :) = 255;  % WHITE pixel (instead of black)\n                    end\n                end\n            end\n            cx = cx + gw + 1;  % advance cursor + 1px spacing\n        end\n    end\n\n    function g = getGlyphs()\n        % Tiny 5x3 bitmap font for digits and a few letters\n        g = containers.Map('KeyType','char','ValueType','any');\n        g('0') = [1 1 1; 1 0 1; 1 0 1; 1 0 1; 1 1 1];\n        g('1') = [0 1 0; 1 1 0; 0 1 0; 0 1 0; 1 1 1];\n        g('2') = [1 1 1; 0 0 1; 1 1 1; 1 0 0; 1 1 1];\n        g('3') = [1 1 1; 0 0 1; 1 1 1; 0 0 1; 1 1 1];\n        g('4') = [1 0 1; 1 0 1; 1 1 1; 0 0 1; 0 0 1];\n        g('5') = [1 1 1; 1 0 0; 1 1 1; 0 0 1; 1 1 1];\n        g('6') = [1 1 1; 1 0 0; 1 1 1; 1 0 1; 1 1 1];\n        g('7') = [1 1 1; 0 0 1; 0 0 1; 0 0 1; 0 0 1];\n        g('8') = [1 1 1; 1 0 1; 1 1 1; 1 0 1; 1 1 1];\n        g('9') = [1 1 1; 1 0 1; 1 1 1; 0 0 1; 1 1 1];\n        g('k') = [1 0 1; 1 0 1; 1 1 0; 1 0 1; 1 0 1];\n        g('P') = [1 1 1; 1 0 1; 1 1 1; 1 0 0; 1 0 0];\n        g('a') = [0 0 0; 0 1 1; 1 0 1; 1 1 1; 1 0 1];\n        g(' ') = [0 0 0; 0 0 0; 0 0 0; 0 0 0; 0 0 0];\n        g('-') = [0 0 0; 0 0 0; 1 1 1; 0 0 0; 0 0 0];\n    end\n\n    function onStiffScaleToggle()\n        if get(btnStiffScale, 'Value') == 1\n            % Switched to 0-20 kPa\n            stiffCLim = [0 20];\n            set(btnStiffScale, 'String', '0-20 kPa');\n        else\n            % Switched back to 0-8 kPa\n            stiffCLim = [0 8];\n            set(btnStiffScale, 'String', '0-8 kPa');\n        end\n        % Update axes and colorbar\n        set(axS, 'CLim', stiffCLim);\n        if stiffCLim(2) == 20\n            cbS.Ticks = 0:2:20;\n        else\n            cbS.Ticks = 0:1:8;\n        end\n        % Refresh display\n        updateAll();\n    end\n\n    function restartTimerIfNeeded(wasRunning)\n        % Restart animation timer after GIF export if it was running before\n        if wasRunning\n            try\n                if exist('tmr','var') && isa(tmr,'timer') && isvalid(tmr)\n                    start(tmr);\n                end\n            catch\n            end\n        end\n    end\n\n    function export_summary_and_voxels_ROIonly()\n        % ---- Load S ONCE to avoid matfile partial-loading warning spam ----\n        tmpS = load(matPath, 'S');     % loads whole variable once (quiet)\n        Sfull = double(tmpS.S);\n        clear tmpS;\n\n        sheetName = 'Stiffness';\n\n        if isfile(xlsxPath)\n            try, delete(xlsxPath); catch, end\n        end\n\n        valsBySlice = cell(nZ,1);\n        nPix = zeros(nZ,1);\n        mu   = nan(nZ,1);\n        med  = nan(nZ,1);\n        sd   = nan(nZ,1);\n\n        for z = 1:nZ\n            if sliceState(z) ~= 1\n                continue;\n            end\n            mask = roiMask(:,:,z);\n            if hasLapC\n                mask = mask & getLapCgoodMask(z);\n            end\n            if ~any(mask(:))\n                continue;\n            end\n\n            if ndims(Sfull) == 4\n                % If S is 4D, match your display logic (mean over last dim)\n                tmp = squeeze(Sfull(:,:,z,:));         % [row col t]\n                Sslice = mean(tmp, 3, 'omitnan');\n            else\n                Sslice = Sfull(:,:,z);\n            end\n\n            v = double(Sslice(mask));\n            v = v(isfinite(v) & v > 0);\n\n            valsBySlice{z} = v(:);\n            nPix(z) = numel(v);\n\n            if nPix(z) > 0\n                mu(z)  = mean(v);\n                med(z) = median(v);\n                sd(z)  = std(v);\n            end\n        end\n\n        roiZ = find(sliceState == 1 & nPix > 0);\n\n        if isempty(roiZ)\n            writecell({sprintf('No ROI slices with valid voxels for %s.', upper(organ))}, ...\n                xlsxPath, 'Sheet', sheetName, 'Range', 'A1');\n            return;\n        end\n\n        maxN = max(nPix(roiZ));\n\n        nHeaderCols = 5;\n        nCols = nHeaderCols + maxN;\n        nRows = 4 + numel(roiZ);\n\n        out = cell(nRows, nCols);\n\n        out{1,1} = sprintf('ROI VOXEL VALUES BY SLICE (%s)  %s_%s', upper(organ), meta.ExamId, meta.SeriesId);\n\n        out(3,1:nHeaderCols) = {'SliceZ','NumPixels','Mean','Median','Std'};\n        for k = 1:maxN\n            out{3, nHeaderCols + k} = sprintf('V%d', k);\n        end\n\n        allVals = vertcat(valsBySlice{roiZ});\n        out{4,1} = 0;\n        out{4,2} = numel(allVals);\n        out{4,3} = mean(allVals);\n        out{4,4} = median(allVals);\n        out{4,5} = std(allVals);\n\n        r = 5;\n        for i = 1:numel(roiZ)\n            z = roiZ(i);\n            v = valsBySlice{z};\n\n            out{r,1} = z;\n            out{r,2} = nPix(z);\n            out{r,3} = mu(z);\n            out{r,4} = med(z);\n            out{r,5} = sd(z);\n\n            for k = 1:numel(v)\n                out{r, nHeaderCols + k} = v(k);\n            end\n\n            r = r + 1;\n        end\n\n        writecell(out, xlsxPath, 'Sheet', sheetName, 'Range', 'A1');\n    end\n\n\n    function export_contour_shape_metrics()\n        % Export shape-based radiomics + curvature metrics from OUTER contour ROI.\n        % Writes into the SAME <organ>.xlsx as extra sheets:\n        %   - ContourMetrics : overall 3D metrics\n        %   - ContourBySlice : per-slice area/perimeter/curvature\n        %\n        % Uses Hhdr (optional) for voxel spacing.\n\n        sheetMetrics = 'ContourMetrics';\n        sheetBySlice = 'ContourBySlice';\n\n        if ~any(roiMaskContour(:))\n            try\n                writecell({sprintf('No contour ROI found for %s.', upper(organ))}, ...\n                    xlsxPath, 'Sheet', sheetMetrics, 'Range', 'A1');\n            catch\n            end\n            return;\n        end\n\n        % --- voxel spacing (mm) ---\n        if ~exist('H','var') || isempty(H)\n            tmpH = load(matPath,'H');\n            if isfield(tmpH,'H'), H = tmpH.H; else, H = []; end\n        end\n\n        [fov, dx, dy, dz] = voxelSizeFromH(H, nRow, nCol);\n\n        % --- use largest connected component (robust to small islands) ---\n        BW = roiMaskContour;\n        try\n            BW = keepLargestComponent3D(BW);\n        catch\n        end\n\n        voxCount = nnz(BW);\n        vol_mm3  = voxCount * dx * dy * dz;\n        vol_mL   = vol_mm3 / 1000;\n\n        % ---------- Surface area + shape metrics (robust + always-defined) ----------\n        % Make sure dx_mm, dy_mm, dz_mm exist BEFORE this block.\n        dx_mm = dx; dy_mm = dy; dz_mm = dz;\n\n        % Make sure roiMaskContour (or mask3d) is a logical 3D mask.\n        sa_mm2 = NaN;  % <-- critical: prevents "Unrecognized variable 'sa_mm2'"\n        mask3d = logical(roiMaskContour);  % or: mask3d = logical(mask3d);\n\n        % Volume (mm^3)\n        vol_mm3 = nnz(mask3d) * dx_mm * dy_mm * dz_mm;\n\n        % Surface area via isosurface + triangle areas\n        if any(mask3d(:))\n            fv = isosurface(double(mask3d), 0.5);   % use double to be safe\n            if ~isempty(fv.vertices) && ~isempty(fv.faces)\n                V = double(fv.vertices);\n                F = double(fv.faces);\n\n                % isosurface vertices are in voxel coordinates:\n                % V(:,1)=x=col, V(:,2)=y=row, V(:,3)=z=slice\n                V(:,1) = V(:,1) * dx_mm;\n                V(:,2) = V(:,2) * dy_mm;\n                V(:,3) = V(:,3) * dz_mm;\n\n                sa_mm2 = triMeshSurfaceArea(V, F);\n            end\n        end\n\n        % --- derived 3D shape metrics ---\n        sphericity = NaN;\n        compactnessSphere = NaN;  % 1 for a perfect sphere\n        saToVol = NaN;\n        if isfinite(sa_mm2) && sa_mm2 > 0 && vol_mm3 > 0\n            sphericity = (pi^(1/3) * (6*vol_mm3)^(2/3)) / sa_mm2;\n            compactnessSphere = (36*pi*(vol_mm3^2)) / (sa_mm2^3);\n            saToVol = sa_mm2 / vol_mm3;\n        end\n\n        [L1, L2, L3, elongation, flatness] = principalAxesFromMask(BW, dx, dy, dz);\n\n        % --- per-slice metrics ---\n        zList = find(squeeze(any(any(BW,1),2)));\n        nSlicesUsed = numel(zList);\n\n        outBySlice = cell(nSlicesUsed + 1, 8);\n        outBySlice(1,:) = {'SliceZ','Area_px','Area_mm2','Perimeter_mm', ...\n            'MeanAbsCurv_1mm','MedianAbsCurv_1mm','MaxAbsCurv_1mm','NumVertices'};\n\n        for ii = 1:nSlicesUsed\n            z = zList(ii);\n            m2 = BW(:,:,z);\n\n            area_px  = nnz(m2);\n            area_mm2 = area_px * dx * dy;\n\n            pos = [];\n            if z <= numel(roiVerticesContour)\n                pos = roiVerticesContour{z};\n            end\n            if isempty(pos)\n                pos = maskToPolygon(m2);\n            end\n\n            per_mm = NaN; meanK = NaN; medK = NaN; maxK = NaN; nV = 0;\n            if ~isempty(pos)\n                nV = size(pos,1);\n                [per_mm, kstats] = boundaryPerimeterAndCurvature(pos, dx, dy);\n                meanK = kstats.meanAbs;\n                medK  = kstats.medianAbs;\n                maxK  = kstats.maxAbs;\n            end\n\n            outBySlice(ii+1,:) = {z, area_px, area_mm2, per_mm, meanK, medK, maxK, nV};\n        end\n\n        % perimeter-weighted mean curvature across slices\n        curvWmean = NaN;\n        try\n            perims = cell2mat(outBySlice(2:end,4));\n            kmean  = cell2mat(outBySlice(2:end,5));\n            ok = isfinite(perims) & isfinite(kmean) & perims > 0;\n            if any(ok)\n                curvWmean = sum(perims(ok) .* kmean(ok)) / sum(perims(ok));\n            end\n        catch\n        end\n\n        outMetrics = {\n            'ExamId', meta.ExamId;\n            'SeriesId', meta.SeriesId;\n            'Organ', upper(organ);\n            'FOV_mm', fov;\n            'dx_mm', dx;\n            'dy_mm', dy;\n            'dz_mm', dz;\n            'NumSlicesContour', nSlicesUsed;\n            'VoxelCount', voxCount;\n            'Volume_mm3', vol_mm3;\n            'Volume_mL', vol_mL;\n            'SurfaceArea_mm2', sa_mm2;\n            'SurfaceToVolume_1_per_mm', saToVol;\n            'Sphericity', sphericity;\n            'CompactnessSphere', compactnessSphere;\n            'PrincipalAxis1_mm', L1;\n            'PrincipalAxis2_mm', L2;\n            'PrincipalAxis3_mm', L3;\n            'Elongation_L2_over_L1', elongation;\n            'Flatness_L3_over_L1', flatness;\n            'PerimWeightedMeanAbsCurv_1mm', curvWmean;\n            };\n\n        % Write Excel (append new sheets; file may already exist)\n        try\n            writecell(outMetrics, xlsxPath, 'Sheet', sheetMetrics, 'Range', 'A1');\n            writecell(outBySlice, xlsxPath, 'Sheet', sheetBySlice, 'Range', 'A1');\n        catch ME\n            warning('Failed to write contour metrics to Excel: %s', ME.message);\n        end\n    end\n\n    function onClose()\n        % This is called when user clicks the X button - always abort\n        stopTimerSafe();\n        % Only set status to 'abort' if it hasn't already been locked as 'saved'
         if ~statusLocked && ~strcmp(status, 'saved')
             status = 'abort';
         end
@@ -3685,8 +2853,7 @@ P = [x y];
 n = size(P,1);
 
 % wrap indices
-iPrev = [n; (1:n-1)'];
-iNext = [(2:n)'; 1];
+iPrev = [n; (1:n-1)'];\niNext = [(2:n)'; 1];
 
 v1 = P - P(iPrev,:);
 v2 = P(iNext,:) - P;
@@ -3723,16 +2890,4 @@ function tf = isMatV73(matPath)
 tf = false;
 fid = fopen(matPath, 'r');
 if fid < 0, return; end
-c = fread(fid, 64, '*char')';
-fclose(fid);
-tf = contains(c, 'MATLAB 7.3 MAT-file');
-end
-
-function SA = triMeshSurfaceArea(V, F)
-% V: Nx3 vertices, F: Mx3 faces
-V = double(V); F = double(F);
-v1 = V(F(:,1),:);
-v2 = V(F(:,2),:);
-v3 = V(F(:,3),:);
-SA = 0.5 * sum( sqrt(sum(cross(v2-v1, v3-v1, 2).^2, 2)) );
-end
+c = fread(fid, 64, '*char')';\nfclose(fid);\ntf = contains(c, 'MATLAB 7.3 MAT-file');\nend\n\nfunction SA = triMeshSurfaceArea(V, F)\n% V: Nx3 vertices, F: Mx3 faces\nV = double(V); F = double(F);\nv1 = V(F(:,1),:);\nv2 = V(F(:,2),:);\nv3 = V(F(:,3),:);\nSA = 0.5 * sum( sqrt(sum(cross(v2-v1, v3-v1, 2).^2, 2)) );\nend
