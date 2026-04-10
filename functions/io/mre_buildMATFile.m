@@ -30,8 +30,27 @@ function matPath = mre_buildMATFile(exam, opts)
 %   AUTHOR  HepatosplenicMRE Platform — Phase 3
 
     if nargin < 2, opts = struct(); end
+
+    % ── Accept either exam struct or selection struct ──────────────────
+    % selection (from mre_selectSeriesGUI) has .MREGroup and .Confirmed.
+    % Convert it to an exam-compatible struct so the rest of the function
+    % can use exam.Series, exam.MREType, exam.ExamRootDir uniformly.
+    if isfield(exam, 'Confirmed') && isfield(exam, 'MREGroup')
+        % Build synthetic exam from selection
+        exam = selectionToExam(exam);
+    end
+
+    % Derive outputDir from series files when not supplied
+    defaultOutDir = '';
+    if isfield(exam,'ExamRootDir') && ~isempty(exam.ExamRootDir)
+        defaultOutDir = exam.ExamRootDir;
+    elseif isfield(exam,'Series') && ~isempty(exam.Series) && ...
+           isfield(exam.Series(1),'Files') && ~isempty(exam.Series(1).Files)
+        defaultOutDir = fileparts(exam.Series(1).Files{1});
+    end
+
     opts = applyDefaults(opts, struct( ...
-        'outputDir',       exam.ExamRootDir, ...
+        'outputDir',       defaultOutDir, ...
         'fileName',        'mre_data.mat', ...
         'interpolateWave', true, ...
         'verbose',         true, ...
@@ -74,6 +93,9 @@ function matPath = mre_buildMATFile(exam, opts)
     end
 
     % ── 1.  Read Wave + Magnitude ──────────────────────────────────────
+    % For GRE: magnitude comes from GRE_WaveMag (S700, second half of files).
+    %          Wave comes from GRE_ProcWave (S705) — processed, 8-phase interpolated.
+    %          Fall back to splitting GRE_WaveMag if GRE_ProcWave is absent.
     wmSeries = getSeries(waveMagRole);
     if isempty(wmSeries)
         error('mre_buildMATFile:noWaveMag', 'Wave+Mag series not found.');
@@ -87,12 +109,37 @@ function matPath = mre_buildMATFile(exam, opts)
         error('mre_buildMATFile:readFail', 'Failed to read wave+magnitude data.');
     end
 
-    % ── 2.  Interpolate wave phases (4 → 8) ───────────────────────────
-    if opts.interpolateWave
-        vprint(opts, 'Interpolating wave phases (4→8)...');
+    % ── 1b.  GRE: override W from ProcWave series (S705) if present ───
+    if ismember(exam.MREType, {'GRE','both'})
+        procWaveSeries = getSeries('GRE_ProcWave');
+        if ~isempty(procWaveSeries)
+            procWaveSeries = procWaveSeries(1);
+            vprint(opts, 'GRE: reading processed wave from S%d (%d files)', ...
+                procWaveSeries.SeriesNumber, numel(procWaveSeries.Files));
+            [W_proc, ~, sinfo_pw, ~] = mre_readWaveMagSeries(procWaveSeries, opts);
+            if ~isempty(W_proc)
+                W_raw = W_proc;
+                if ~isempty(sinfo_pw) && isstruct(sinfo_pw) && ~isempty(fieldnames(sinfo_pw))
+                    sinfo = sinfo_pw;
+                end
+                vprint(opts, 'GRE: wave from ProcWave — %d phases', size(W_raw, 4));
+            else
+                vprint(opts, 'GRE: ProcWave read failed — using WaveMag split.');
+            end
+        else
+            vprint(opts, 'GRE: no GRE_ProcWave found — using WaveMag split for wave.');
+        end
+    end
+
+    % ── 2.  Interpolate wave phases (4 → 8) if not already 8 ─────────
+    if opts.interpolateWave && size(W_raw, 4) < 8
+        vprint(opts, 'Interpolating wave phases (%d→8)...', size(W_raw, 4));
         W = mre_interpolatePhases(W_raw, 8);
     else
         W = W_raw;
+        if size(W, 4) >= 8
+            vprint(opts, 'Wave already has %d phases — skipping interpolation.', size(W,4));
+        end
     end
 
     % ── 3.  Read Stiffness map ─────────────────────────────────────────
@@ -290,6 +337,34 @@ function opts = applyDefaults(opts, defaults)
         if ~isfield(opts, fields{k})
             opts.(fields{k}) = defaults.(fields{k});
         end
+    end
+end
+
+function exam = selectionToExam(selection)
+% Convert a selection struct (from mre_selectSeriesGUI) into an exam-compatible
+% struct with .Series, .MREType, and .ExamRootDir fields.
+    exam = struct();
+    exam.Series     = selection.MREGroup;
+    exam.ExamRootDir = '';
+
+    % Derive root dir from first series file
+    if ~isempty(exam.Series) && isfield(exam.Series(1),'Files') && ...
+       ~isempty(exam.Series(1).Files)
+        exam.ExamRootDir = fileparts(exam.Series(1).Files{1});
+    end
+
+    % Determine MREType from roles present
+    roles = {exam.Series.Role};
+    hasGRE = any(strncmp(roles, 'GRE_', 4));
+    hasEPI = any(strncmp(roles, 'EPI_', 4));
+    if hasGRE && hasEPI
+        exam.MREType = 'both';
+    elseif hasGRE
+        exam.MREType = 'GRE';
+    elseif hasEPI
+        exam.MREType = 'EPI';
+    else
+        exam.MREType = 'unknown';
     end
 end
 
