@@ -104,6 +104,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         LblMRESlice         matlab.ui.control.Label
         LblMREInfo          matlab.ui.control.Label
         BtnMREPlay          matlab.ui.control.Button
+        EdtWaveMax          matlab.ui.control.NumericEditField
         BtnStiff8           matlab.ui.control.Button
         BtnStiff20          matlab.ui.control.Button
         BtnConfMap          matlab.ui.control.StateButton
@@ -180,6 +181,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'MREPlaying',   false, ...
             'MRETimer',     [], ...
             'StiffCLim',    [0 8], ...
+            'WaveMax',      0, ...    % 0 = auto-range; >0 = manual ±WaveMax
             'DixonContrast', 'PDFF', ...  % 'PDFF'|'Water'|'Fat'|'T2star'|'InPhase'|'OutPhase'
             'DixonCmap',    'hot', ...   % colormap name for current contrast
             'DixonClimMin', 0, ...       % display range min
@@ -612,18 +614,20 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             setupDarkAxes(app.AxMREStiff,'Stiffness (kPa)');
             colormap(app.AxMREStiff, mreStiffCmap());
 
-            % Row 2: colorbar strip only under stiffness panel (col 3)
-            % Cols 1-2 get empty spacers so stiffness stays same width
+            % Row 2: awave colorbar under wave (col 2), aaasmo under stiffness (col 3)
+            % Col 1 (magnitude) gets an empty spacer — no colorbar needed there
             sp1 = uilabel(imgG,'Text',''); sp1.Layout.Row=2; sp1.Layout.Column=1;
-            sp2 = uilabel(imgG,'Text',''); sp2.Layout.Row=2; sp2.Layout.Column=2;
+            colorbar(app.AxMREWave, ...
+                'Location','southoutside', ...
+                'FontSize',9,'Color',[0.7 0.7 0.7]);
             colorbar(app.AxMREStiff, ...
                 'Location','southoutside', ...
                 'FontSize',9,'Color',[0.7 0.7 0.7]);
 
-            % Controls row
-            ctrlG = uigridlayout(imgG,[1 7]);
+            % Controls row  [Slice: | slider | n/N | ▶Play | W±: | waveMax | 0-8kPa | 0-20kPa | Conf]
+            ctrlG = uigridlayout(imgG,[1 9]);
             ctrlG.Layout.Row=3; ctrlG.Layout.Column=[1 3];
-            ctrlG.ColumnWidth={56,'1x',56,90,80,80,80}; ctrlG.Padding=[0 4 0 4];
+            ctrlG.ColumnWidth={56,'1x',56,90,30,58,80,80,80}; ctrlG.Padding=[0 4 0 4];
 
             lmr = uilabel(ctrlG); lmr.Layout.Column=1;
             lmr.Text='Slice:'; lmr.FontSize=13; lmr.FontWeight='bold';
@@ -646,8 +650,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BtnMREPlay.FontColor=[1 1 1];
             app.BtnMREPlay.ButtonPushedFcn = @(~,~)app.toggleMREPlay();
 
+            wlbl = uilabel(ctrlG); wlbl.Layout.Column=5;
+            wlbl.Text='W±:'; wlbl.FontSize=11; wlbl.HorizontalAlignment='right';
+
+            app.EdtWaveMax = uieditfield(ctrlG,'numeric');
+            app.EdtWaveMax.Layout.Column=6;
+            app.EdtWaveMax.Value=0; app.EdtWaveMax.Limits=[0 Inf];
+            app.EdtWaveMax.FontSize=11;
+            app.EdtWaveMax.Tooltip='Wave display max (0=auto)';
+            app.EdtWaveMax.ValueChangedFcn = @(src,~)app.onWaveMaxChange(src);
+
             app.BtnStiff8 = uibutton(ctrlG,'push');
-            app.BtnStiff8.Layout.Column=5;
+            app.BtnStiff8.Layout.Column=7;
             app.BtnStiff8.Text='0-8 kPa';
             app.BtnStiff8.FontSize=12; app.BtnStiff8.FontWeight='bold';
             app.BtnStiff8.BackgroundColor=[0.25 0.55 0.85];
@@ -655,7 +669,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BtnStiff8.ButtonPushedFcn = @(~,~)app.setStiffScale([0 8]);
 
             app.BtnStiff20 = uibutton(ctrlG,'push');
-            app.BtnStiff20.Layout.Column=6;
+            app.BtnStiff20.Layout.Column=8;
             app.BtnStiff20.Text='0-20 kPa';
             app.BtnStiff20.FontSize=12;
             app.BtnStiff20.BackgroundColor=[0.70 0.88 0.70];
@@ -663,7 +677,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BtnStiff20.ButtonPushedFcn = @(~,~)app.setStiffScale([0 20]);
 
             app.BtnConfMap = uibutton(ctrlG,'state');
-            app.BtnConfMap.Layout.Column=7;
+            app.BtnConfMap.Layout.Column=9;
             app.BtnConfMap.Text='Conf. mask';
             app.BtnConfMap.FontSize=12;
             app.BtnConfMap.Value=false;
@@ -1258,6 +1272,13 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             setStatus(app,sprintf('MRE ROIs cleared for slice %d.',sl));
         end
 
+        function onWaveMaxChange(app, src)
+            app.AppData.WaveMax = max(0, src.Value);
+            if ~isempty(app.AppData.MRE)
+                refreshMRE(app);
+            end
+        end
+
         function setStiffScale(app, newClim)
             app.AppData.StiffCLim = newClim;
             setStatus(app,sprintf('Stiffness scale: %.0f–%.0f kPa', newClim(1), newClim(2)));
@@ -1622,11 +1643,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             Msl = double(squeeze(mre.M(:,:, min(sl,nZM), 1)));
             showImg(app.AxMREMag, Msl, sprintf('Magnitude  sl %d/%d',sl,nZM));
 
-            % Wave — symmetric colormap centred on 0
+            % Wave — symmetric awave colormap centred on 0
             Wsl = double(mre.W(:,:, min(sl,nZW), ph));
             imagesc(app.AxMREWave, Wsl);
             colormap(app.AxMREWave, mreWaveCmap());
-            wMax = max(abs(Wsl(:)));
+            wMax = app.AppData.WaveMax;
+            if wMax <= 0, wMax = max(abs(Wsl(:))); end  % 0 = auto
             if wMax > 0, clim(app.AxMREWave, [-wMax wMax]); end
             axis(app.AxMREWave,'image');
             app.AxMREWave.XTick=[]; app.AxMREWave.YTick=[];

@@ -109,25 +109,34 @@ function matPath = mre_buildMATFile(exam, opts)
         error('mre_buildMATFile:readFail', 'Failed to read wave+magnitude data.');
     end
 
-    % ── 1b.  GRE: override W from ProcWave series (S705) if present ───
+    % ── 1b.  GRE: override W from ProcWave series (S705/S707) if present ─
+    % Try each GRE_ProcWave candidate (sorted by SeriesNumber) until we
+    % get a non-zero wave volume.  This handles scanners that put the
+    % processed wave in S707 (nPhases>1) rather than the more common S705.
     if ismember(exam.MREType, {'GRE','both'})
-        procWaveSeries = getSeries('GRE_ProcWave');
-        if ~isempty(procWaveSeries)
-            procWaveSeries = procWaveSeries(1);
-            vprint(opts, 'GRE: reading processed wave from S%d (%d files)', ...
-                procWaveSeries.SeriesNumber, numel(procWaveSeries.Files));
-            [W_proc, ~, sinfo_pw, ~] = mre_readWaveMagSeries(procWaveSeries, opts);
-            if ~isempty(W_proc)
+        procWaveCandidates = getSeries('GRE_ProcWave');
+        foundProcWave = false;
+        for pwIdx = 1:numel(procWaveCandidates)
+            pw = procWaveCandidates(pwIdx);
+            vprint(opts, 'GRE: trying processed wave from S%d (%d files)', ...
+                pw.SeriesNumber, numel(pw.Files));
+            [W_proc, ~, sinfo_pw, ~] = mre_readWaveMagSeries(pw, opts);
+            if ~isempty(W_proc) && max(abs(W_proc(:))) > 0
                 W_raw = W_proc;
                 if ~isempty(sinfo_pw) && isstruct(sinfo_pw) && ~isempty(fieldnames(sinfo_pw))
                     sinfo = sinfo_pw;
                 end
-                vprint(opts, 'GRE: wave from ProcWave — %d phases', size(W_raw, 4));
+                vprint(opts, 'GRE: wave from S%d — %d phases, range [%.1f, %.1f]', ...
+                    pw.SeriesNumber, size(W_raw,4), min(W_raw(:)), max(W_raw(:)));
+                foundProcWave = true;
+                break
             else
-                vprint(opts, 'GRE: ProcWave read failed — using WaveMag split.');
+                vprint(opts, 'GRE: S%d gave empty/zero wave — trying next candidate.', ...
+                    pw.SeriesNumber);
             end
-        else
-            vprint(opts, 'GRE: no GRE_ProcWave found — using WaveMag split for wave.');
+        end
+        if ~foundProcWave
+            vprint(opts, 'GRE: no valid ProcWave found — using WaveMag split for wave.');
         end
     end
 

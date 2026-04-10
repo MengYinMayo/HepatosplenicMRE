@@ -351,13 +351,16 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
     nRow = double(hdr1.Rows);
     nCol = double(hdr1.Columns);
 
-    % ── Window width for pixel→radian scaling ─────────────────────────
+    % ── Window width — used only for DC detection heuristic ───────────
     ww = 10000;
     if isfield(hdr1,'WindowWidth') && ~isempty(hdr1.WindowWidth)
         ww = double(hdr1.WindowWidth(1));
         if ww <= 0, ww = 10000; end
     end
-    waveScale = pi / (ww / 2);
+    % Store raw phase values (-3141 to +3141) — do NOT convert to radians.
+    % GE IDEAL-IQ wave DICOM stores: pixel = phase_radians × 1000 (milliradians).
+    % The display auto-scales via clim([-wMax wMax]), so the unit is cosmetic.
+    waveScale = 1;
 
     % ── Detect DC offset empirically from first frame ─────────────────
     % GE S705: unsigned uint16, DC = ww/2. PixelRepresentation tag is

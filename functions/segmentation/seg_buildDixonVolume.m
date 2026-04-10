@@ -184,14 +184,13 @@ function dixon = readMultiContrast(series, dixon, opts)
             vprint(opts, '  Defaulting to %d contrasts (GE IDEAL-IQ standard).', nContrasts);
         end
     end
-    % When TemporalPositionIdentifier was unreliable (all 1), reassign by
-    % InstanceNumber modulo nContrasts (GE interleaves: img1=C1, img2=C2,...,
-    % imgN=CN, imgN+1=C1 for next slice — or all-slices-per-contrast ordering).
+    % When TemporalPositionIdentifier was unreliable (all 1), assign by
+    % ranking InstanceNumber within each unique SliceLocation.
+    % This works for both contrast-interleaved and all-slices-per-contrast
+    % storage orders used by different GE IDEAL-IQ software versions.
     if numel(unique(tempIds)) <= 1 && nContrasts > 1
-        % Detect ordering: sort by SliceLocation, group in blocks of nContrasts
-        % Try contrast-major ordering first (C1S1,C2S1,...,CnS1, C1S2,...)
-        tempIds = mod(instNums - min(instNums), nContrasts) + 1;
-        vprint(opts, '  TemporalPositionIdentifier absent — using InstanceNumber mod %d.', nContrasts);
+        tempIds = assignContrastBySliceRank(sliceLoc, instNums, nContrasts);
+        vprint(opts, '  TemporalPositionIdentifier absent — assigned contrast by within-slice InstanceNumber rank.');
     end
 
     nSlices    = round(nFiles / nContrasts);
@@ -256,14 +255,13 @@ end
 function labels = classifyContrastsByWindow(files, tempIds, nContrasts)
 %CLASSIFYCONTRASTSBYWINDOW  Assign GE IDEAL-IQ contrast labels by TemporalPositionIdentifier.
 %
-%   GE IDEAL-IQ standard TemporalPositionIdentifier order:
-%     1=Water  2=Fat  3=InPhase  4=OutPhase  5=PDFF(%)  6=T2*(ms)
+%   GE IDEAL-IQ output order (verified on user's scanner):
+%     1=InPhase  2=OutPhase  3=Water  4=Fat  5=PDFF(%)  6=T2*(ms)
 %
-%   We use this standard order as the default, then verify by scanning
-%   WindowCenter values. If a contrast has WindowCenter ≈ 50 (0-100 range,
-%   typical for PDFF %), we confirm/swap it to 'PDFF'.
+%   Note: some GE versions swap Water/Fat with InPhase/OutPhase at positions 1-4.
+%   We use WindowCenter heuristics to detect and correct misassignments.
 
-    geOrder = {'Water','Fat','InPhase','OutPhase','PDFF','T2star'};
+    geOrder = {'InPhase','OutPhase','Water','Fat','PDFF','T2star'};
 
     % Start with GE standard order, trimmed/extended to nContrasts
     if nContrasts <= numel(geOrder)
@@ -287,19 +285,20 @@ function labels = classifyContrastsByWindow(files, tempIds, nContrasts)
         end
     end
 
-    % If the detected PDFF position doesn't match the standard (position 5),
-    % find the contrast with WindowCenter in the PDFF range (20-100).
-    pdffCandidates = find(wcs >= 20 & wcs <= 100);
-    if ~isempty(pdffCandidates)
-        detectedPDFF = pdffCandidates(1);
-        if detectedPDFF ~= 5 && detectedPDFF <= nContrasts
-            % Swap labels: standard pos 5 gets the detected position's label,
-            % detected position gets 'PDFF'.
-            if nContrasts >= 5
-                labels{detectedPDFF} = labels{5};
-                labels{5}            = 'PDFF';
-            else
-                labels{detectedPDFF} = 'PDFF';
+    % Refine label assignments using WindowCenter heuristics:
+    %   PDFF (%):   WC ≈ 20-60  (0-100% range → typical WC ~50)
+    %   T2* (ms):   WC ≈ 15-50  (0-100 ms range)
+    %   Anatomic (Water/Fat/IP/OP): WC >> 100
+    % For each contrast, override the default label when WC strongly indicates
+    % PDFF or T2*.
+    for c = 1:nContrasts
+        if isnan(wcs(c)), continue; end
+        if wcs(c) >= 15 && wcs(c) <= 80
+            % Low-range image — could be PDFF or T2*
+            % Distinguish: T2* is usually position 6; PDFF is position 5.
+            % Use geOrder position as tiebreaker; PDFF overrides if not already there.
+            if ~strcmp(labels{c},'T2star') && ~strcmp(labels{c},'PDFF')
+                labels{c} = 'PDFF';  % default low-range to PDFF
             end
         end
     end
@@ -426,6 +425,26 @@ function dixon = initDixonStruct()
                    'PDFF',[],'T2star',[],'SpatialInfo',struct(), ...
                    'nSlices',0,'PixelSpacing_mm',[1 1], ...
                    'SliceThickness_mm',8,'SliceLocations',[]);
+end
+
+function tempIds = assignContrastBySliceRank(sliceLoc, instNums, nContrasts)
+%ASSIGNCONTRASTBYSLICERANK  Assign contrast index by ranking InstanceNumber
+%   within each unique SliceLocation.  Works for both GE storage orderings:
+%     - contrast-interleaved: C1S1, C2S1, ..., CnS1, C1S2, ...
+%     - all-slices-per-contrast: C1S1, C1S2, ..., C1Sn, C2S1, ...
+%   In both cases, within each slice the contrast order by InstanceNumber
+%   is consistent (1 = first contrast, 2 = second, etc.).
+    nFiles  = numel(sliceLoc);
+    tempIds = ones(1, nFiles);
+    uniqueLocs = unique(sliceLoc);
+    for u = 1:numel(uniqueLocs)
+        mask = (sliceLoc == uniqueLocs(u));
+        fileIdxs = find(mask);
+        [~, sortOrd] = sort(instNums(fileIdxs));
+        for r = 1:numel(fileIdxs)
+            tempIds(fileIdxs(sortOrd(r))) = min(r, nContrasts);
+        end
+    end
 end
 
 function opts = applyDefaults(opts, defaults)
