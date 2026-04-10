@@ -149,6 +149,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnStepMRE          matlab.ui.control.Button
         BtnStepResults      matlab.ui.control.Button
         LblStatusMsg        matlab.ui.control.Label
+        LblCursorVal        matlab.ui.control.Label
     end
 
     % =====================================================================
@@ -183,6 +184,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'DixonCmap',    'hot', ...   % colormap name for current contrast
             'DixonClimMin', 0, ...       % display range min
             'DixonClimMax', 100, ...     % display range max
+            'DispWave',     [], ...   % current wave slice for cursor readout
+            'DispStiff',    [], ...   % current stiffness slice
+            'DispDixon',    [], ...   % current Dixon slice
             'ShowConfMask', false, ...
             'ROIs',         struct( ...   % all ROI masks
                 'LiverDixon',  struct('Slices',struct()), ...
@@ -586,12 +590,13 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.MREGrid.Padding      = [4 4 4 4];
             app.MREGrid.ColumnSpacing = 6;
 
-            % Image area
+            % Image area: 3 equal-width image panels + colorbar row + controls
             imgArea = uipanel(app.MREGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
-            imgG = uigridlayout(imgArea,[2 3]);
-            imgG.RowHeight   = {'1x',44}; imgG.ColumnWidth = {'1x','1x','1x'};
-            imgG.Padding     = [0 0 0 0]; imgG.ColumnSpacing = 4;
+            imgG = uigridlayout(imgArea,[3 3]);
+            imgG.RowHeight   = {'1x', 28, 44};
+            imgG.ColumnWidth = {'1x','1x','1x'};
+            imgG.Padding     = [0 0 0 0]; imgG.ColumnSpacing = 4; imgG.RowSpacing = 2;
 
             app.AxMREMag = uiaxes(imgG);
             app.AxMREMag.Layout.Row=1; app.AxMREMag.Layout.Column=1;
@@ -606,11 +611,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxMREStiff.Layout.Row=1; app.AxMREStiff.Layout.Column=3;
             setupDarkAxes(app.AxMREStiff,'Stiffness (kPa)');
             colormap(app.AxMREStiff, mreStiffCmap());
-            colorbar(app.AxMREStiff,'FontSize',9,'Color',[0.7 0.7 0.7]);
+
+            % Row 2: colorbar strip only under stiffness panel (col 3)
+            % Cols 1-2 get empty spacers so stiffness stays same width
+            uilabel(imgG,'Text','','Layout',struct('Row',2,'Column',1));
+            uilabel(imgG,'Text','','Layout',struct('Row',2,'Column',2));
+            app.AxMREStiff.Colorbar = colorbar(app.AxMREStiff, ...
+                'Location','southoutside', ...
+                'FontSize',9,'Color',[0.7 0.7 0.7]);
 
             % Controls row
             ctrlG = uigridlayout(imgG,[1 7]);
-            ctrlG.Layout.Row=2; ctrlG.Layout.Column=[1 3];
+            ctrlG.Layout.Row=3; ctrlG.Layout.Column=[1 3];
             ctrlG.ColumnWidth={56,'1x',56,90,80,80,80}; ctrlG.Padding=[0 4 0 4];
 
             lmr = uilabel(ctrlG); lmr.Layout.Column=1;
@@ -791,6 +803,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             sep=uilabel(app.BottomGrid); sep.Layout.Row=1; sep.Layout.Column=5;
             sep.Text='|'; sep.HorizontalAlignment='center'; sep.FontColor=[0.6 0.6 0.6];
+
+            app.LblCursorVal = uilabel(app.BottomGrid);
+            app.LblCursorVal.Layout.Row=1; app.LblCursorVal.Layout.Column=6;
+            app.LblCursorVal.Text='';
+            app.LblCursorVal.FontSize=11; app.LblCursorVal.FontColor=[0.25 0.35 0.70];
+            app.LblCursorVal.HorizontalAlignment='right';
 
             app.LblStatusMsg = uilabel(app.BottomGrid);
             app.LblStatusMsg.Layout.Row=2; app.LblStatusMsg.Layout.Column=[1 6];
@@ -1526,6 +1544,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             end
 
             img = double(vol(:,:, min(sl, size(vol,3))));
+            app.AppData.DispDixon = img;
             imagesc(ax, img);
 
             % Apply colormap (support reversed variants like hot_r, gray_r)
@@ -1631,6 +1650,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxMREStiff.XTick=[]; app.AxMREStiff.YTick=[];
             title(app.AxMREStiff,sprintf('Stiffness (kPa)  sl %d/%d',sl,nZS), ...
                 'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+
+            % Cache for cursor readout
+            app.AppData.DispWave  = Wsl;
+            app.AppData.DispStiff = S;
 
             % Overlay existing ROI boundaries
             mreOverlayROI(app, sl);
@@ -1788,7 +1811,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     sprintf('[MRE]  %d series', numel(selection.MREGroup)));
                 for k = 1:numel(selection.MREGroup)
                     s = selection.MREGroup(k);
-                    roleDisp = strrep(strrep(s.Role,'GRE_',''),'EPI_','');
+                    roleDisp = mreRoleLabel(s.Role);
                     uitreenode(mreNode,'Text',sprintf('  S%d  %-14s  %s', ...
                         s.SeriesNumber, roleDisp, s.SeriesDescription));
                 end
@@ -1865,8 +1888,35 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function onMouseMove(app)
-            % Determine which localizer axes the mouse is hovering over.
-            % Uses CurrentPoint in data-space compared to axis limits.
+            % ── 1. Cursor value readout for quantitative image axes ──────
+            quantAxes  = {app.AxMREWave, app.AxMREStiff, app.AxDixon};
+            quantData  = {app.AppData.DispWave, app.AppData.DispStiff, app.AppData.DispDixon};
+            quantLabel = {'Wave', 'Stiffness (kPa)', 'Dixon'};
+            hitQuant   = false;
+            for k = 1:numel(quantAxes)
+                ax  = quantAxes{k};
+                dat = quantData{k};
+                if isempty(dat), continue; end
+                try
+                    cp = ax.CurrentPoint;
+                    x  = round(cp(1,1));
+                    y  = round(cp(1,2));
+                    xl = ax.XLim; yl = ax.YLim;
+                    if x >= xl(1) && x <= xl(2) && y >= yl(1) && y <= yl(2) && ...
+                       x >= 1 && x <= size(dat,2) && y >= 1 && y <= size(dat,1)
+                        val = dat(y, x);
+                        app.LblCursorVal.Text = sprintf('%s  (x=%d, y=%d) = %.3g', ...
+                            quantLabel{k}, x, y, val);
+                        hitQuant = true;
+                        break
+                    end
+                catch; end
+            end
+            if ~hitQuant
+                app.LblCursorVal.Text = '';
+            end
+
+            % ── 2. Localizer scroll-wheel routing ─────────────────────────
             try
                 cp = app.AxLocCoronal.CurrentPoint;
                 xl = app.AxLocCoronal.XLim;
@@ -2107,6 +2157,24 @@ end
 
 function tf = endsWith(str, suffix)
     tf = numel(str) >= numel(suffix) && strcmp(str(end-numel(suffix)+1:end), suffix);
+end
+
+function lbl = mreRoleLabel(role)
+% Map internal Role string to friendly display name for study browser.
+    map = struct( ...
+        'GRE_WaveMag',   'WaveMag_Raw', ...
+        'GRE_ProcWave',  'ProcessedWave', ...
+        'GRE_Stiffness', 'Stiffness', ...
+        'GRE_ConfMap',   'ConfMap', ...
+        'EPI_WaveMag',   'WaveMag_Raw', ...
+        'EPI_ProcWave',  'ProcessedWave', ...
+        'EPI_Stiffness', 'Stiffness', ...
+        'EPI_ConfMap',   'ConfMap');
+    if isfield(map, role)
+        lbl = map.(role);
+    else
+        lbl = strrep(strrep(role, 'GRE_', ''), 'EPI_', '');
+    end
 end
 
 function setupDarkAxes(ax, titleStr)

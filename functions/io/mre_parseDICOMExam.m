@@ -200,35 +200,37 @@ function entry = classifySeries(entry)
     if contains(seq, 'fgremre') || contains(seq, 'gremre') || ...
        contains(desc, 'gre mre') || contains(desc, '2d gre mre')
 
+        % Series-number suffix is the PRIMARY classifier — GE sometimes
+        % stores processed-wave (S705) with ImageType=ORIGINAL, so we
+        % must check snMod BEFORE the ImageType branch.
+        snMod = mod(sn, 100);
+
+        if snMod == 5 && bits == 16
+            % Processed wave: 8-phase post-processed, no magnitude.
+            % GE marks this as ORIGINAL despite being derived — override.
+            entry.Role = 'GRE_ProcWave';
+            return
+        end
+
         if contains(itype, 'original')
-            % ORIGINAL: raw wave + magnitude (S700 = GRE_WaveMag)
-            % First half of images = wave_raw, second half = mag_raw
-            % (the split is performed by mre_readWaveMagSeries.m)
+            % Raw wave + magnitude (S700/S7 ORIGINAL)
             entry.Role = 'GRE_WaveMag';
             return
         end
 
-        if contains(itype, 'derived') && bits == 16
-            % Primary classifier: last 2 digits of SeriesNumber encode type
-            %   mod=1 → Stiffness (x001, no confidence mask)
-            %   mod=5 → Processed wave (x005, post-processed 8-phase, no magnitude)
-            %   mod=7 → Confidence map (x007)
-            %   other → fall through to heuristics
-            snMod = mod(sn, 100);
+        if bits == 16
             if snMod == 1
                 entry.Role = 'GRE_Stiffness';
-            elseif snMod == 5
-                entry.Role = 'GRE_ProcWave';
             elseif snMod == 7
                 entry.Role = 'GRE_ConfMap';
-            elseif isWaveMagSeries(entry)
-                entry.Role = 'GRE_ProcWave';
             elseif isStiffnessSeries(entry)
                 entry.Role = 'GRE_Stiffness';
             elseif isConfidenceSeries(entry)
                 entry.Role = 'GRE_ConfMap';
-            else
+            elseif isWaveMagSeries(entry)
                 entry.Role = 'GRE_ProcWave';
+            else
+                entry.Role = 'GRE_Stiffness';  % most common remaining derived
             end
             return
         end
