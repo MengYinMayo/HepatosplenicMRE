@@ -79,6 +79,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         AxDixonPDFF         matlab.ui.control.UIAxes
         AxDixonIP           matlab.ui.control.UIAxes
         DdlDixonContrast    matlab.ui.control.DropDown
+        DdlDixonCmap        matlab.ui.control.DropDown   % colormap for PDFF/current
+        EdtDixonMin         matlab.ui.control.EditField  % display min
+        EdtDixonMax         matlab.ui.control.EditField  % display max
         SldrDixon           matlab.ui.control.Slider
         LblDixonSlice       matlab.ui.control.Label
         LblDixonInfo        matlab.ui.control.Label
@@ -177,6 +180,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'MRETimer',     [], ...
             'StiffCLim',    [0 8], ...
             'DixonContrast', 'PDFF', ...  % 'PDFF'|'Water'|'Fat'|'T2star'|'InPhase'|'OutPhase'
+            'DixonCmap',    'hot', ...   % colormap name for current contrast
+            'DixonClimMin', 0, ...       % display range min
+            'DixonClimMax', 100, ...     % display range max
             'ShowConfMask', false, ...
             'ROIs',         struct( ...   % all ROI masks
                 'LiverDixon',  struct('Slices',struct()), ...
@@ -450,17 +456,17 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.DixonGrid.Padding      = [4 4 4 4];
             app.DixonGrid.ColumnSpacing = 6;
 
-            % Image area: contrast selector row + large single image + slice ctrl
+            % Image area: 2 control rows + large image + slice ctrl
             imgArea = uipanel(app.DixonGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
-            imgG = uigridlayout(imgArea,[3 1]);
-            imgG.RowHeight   = {32,'1x',32}; imgG.ColumnWidth = {'1x'};
-            imgG.Padding     = [0 0 0 0]; imgG.RowSpacing = 4;
+            imgG = uigridlayout(imgArea,[4 1]);
+            imgG.RowHeight   = {32,30,'1x',32}; imgG.ColumnWidth = {'1x'};
+            imgG.Padding     = [0 0 0 0]; imgG.RowSpacing = 3;
 
-            % Row 1: contrast selector
-            contRow = uigridlayout(imgG,[1 5]);
+            % Row 1: contrast selector + slice info
+            contRow = uigridlayout(imgG,[1 4]);
             contRow.Layout.Row=1;
-            contRow.ColumnWidth = {70,'1x',60,120,80};
+            contRow.ColumnWidth = {70,'1x',55,110};
             contRow.Padding=[0 2 0 2]; contRow.ColumnSpacing=6;
             lcon = uilabel(contRow); lcon.Layout.Column=1;
             lcon.Text='Contrast:'; lcon.FontSize=13; lcon.FontWeight='bold';
@@ -471,22 +477,52 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.DdlDixonContrast.Value     = 'PDFF';
             app.DdlDixonContrast.FontSize  = 13;
             app.DdlDixonContrast.ValueChangedFcn = @(~,~)app.onDixonContrastChange();
-
             app.LblDixonSlice = uilabel(contRow); app.LblDixonSlice.Layout.Column=3;
             app.LblDixonSlice.Text='1/1'; app.LblDixonSlice.FontSize=12;
             app.LblDixonSlice.HorizontalAlignment='center';
-            app.LblDixonInfo = uilabel(contRow); app.LblDixonInfo.Layout.Column=[4 5];
+            app.LblDixonInfo = uilabel(contRow); app.LblDixonInfo.Layout.Column=4;
             app.LblDixonInfo.Text='';
             app.LblDixonInfo.FontSize=10; app.LblDixonInfo.FontColor=[0.5 0.5 0.5];
 
-            % Row 2: large single image panel
+            % Row 2: colormap + display range (min/max)
+            scaleRow = uigridlayout(imgG,[1 7]);
+            scaleRow.Layout.Row=2;
+            scaleRow.ColumnWidth = {60,'1x',40,50,10,50,50};
+            scaleRow.Padding=[0 1 0 1]; scaleRow.ColumnSpacing=4;
+            lcm = uilabel(scaleRow); lcm.Layout.Column=1;
+            lcm.Text='Colormap:'; lcm.FontSize=11; lcm.FontWeight='bold';
+            app.DdlDixonCmap = uidropdown(scaleRow);
+            app.DdlDixonCmap.Layout.Column=2;
+            app.DdlDixonCmap.Items     = {'Hot','Gray','Parula','Jet','Turbo','Hot (rev)','Gray (rev)'};
+            app.DdlDixonCmap.ItemsData = {'hot','gray','parula','jet','turbo','hot_r','gray_r'};
+            app.DdlDixonCmap.Value     = 'hot';
+            app.DdlDixonCmap.FontSize  = 11;
+            app.DdlDixonCmap.ValueChangedFcn = @(~,~)app.onDixonScaleChange();
+            lrng = uilabel(scaleRow); lrng.Layout.Column=3;
+            lrng.Text='Range:'; lrng.FontSize=11; lrng.FontWeight='bold';
+            app.EdtDixonMin = uieditfield(scaleRow,'numeric');
+            app.EdtDixonMin.Layout.Column=4; app.EdtDixonMin.Value=0;
+            app.EdtDixonMin.FontSize=11;
+            app.EdtDixonMin.ValueChangedFcn = @(~,~)app.onDixonScaleChange();
+            lto = uilabel(scaleRow); lto.Layout.Column=5;
+            lto.Text='–'; lto.FontSize=12; lto.HorizontalAlignment='center';
+            app.EdtDixonMax = uieditfield(scaleRow,'numeric');
+            app.EdtDixonMax.Layout.Column=6; app.EdtDixonMax.Value=100;
+            app.EdtDixonMax.FontSize=11;
+            app.EdtDixonMax.ValueChangedFcn = @(~,~)app.onDixonScaleChange();
+            btnAuto = uibutton(scaleRow,'push');
+            btnAuto.Layout.Column=7; btnAuto.Text='Auto';
+            btnAuto.FontSize=11;
+            btnAuto.ButtonPushedFcn = @(~,~)app.onDixonAutoScale();
+
+            % Row 3: large single image panel
             app.AxDixon = uiaxes(imgG);
-            app.AxDixon.Layout.Row=2;
+            app.AxDixon.Layout.Row=3;
             setupDarkAxes(app.AxDixon,'Water');
 
-            % Row 3: slice slider
+            % Row 4: slice slider
             slCtrl = uigridlayout(imgG,[1 3]);
-            slCtrl.Layout.Row=3;
+            slCtrl.Layout.Row=4;
             slCtrl.ColumnWidth={60,'1x',50}; slCtrl.Padding=[0 2 0 2];
             lsd = uilabel(slCtrl); lsd.Layout.Column=1;
             lsd.Text='Slice:'; lsd.FontSize=13; lsd.FontWeight='bold';
@@ -1204,12 +1240,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             setStatus(app,sprintf('MRE ROIs cleared for slice %d.',sl));
         end
 
-        function setStiffScale(app, clim)
-            app.AppData.StiffCLim = clim;
+        function setStiffScale(app, newClim)
+            app.AppData.StiffCLim = newClim;
+            setStatus(app,sprintf('Stiffness scale: %.0f–%.0f kPa', newClim(1), newClim(2)));
             if ~isempty(app.AppData.MRE)
-                clim(app.AxMREStiff, clim);
+                refreshMRE(app);   % redraws with updated StiffCLim + colorbar
             end
-            setStatus(app,sprintf('Stiffness scale: %.0f–%.0f kPa',clim(1),clim(2)));
         end
 
         function setStiffScaleCustom(app)
@@ -1401,11 +1437,72 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 app.DdlDixonContrast.Value = 'Fat';
             end
             app.AppData.DixonContrast = app.DdlDixonContrast.Value;
+            % Reset scale controls to defaults for this contrast
+            switch app.AppData.DixonContrast
+                case 'PDFF'
+                    app.DdlDixonCmap.Value = 'hot';
+                    app.EdtDixonMin.Value  = 0;
+                    app.EdtDixonMax.Value  = 100;
+                case 'T2star'
+                    app.DdlDixonCmap.Value = 'turbo';
+                    app.EdtDixonMin.Value  = 0;
+                    app.EdtDixonMax.Value  = 50;
+                otherwise
+                    app.DdlDixonCmap.Value = 'gray';
+                    app.EdtDixonMin.Value  = 0;
+                    app.EdtDixonMax.Value  = 0;   % 0,0 → auto in refreshDixon
+            end
+            app.AppData.DixonCmap    = app.DdlDixonCmap.Value;
+            app.AppData.DixonClimMin = app.EdtDixonMin.Value;
+            app.AppData.DixonClimMax = app.EdtDixonMax.Value;
             refreshDixon(app);
         end
 
         function onDixonContrastChange(app)
             app.AppData.DixonContrast = app.DdlDixonContrast.Value;
+            % Reset colormap + scale to sensible defaults for this contrast
+            switch app.AppData.DixonContrast
+                case 'PDFF'
+                    app.DdlDixonCmap.Value = 'hot';
+                    app.EdtDixonMin.Value  = 0;
+                    app.EdtDixonMax.Value  = 100;
+                case 'T2star'
+                    app.DdlDixonCmap.Value = 'turbo';
+                    app.EdtDixonMin.Value  = 0;
+                    app.EdtDixonMax.Value  = 50;
+                otherwise
+                    app.DdlDixonCmap.Value = 'gray';
+                    app.EdtDixonMin.Value  = 0;
+                    app.EdtDixonMax.Value  = 0;   % 0→0 triggers auto-range in refreshDixon
+            end
+            app.AppData.DixonCmap    = app.DdlDixonCmap.Value;
+            app.AppData.DixonClimMin = app.EdtDixonMin.Value;
+            app.AppData.DixonClimMax = app.EdtDixonMax.Value;
+            refreshDixon(app);
+        end
+
+        function onDixonScaleChange(app)
+            app.AppData.DixonCmap    = app.DdlDixonCmap.Value;
+            app.AppData.DixonClimMin = app.EdtDixonMin.Value;
+            app.AppData.DixonClimMax = app.EdtDixonMax.Value;
+            refreshDixon(app);
+        end
+
+        function onDixonAutoScale(app)
+            % Set min/max to the actual data range of current slice
+            dix = app.AppData.Dixon;
+            if isempty(dix), return; end
+            sl  = app.AppData.DixonSlice;
+            contrast = app.AppData.DixonContrast;
+            vol = dixonVolume(dix, contrast);
+            if isempty(vol), return; end
+            img = double(vol(:,:, min(sl, size(vol,3))));
+            lo = min(img(:)); hi = max(img(:));
+            if hi <= lo, return; end
+            app.EdtDixonMin.Value  = lo;
+            app.EdtDixonMax.Value  = hi;
+            app.AppData.DixonClimMin = lo;
+            app.AppData.DixonClimMax = hi;
             refreshDixon(app);
         end
 
@@ -1419,25 +1516,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             % Select image volume based on chosen contrast
             contrast = app.AppData.DixonContrast;
-            switch contrast
-                case 'PDFF'
-                    vol = dix.PDFF;    cmap = 'hot';   climMode = 'pdff';
-                case 'Water'
-                    vol = dix.Water;   cmap = 'gray';  climMode = 'auto';
-                case 'Fat'
-                    vol = dix.Fat;     cmap = 'gray';  climMode = 'auto';
-                case 'T2star'
-                    f = fieldnames(dix);
-                    t2f = f(strcmpi(f,'T2star'));
-                    if ~isempty(t2f), vol = dix.(t2f{1}); else, vol = []; end
-                    cmap = 'turbo';    climMode = 't2s';
-                case 'InPhase'
-                    vol = dix.InPhase; cmap = 'gray';  climMode = 'auto';
-                case 'OutPhase'
-                    vol = dix.OutPhase;cmap = 'gray';  climMode = 'auto';
-                otherwise
-                    vol = dix.Water;   cmap = 'gray';  climMode = 'auto';
-            end
+            vol = dixonVolume(dix, contrast);
 
             ax = app.AxDixon;
             if isempty(vol)
@@ -1448,15 +1527,26 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             img = double(vol(:,:, min(sl, size(vol,3))));
             imagesc(ax, img);
-            colormap(ax, cmap);
-            switch climMode
-                case 'pdff'
-                    clim(ax, [0 100]);
-                case 't2s'
-                    clim(ax, [0 50]);  % 0-50 ms T2* range
-                otherwise
-                    lo = min(img(:)); hi = max(img(:));
-                    if hi > lo, clim(ax, [lo hi]); end
+
+            % Apply colormap (support reversed variants like hot_r, gray_r)
+            cmapName = app.AppData.DixonCmap;
+            if endsWith(cmapName, '_r')
+                baseName = cmapName(1:end-2);
+                try, cmapData = flip(feval(baseName, 256), 1); catch, cmapData = flip(gray(256),1); end
+                colormap(ax, cmapData);
+            else
+                try, colormap(ax, cmapName); catch, colormap(ax, 'gray'); end
+            end
+
+            % Apply display range: user-set min/max, or auto if both are 0
+            lo = app.AppData.DixonClimMin;
+            hi = app.AppData.DixonClimMax;
+            if lo == 0 && hi == 0
+                % Auto-range from image data
+                lo = min(img(:)); hi = max(img(:));
+            end
+            if hi > lo
+                clim(ax, [lo hi]);
             end
             axis(ax,'image');
             ax.XTick=[]; ax.YTick=[];
@@ -1989,6 +2079,34 @@ function s = siCoordStr(z_mm)
     else
         s = sprintf('I%d', abs(round(z_mm)));
     end
+end
+
+function vol = dixonVolume(dix, contrast)
+% Return the 3-D volume for the requested Dixon contrast string.
+    vol = [];
+    if isempty(dix), return; end
+    switch contrast
+        case 'PDFF'
+            if isfield(dix,'PDFF'),     vol = dix.PDFF;     end
+        case 'Water'
+            if isfield(dix,'Water'),    vol = dix.Water;    end
+        case 'Fat'
+            if isfield(dix,'Fat'),      vol = dix.Fat;      end
+        case 'T2star'
+            f   = fieldnames(dix);
+            t2f = f(strcmpi(f,'T2star'));
+            if ~isempty(t2f),           vol = dix.(t2f{1}); end
+        case 'InPhase'
+            if isfield(dix,'InPhase'),  vol = dix.InPhase;  end
+        case 'OutPhase'
+            if isfield(dix,'OutPhase'), vol = dix.OutPhase; end
+        otherwise
+            if isfield(dix,'Water'),    vol = dix.Water;    end
+    end
+end
+
+function tf = endsWith(str, suffix)
+    tf = numel(str) >= numel(suffix) && strcmp(str(end-numel(suffix)+1:end), suffix);
 end
 
 function setupDarkAxes(ax, titleStr)

@@ -331,12 +331,12 @@ end
 function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts)
 %READPROCWAVE  Read a processed-wave-only series (no mag split needed).
 %
-%   Processed wave series (e.g. GRE s705, EPI s300105) contain:
-%     - Only wave images (no magnitude)
-%     - Already phase-unwrapped, filtered, and optionally interpolated
-%     - nPhases = nFiles / nSlices  (may be 8 if interpolated from 4)
-%
-%   Wave scaling: same DC-offset logic as raw series.
+%   GE GRE S705 processed wave encoding:
+%     - Unsigned UINT16 (PixelRepresentation tag may say 0 or 1 — unreliable)
+%     - DC offset = WindowWidth/2 (zero displacement stored at ww/2)
+%     - Background (outside tissue mask) explicitly stored as pixel = 0
+%     - After decoding: wave = (pixel - ww/2) * pi/(ww/2)
+%     - Mask pixels (pixel == 0) forced to zero displacement
 
     W = []; M = []; spatialInfo = struct(); phases_rad = [];
 
@@ -351,55 +351,95 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
     nRow = double(hdr1.Rows);
     nCol = double(hdr1.Columns);
 
-    % Determine nSlices and nPhases
-    % Collect SliceLocation and InstanceNumber from every header.
+    % ── Window width for pixel→radian scaling ─────────────────────────
+    ww = 10000;
+    if isfield(hdr1,'WindowWidth') && ~isempty(hdr1.WindowWidth)
+        ww = double(hdr1.WindowWidth(1));
+        if ww <= 0, ww = 10000; end
+    end
+    waveScale = pi / (ww / 2);
+
+    % ── Detect DC offset empirically from first frame ─────────────────
+    % GE S705: unsigned uint16, DC = ww/2. PixelRepresentation tag is
+    % unreliable (sometimes says 1/signed). Check actual pixel values:
+    % if all ≥ 0 AND median >> 0, data is DC-offset unsigned.
+    try
+        testPx  = double(dicomread(files{1}));
+        testMin = min(testPx(:));
+        testMed = median(testPx(testPx > 0));   % median of nonzero pixels
+        if isnan(testMed), testMed = 0; end
+    catch
+        testMin = 0; testMed = ww / 2;
+    end
+
+    if testMin >= 0 && testMed > ww * 0.15
+        % All non-negative and median clearly above zero → unsigned-with-DC
+        waveDC   = ww / 2;
+        hasMask  = true;   % pixel == 0 means "outside tissue mask"
+        vprint(opts, 'Proc wave: unsigned UINT16 detected (median %.0f, ww %.0f) → DC=%.0f', ...
+            testMed, ww, waveDC);
+    else
+        % Negative values present → truly signed, already centered at 0
+        waveDC   = 0;
+        hasMask  = false;
+        vprint(opts, 'Proc wave: signed INT16 detected → DC=0');
+    end
+
+    % ── Collect SliceLocation and InstanceNumber ───────────────────────
     sliceLocs = zeros(1, nFiles);
-    instNums  = (1:nFiles);   % fallback if tag absent
+    instNums  = (1:nFiles);
     for k = 1:nFiles
         try
             info = dicominfo(files{k}, 'UseDictionaryVR', true);
             if isfield(info,'SliceLocation') && ~isempty(info.SliceLocation)
                 sliceLocs(k) = double(info.SliceLocation);
-            else
-                sliceLocs(k) = k;
             end
             if isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
                 instNums(k) = double(info.InstanceNumber);
             end
         catch
-            sliceLocs(k) = k;
         end
     end
 
+    % ── Determine nSlices and nPhases ─────────────────────────────────
+    % Primary: group by unique SliceLocation.
+    % Fallback: if all SliceLocs are identical (common in S705), use
+    %           NumberOfTemporalPositions to determine nPhases, then
+    %           infer nSlices = nFiles / nPhases.
     uniqueLocs = unique(sliceLocs);
-    nSlices    = numel(uniqueLocs);
-    nPhases    = max(1, round(nFiles / nSlices));
-
-    vprint(opts, 'Proc wave geometry: %d rows × %d cols × %d slices × %d phases', ...
-        nRow, nCol, nSlices, nPhases);
-
-    % Wave scaling
-    ww = 10000;   % default for processed wave
-    if isfield(hdr1,'WindowWidth') && ~isempty(hdr1.WindowWidth)
-        ww = double(hdr1.WindowWidth(1));
-    end
-    % DC offset for unsigned storage
-    pixRep = 0;
-    if isfield(hdr1,'PixelRepresentation') && ~isempty(hdr1.PixelRepresentation)
-        pixRep = double(hdr1.PixelRepresentation);
-    end
-    if pixRep == 0
-        waveDC = ww / 2;   % unsigned with DC offset
+    if numel(uniqueLocs) <= 1
+        % SliceLocation is missing or degenerate — use temporal tag
+        nPhasesHdr = 8;  % GE S705 default
+        if isfield(hdr1,'NumberOfTemporalPositions') && ...
+           ~isempty(hdr1.NumberOfTemporalPositions)
+            nPhasesHdr = double(hdr1.NumberOfTemporalPositions);
+        end
+        nPhases = max(1, nPhasesHdr);
+        nSlices = max(1, round(nFiles / nPhases));
+        % Re-assign slice locations by InstanceNumber order
+        [~, instOrder] = sort(instNums);
+        sliceLocs = zeros(1, nFiles);
+        for k = 1:nFiles
+            fileIdx = instOrder(k);
+            slIdx   = mod(k-1, nSlices) + 1;   % phase-major: sl cycles fastest
+            sliceLocs(fileIdx) = slIdx;
+        end
+        uniqueLocs = 1:nSlices;
+        vprint(opts, 'Proc wave: SliceLocation degenerate → %d slices × %d phases from TemporalPositions', ...
+            nSlices, nPhases);
     else
-        waveDC = 0;        % signed, no DC offset needed
+        nSlices = numel(uniqueLocs);
+        nPhases = max(1, round(nFiles / nSlices));
+        vprint(opts, 'Proc wave: %d slices × %d phases from SliceLocation', nSlices, nPhases);
     end
-    waveScale = pi / (ww / 2);
+
+    vprint(opts, 'Proc wave geometry: %d × %d × %d slices × %d phases', ...
+        nRow, nCol, nSlices, nPhases);
 
     phases_rad = linspace(0, 2*pi, nPhases+1);
     phases_rad = phases_rad(1:nPhases);
 
-    % Read all files — assign phases within each slice by InstanceNumber order
-    % (same phase-major-safe logic as the raw wave reader)
+    % ── Read pixels, assign to W ───────────────────────────────────────
     W = zeros(nRow, nCol, nSlices, nPhases, 'double');
 
     for slIdx = 1:nSlices
@@ -414,19 +454,23 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
             catch
                 continue
             end
-            W(:,:,slIdx,ph) = (pxData - waveDC) .* waveScale;
+            tmp = (pxData - waveDC) .* waveScale;
+            % Re-zero pixels that are the background mask sentinel (raw == 0)
+            if hasMask
+                tmp(pxData == 0) = 0;
+            end
+            W(:,:,slIdx,ph) = tmp;
         end
     end
 
-    % No magnitude available from proc wave — return empty
-    M = [];
+    M = [];   % no magnitude in proc-wave series
 
-    % Spatial info
     try
         spatialInfo = io_extractSpatialInfo(files, hdr1, nSlices, nPhases);
     catch
         spatialInfo = struct();
     end
 
-    vprint(opts, 'Proc wave done. W: %s  (unsigned=%d)', mat2str(size(W)), pixRep==0);
+    vprint(opts, 'Proc wave done. W: %s  waveDC=%.0f  waveScale=%.5f', ...
+        mat2str(size(W)), waveDC, waveScale);
 end
