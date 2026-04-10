@@ -351,43 +351,6 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
     nRow = double(hdr1.Rows);
     nCol = double(hdr1.Columns);
 
-    % ── Window width — used only for DC detection heuristic ───────────
-    ww = 10000;
-    if isfield(hdr1,'WindowWidth') && ~isempty(hdr1.WindowWidth)
-        ww = double(hdr1.WindowWidth(1));
-        if ww <= 0, ww = 10000; end
-    end
-    % Store raw phase values (-3141 to +3141) — do NOT convert to radians.
-    % GE IDEAL-IQ wave DICOM stores: pixel = phase_radians × 1000 (milliradians).
-    % The display auto-scales via clim([-wMax wMax]), so the unit is cosmetic.
-    waveScale = 1;
-
-    % ── Detect DC offset empirically from first frame ─────────────────
-    % GE S705: unsigned uint16, DC = ww/2. PixelRepresentation tag is
-    % unreliable (sometimes says 1/signed). Check actual pixel values:
-    % if all ≥ 0 AND median >> 0, data is DC-offset unsigned.
-    try
-        testPx  = double(dicomread(files{1}));
-        testMin = min(testPx(:));
-        testMed = median(testPx(testPx > 0));   % median of nonzero pixels
-        if isnan(testMed), testMed = 0; end
-    catch
-        testMin = 0; testMed = ww / 2;
-    end
-
-    if testMin >= 0 && testMed > ww * 0.15
-        % All non-negative and median clearly above zero → unsigned-with-DC
-        waveDC   = ww / 2;
-        hasMask  = true;   % pixel == 0 means "outside tissue mask"
-        vprint(opts, 'Proc wave: unsigned UINT16 detected (median %.0f, ww %.0f) → DC=%.0f', ...
-            testMed, ww, waveDC);
-    else
-        % Negative values present → truly signed, already centered at 0
-        waveDC   = 0;
-        hasMask  = false;
-        vprint(opts, 'Proc wave: signed INT16 detected → DC=0');
-    end
-
     % ── Collect SliceLocation and InstanceNumber ───────────────────────
     sliceLocs = zeros(1, nFiles);
     instNums  = (1:nFiles);
@@ -442,7 +405,7 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
     phases_rad = linspace(0, 2*pi, nPhases+1);
     phases_rad = phases_rad(1:nPhases);
 
-    % ── Read pixels, assign to W ───────────────────────────────────────
+    % ── Read raw pixels directly into W — no DC removal, no scaling ───
     W = zeros(nRow, nCol, nSlices, nPhases, 'double');
 
     for slIdx = 1:nSlices
@@ -453,16 +416,10 @@ function [W, M, spatialInfo, phases_rad] = readProcWave(seriesEntry, files, opts
         slFiles = slFiles(phSortIdx);
         for ph = 1:min(numel(slFiles), nPhases)
             try
-                pxData = double(dicomread(slFiles{ph}));
+                W(:,:,slIdx,ph) = double(dicomread(slFiles{ph}));
             catch
                 continue
             end
-            tmp = (pxData - waveDC) .* waveScale;
-            % Re-zero pixels that are the background mask sentinel (raw == 0)
-            if hasMask
-                tmp(pxData == 0) = 0;
-            end
-            W(:,:,slIdx,ph) = tmp;
         end
     end
 
