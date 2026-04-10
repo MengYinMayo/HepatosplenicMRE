@@ -222,13 +222,7 @@ function entry = classifySeries(entry)
             if snMod == 1
                 entry.Role = 'GRE_Stiffness';
             elseif snMod == 7
-                % S707: processed wave (8-phase) on some GE versions,
-                % or confidence map on others. Discriminate by nPhases.
-                if entry.nPhases > 1
-                    entry.Role = 'GRE_ProcWave';
-                else
-                    entry.Role = 'GRE_ConfMap';
-                end
+                entry.Role = 'GRE_ConfMap';
             elseif isStiffnessSeries(entry)
                 entry.Role = 'GRE_Stiffness';
             elseif isConfidenceSeries(entry)
