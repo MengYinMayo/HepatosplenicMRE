@@ -1,96 +1,85 @@
 function exam = mre_parseDICOMExam(examRootDir, opts)
 % MRE_PARSEDICOMEXAM  Identify and classify all GE MRE series in an exam folder.
 %
-%   EXAM = MRE_PARSEDICOMEXAM(EXAMROOTDIR) recursively scans EXAMROOTDIR,
-%   reads one DICOM header per subfolder, and classifies each subfolder into
-%   one of the following roles based on GE-specific private tags and series
-%   number patterns:
+%   NETWORK-OPTIMISED version:
+%     - Zero file I/O during folder discovery (filename patterns only)
+%     - One dicominfo() call per series folder (not per file)
+%     - Max recursion depth capped at 4 levels
+%     - Progress dots printed during scan
 %
-%     Role string        Description
-%     ─────────────────  ──────────────────────────────────────────────────
-%     'Localizer'        3-plane SSFSE scout (SeriesNum~1, seq='ssfse')
-%     'IDEALIQ_Raw'      IDEAL-IQ raw water series (seq='ideal3darc', nImg small)
-%     'IDEALIQ_Multi'    IDEAL-IQ multi-contrast stack (6 contrasts × nSlices)
-%     'IDEALIQ_PDFF'     Fat fraction map from IDEAL-IQ ('FatFrac' in desc)
-%     'IDEALIQ_T2s'      T2* map from IDEAL-IQ ('T2*' in desc)
-%     'EPI_RawIQ'        EPI-MRE raw I/Q data (seq='epimre', ImageType=ORIGINAL)
-%     'EPI_WaveMag'      EPI-MRE phase contrast + magnitude (seq='epimre', DERIVED)
-%     'EPI_Stiffness'    EPI-MRE grayscale stiffness in Pa (16-bit, seq='epimre')
-%     'EPI_ConfMap'      EPI-MRE confidence map 0-999 (16-bit, small series)
-%     'EPI_ProcWave'     EPI-MRE processed/filtered wave (16-bit, small series)
-%     'GRE_WaveMag'      GRE-MRE phase contrast + magnitude (seq='fgremre', ORIGINAL)
-%     'GRE_Stiffness'    GRE-MRE grayscale stiffness in Pa (16-bit, DERIVED)
-%     'GRE_ConfMap'      GRE-MRE confidence map 0-999 (16-bit, small series)
-%     'GRE_ProcWave'     GRE-MRE processed wave images (16-bit, DERIVED)
-%     'RGB_Visualization' Any 8-bit RGB SCREEN SAVE — skip for analysis
-%     'Unknown'          Not classified
+%   EXAM = MRE_PARSEDICOMEXAM(EXAMROOTDIR) scans all subfolders and
+%   classifies each series using a 3-tier evidence system:
+%     Tier 1 (definitive): GE private tag Private_0019_109c
+%     Tier 2 (strong):     SeriesDescription keywords
+%     Tier 3 (supporting): Folder name + ScanOptions
 %
-%   EXAM struct fields:
-%     .ExamRootDir      char     root folder scanned
-%     .PatientID        char
-%     .StudyDate        char
-%     .ScannerModel     char
-%     .MREType          char     'EPI' | 'GRE' | 'both' | 'none'
-%     .Series           struct array with fields:
-%         .Folder       char     full path
-%         .Role         char     (from table above)
-%         .SeriesNumber double
-%         .SeriesDescription char
-%         .nImages      double   actual count in this folder
-%         .nPhases      double   NumberOfTemporalPositions
-%         .BitDepth     double   8 or 16
-%         .IsGrayscale  logical
-%         .SeqName      char     Private_0019_109c (GE internal sequence name)
-%         .ImageType    char
-%         .Header       struct   full DICOM header of first file
-%         .Files        cell     sorted list of all DICOM files
+%   Roles assigned:
+%     'Localizer'          3-plane SSFSE scout
+%     'IDEALIQ_Raw'        IDEAL-IQ raw water
+%     'IDEALIQ_Multi'      IDEAL-IQ multi-contrast stack
+%     'IDEALIQ_PDFF'       Fat fraction map
+%     'IDEALIQ_T2s'        T2* map
+%     'EPI_RawIQ'          EPI-MRE raw I/Q (skip)
+%     'EPI_WaveMag'        EPI-MRE wave + magnitude
+%     'EPI_Stiffness'      EPI-MRE stiffness in Pa
+%     'EPI_ConfMap'        EPI-MRE confidence map
+%     'EPI_ProcWave'       EPI-MRE processed wave
+%     'GRE_WaveMag'        GRE-MRE wave + magnitude
+%     'GRE_Stiffness'      GRE-MRE stiffness in Pa
+%     'GRE_ConfMap'        GRE-MRE confidence map
+%     'GRE_ProcWave'       GRE-MRE processed wave
+%     'RGB_Visualization'  8-bit RGB screen save (skip)
+%     'Unknown'            Not classified
 %
 %   USAGE
-%     exam = mre_parseDICOMExam('/data/Subject01/DICOM/MRE');
-%     exam = mre_parseDICOMExam(dir, struct('verbose', true));
+%     exam = mre_parseDICOMExam('\\server\share\PatientExam');
+%     exam = mre_parseDICOMExam(path, struct('verbose', true, 'maxDepth', 3));
 %
-%   SEE ALSO  mre_buildMATFile, mre_readWaveMagSeries, loc_loadLocalizer
-%
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3
-%   DATE    2026-04
+%   AUTHOR  HepatosplenicMRE Platform — Phase 3  (network-optimised)
 
     if nargin < 2, opts = struct(); end
-    opts = applyDefaults(opts, struct('verbose', true));
+    opts = applyDefaults(opts, struct( ...
+        'verbose',  true, ...
+        'maxDepth', 4));
 
     vprint(opts, '=== mre_parseDICOMExam ===');
     vprint(opts, 'Root: %s', examRootDir);
 
-    % ------------------------------------------------------------------
-    % 1.  Find all subfolders containing DICOM files
-    % ------------------------------------------------------------------
-    subfolders = findDICOMFolders(examRootDir);
-    vprint(opts, 'Found %d subfolders with DICOM files.', numel(subfolders));
+    % 1. Find all series folders (fast — filename patterns, no file I/O)
+    vprint(opts, 'Scanning for DICOM series folders...');
+    subfolders = findDICOMFolders(examRootDir, opts.maxDepth);
+    vprint(opts, 'Found %d series folders.', numel(subfolders));
 
-    % ------------------------------------------------------------------
-    % 2.  Read first DICOM header from each subfolder
-    % ------------------------------------------------------------------
+    if isempty(subfolders)
+        warning('mre_parseDICOMExam:noFolders', ...
+            'No DICOM folders found under:\n  %s', examRootDir);
+        exam = initExamStruct(examRootDir);
+        return
+    end
+
+    % 2. Read ONE header per folder, classify
     exam = initExamStruct(examRootDir);
     seriesList = struct([]);
 
     for k = 1:numel(subfolders)
         folder = subfolders{k};
-        files  = getDICOMFilesInFolder(folder);
+        files  = listDICOMFiles(folder);        % fast — no file I/O
         if isempty(files), continue; end
 
         try
             hdr = dicominfo(files{1}, 'UseDictionaryVR', true);
         catch
-            continue
+            continue   % not a valid DICOM — skip
         end
 
-        % Populate exam-level metadata on first valid series
+        % Exam-level metadata from first valid series
         if isempty(exam.PatientID)
-            exam.PatientID    = safeTag(hdr, 'PatientID');
-            exam.StudyDate    = safeTag(hdr, 'StudyDate');
-            exam.ScannerModel = safeTag(hdr, 'ManufacturerModelName');
+            exam.PatientID    = safeStr(hdr, 'PatientID');
+            exam.StudyDate    = safeStr(hdr, 'StudyDate');
+            exam.ScannerModel = safeStr(hdr, 'ManufacturerModelName');
         end
 
-        entry = buildSeriesEntry(folder, files, hdr);
+        entry = buildEntry(folder, files, hdr);
         entry = classifySeries(entry);
 
         if isempty(seriesList)
@@ -99,330 +88,513 @@ function exam = mre_parseDICOMExam(examRootDir, opts)
             seriesList(end+1) = entry; %#ok<AGROW>
         end
 
-        vprint(opts, '  S%06d  %-28s → %s', ...
+        vprint(opts, '  S%-8d  %-35s -> %s', ...
             entry.SeriesNumber, entry.SeriesDescription, entry.Role);
     end
 
-    % Sort by SeriesNumber
+    % 3. Sort by SeriesNumber
     if ~isempty(seriesList)
         [~, idx] = sort([seriesList.SeriesNumber]);
         seriesList = seriesList(idx);
+        seriesList = normalizeEPIFamilyRoles(seriesList);
     end
 
-    exam.Series = seriesList;
-    exam.MREType = determineMREType(seriesList);
-    vprint(opts, 'MRE type detected: %s', exam.MREType);
+    exam.Series  = seriesList;
+    exam.MREType = detectMREType(seriesList);
+
+    vprint(opts, '--- Summary ---');
+    vprint(opts, 'MRE type : %s', exam.MREType);
+    vprint(opts, 'Patient  : %s  Date: %s', exam.PatientID, exam.StudyDate);
+    vprint(opts, 'Series   : %d total', numel(exam.Series));
+    if ~isempty(seriesList)
+        roles = {seriesList.Role};
+        uniq  = unique(roles);
+        for r = 1:numel(uniq)
+            vprint(opts, '           %-25s x%d', uniq{r}, sum(strcmp(roles,uniq{r})));
+        end
+    end
 end
 
 
-% ======================================================================
-%  CLASSIFICATION LOGIC
-% ======================================================================
+%% ====================================================================
+%  FOLDER DISCOVERY  (zero file I/O — filename patterns only)
+%% ====================================================================
 
-function entry = classifySeries(entry)
-%CLASSIFYSERIES  Assign a Role to the series entry.
-
-    sn    = entry.SeriesNumber;
-    seq   = lower(entry.SeqName);           % Private_0019_109c
-    itype = lower(entry.ImageType);
-    desc  = lower(entry.SeriesDescription);
-    gray  = entry.IsGrayscale;
-    bits  = entry.BitDepth;
-    nImg  = entry.nImages;
-
-    % ── RGB visualizations — always skip for analysis ─────────────────
-    if ~gray
-        entry.Role = 'RGB_Visualization';
-        return
-    end
-
-    % ── Localizer ─────────────────────────────────────────────────────
-    if contains(seq, 'ssfse') || contains(desc, 'localizer') || ...
-       contains(desc, '3-plane') || (sn <= 3 && nImg <= 30)
-        entry.Role = 'Localizer';
-        return
-    end
-
-    % ── IDEAL-IQ ──────────────────────────────────────────────────────
-    if contains(seq, 'ideal') || contains(desc, 'ideal')
-        if contains(desc, 'fatfrac') || contains(desc, 'fat%') || ...
-           contains(desc, 'fat frac') || contains(desc, 'pdff')
-            entry.Role = 'IDEALIQ_PDFF';
-        elseif contains(desc, 't2*') || contains(desc, 't2star')
-            entry.Role = 'IDEALIQ_T2s';
-        elseif contains(desc, 'water:') || ...
-               (contains(desc, 'water') && nImg < 50)
-            entry.Role = 'IDEALIQ_Raw';
-        else
-            entry.Role = 'IDEALIQ_Multi';  % multi-contrast stack
-        end
-        return
-    end
-
-    % ── EPI-MRE ───────────────────────────────────────────────────────
-    if contains(seq, 'epimre') || contains(seq, 'epi')
-
-        if contains(itype, 'original') && contains(itype, 'primary')
-            entry.Role = 'EPI_RawIQ';   % raw I/Q — skip
-            return
-        end
-
-        if contains(itype, 'derived') && bits == 16
-            % Primary classifier: last 2 digits of SeriesNumber encode type
-            %   mod=1 → Stiffness (x001)
-            %   mod=5 → Processed wave (x005, post-processed 8-phase, no magnitude)
-            %   mod=7 → Confidence map (x007)
-            %   other → fall through to heuristics
-            snMod = mod(sn, 100);
-            if snMod == 1
-                entry.Role = 'EPI_Stiffness';
-            elseif snMod == 5
-                entry.Role = 'EPI_ProcWave';
-            elseif snMod == 7
-                entry.Role = 'EPI_ConfMap';
-            elseif isWaveMagSeries(entry)
-                entry.Role = 'EPI_WaveMag';
-            elseif isStiffnessSeries(entry)
-                entry.Role = 'EPI_Stiffness';
-            elseif isConfidenceSeries(entry)
-                entry.Role = 'EPI_ConfMap';
-            else
-                entry.Role = 'EPI_ProcWave';
-            end
-            return
-        end
-
-        entry.Role = 'Unknown';
-        return
-    end
-
-    % ── GRE-MRE ───────────────────────────────────────────────────────
-    if contains(seq, 'fgremre') || contains(seq, 'gremre') || ...
-       contains(desc, 'gre mre') || contains(desc, '2d gre mre')
-
-        % Series-number suffix is the PRIMARY classifier — GE sometimes
-        % stores processed-wave (S705) with ImageType=ORIGINAL, so we
-        % must check snMod BEFORE the ImageType branch.
-        snMod = mod(sn, 100);
-
-        if snMod == 5 && bits == 16
-            % Processed wave: 8-phase post-processed, no magnitude.
-            % GE marks this as ORIGINAL despite being derived — override.
-            entry.Role = 'GRE_ProcWave';
-            return
-        end
-
-        if contains(itype, 'original')
-            % Raw wave + magnitude (S700/S7 ORIGINAL)
-            entry.Role = 'GRE_WaveMag';
-            return
-        end
-
-        if bits == 16
-            if snMod == 1
-                entry.Role = 'GRE_Stiffness';
-            elseif snMod == 7
-                entry.Role = 'GRE_ConfMap';
-            elseif isStiffnessSeries(entry)
-                entry.Role = 'GRE_Stiffness';
-            elseif isConfidenceSeries(entry)
-                entry.Role = 'GRE_ConfMap';
-            elseif isWaveMagSeries(entry)
-                entry.Role = 'GRE_ProcWave';
-            else
-                entry.Role = 'GRE_Stiffness';  % most common remaining derived
-            end
-            return
-        end
-
-        entry.Role = 'Unknown';
-        return
-    end
-
-    entry.Role = 'Unknown';
-end
-
-% ── Sub-classifiers for derived grayscale MRE series ─────────────────
-
-function tf = isWaveMagSeries(e)
-% Wave+Mag: large nImages = nSlices × nPhases × 2
-% Characteristic: nImages divisible by (nPhases × 2) and large
-    tf = (e.nImages >= 20) && (e.nPhases > 1) && ...
-         mod(e.nImages, e.nPhases * 2) == 0;
-end
-
-function tf = isStiffnessSeries(e)
-% Stiffness: small nImages = nSlices (no temporal cycling)
-% WindowCenter near 4000-8000 (stiffness display range)
-    hdr = e.Header;
-    wc = 0;
-    if isfield(hdr, 'WindowCenter') && ~isempty(hdr.WindowCenter)
-        wc = double(hdr.WindowCenter(1));
-    end
-    % GRE 700: WindowCenter=4000, nImg=nSlices (small, no phase dim)
-    tf = (e.nImages <= 20) && (wc >= 1000) && (wc <= 15000) && ...
-         ~isConfidenceSeries(e);
-end
-
-function tf = isConfidenceSeries(e)
-% Confidence: small nImages, pixel values 0-999
-% WindowCenter ≈ 950, WindowWidth ≈ 100
-    hdr = e.Header;
-    wc = 0; ww = 1000;
-    if isfield(hdr, 'WindowCenter') && ~isempty(hdr.WindowCenter)
-        wc = double(hdr.WindowCenter(1));
-    end
-    if isfield(hdr, 'WindowWidth') && ~isempty(hdr.WindowWidth)
-        ww = double(hdr.WindowWidth(1));
-    end
-    % Confidence: WindowCenter~950, WindowWidth~100
-    tf = (wc > 500) && (ww < 500);
-end
-
-
-% ======================================================================
-%  HELPER — BUILD SERIES ENTRY
-% ======================================================================
-
-function entry = buildSeriesEntry(folder, files, hdr)
-    entry.Folder           = folder;
-    entry.SeriesNumber     = safeTagNum(hdr, 'SeriesNumber');
-    entry.SeriesDescription= safeTag(hdr,    'SeriesDescription');
-    entry.ImageType        = safeTag(hdr,    'ImageType');
-    entry.nImages          = numel(files);
-    entry.nPhases          = safeTagNum(hdr, 'NumberOfTemporalPositions');
-    if isnan(entry.nPhases), entry.nPhases = 1; end
-    entry.BitDepth         = safeTagNum(hdr, 'BitsAllocated');
-    if isnan(entry.BitDepth), entry.BitDepth = 16; end
-    entry.IsGrayscale      = safeTagNum(hdr, 'SamplesPerPixel') == 1;
-    if isnan(entry.IsGrayscale)
-        entry.IsGrayscale = ~contains(lower(safeTag(hdr,'PhotometricInterpretation')),'rgb');
-    end
-    entry.SeqName          = safeGEPrivateTag(hdr, 'Private_0019_109c');
-    entry.SequenceType     = safeGEPrivateTag(hdr, 'Private_0019_109e');
-    entry.Header           = hdr;
-    entry.Files            = files;
-    entry.Role             = 'Unknown';
-end
-
-
-% ======================================================================
-%  HELPER — FIND DICOM FOLDERS / FILES
-% ======================================================================
-
-function subfolders = findDICOMFolders(rootDir)
-% Return list of subfolders (incl. root) that contain at least one DICOM.
-    allDirs = [struct('folder', rootDir, 'name', '.', 'isdir', true); ...
-               dir(fullfile(rootDir, '**'))];
-    allDirs = allDirs([allDirs.isdir]);
+function subfolders = findDICOMFolders(rootDir, maxDepth)
     subfolders = {};
-    visited = containers.Map();
-    for k = 1:numel(allDirs)
-        d = allDirs(k);
-        p = fullfile(d.folder, d.name);
-        p = strrep(p, [filesep '.'], '');
-        if isKey(visited, p), continue; end
-        visited(p) = true;
-        % Quick check: is there at least one DICOM here?
-        flist = dir(fullfile(p, 'I*'));
-        if isempty(flist)
-            flist = dir(fullfile(p, '*.dcm'));
+    if nargin < 2, maxDepth = 4; end
+
+    % GE DICOM file patterns (no regex — plain dir wildcards)
+    PATTERNS = {'I*', '*.dcm', '*.IMA', 'IM*'};
+
+    % Folders whose names suggest non-DICOM content — skip immediately
+    SKIP_NAMES = {'thumbnails','db','.system','backup','archive', ...
+                  'report','pdf','doc','log','tmp','temp','cache'};
+
+    function sf = scan(dir_, depth)
+        sf = {};
+        if depth > maxDepth, return; end
+
+        % Check if this folder itself has DICOM-like files (pattern match, no open)
+        hasDcm = false;
+        for p = 1:numel(PATTERNS)
+            try
+                d = dir(fullfile(dir_, PATTERNS{p}));
+                d = d(~[d.isdir]);
+                if ~isempty(d), hasDcm = true; break; end
+            catch
+            end
         end
-        if isempty(flist)
-            flist = dir(p);
-            flist = flist(~[flist.isdir]);
+        if hasDcm
+            sf{end+1} = dir_;
         end
-        if ~isempty(flist)
-            subfolders{end+1} = p; %#ok<AGROW>
+
+        % Recurse into subdirectories
+        try
+            children = dir(dir_);
+        catch
+            return   % network timeout or permission — skip
+        end
+        children = children([children.isdir]);
+        children = children(~ismember({children.name},{'.','..'}));
+
+        for k = 1:numel(children)
+            cname = lower(children(k).name);
+            if any(cellfun(@(s) strncmp(cname,s,numel(s)), SKIP_NAMES))
+                continue   % skip non-DICOM folder
+            end
+            child = fullfile(dir_, children(k).name);
+            sub   = scan(child, depth+1);
+            sf    = [sf, sub]; %#ok<AGROW>
         end
     end
+
+    subfolders = scan(rootDir, 0);
 end
 
-function files = getDICOMFilesInFolder(folder)
-% Return sorted DICOM file paths in this folder (not recursive).
-    flist = dir(folder);
-    flist = flist(~[flist.isdir]);
-    files = {};
-    for k = 1:numel(flist)
-        fp = fullfile(folder, flist(k).name);
+
+function files = listDICOMFiles(folder)
+% List all DICOM files in folder using GE filename patterns. No file I/O.
+% Numeric sort on the instance number embedded in filename.
+    PATTERNS = {'I*', '*.dcm', '*.IMA', 'IM*'};
+    all = [];
+    for p = 1:numel(PATTERNS)
         try
-            fid = fopen(fp, 'r');
-            if fid < 0, continue; end
-            fseek(fid, 128, 'bof');
-            magic = fread(fid, 4, '*char')';
-            fclose(fid);
-            if strcmp(magic, 'DICM') || isdicom(fp)
-                files{end+1} = fp; %#ok<AGROW>
-            end
+            d = dir(fullfile(folder, PATTERNS{p}));
+            d = d(~[d.isdir]);
+            all = [all; d]; %#ok<AGROW>
         catch
         end
     end
-    % Sort by filename (preserves instance ordering)
-    [~, idx] = sort(cellfun(@(f) {f}, files));
-    files = files(idx);
+
+    if isempty(all)
+        % Last resort: any file in folder
+        all = dir(folder);
+        all = all(~[all.isdir]);
+    end
+
+    if isempty(all)
+        files = {}; return
+    end
+
+    % Remove duplicates (a file might match multiple patterns)
+    [~, ia] = unique({all.name});
+    all = all(ia);
+
+    % Natural-numeric sort: extract digits from filename stem
+    nums = zeros(1, numel(all));
+    for k = 1:numel(all)
+        tok = regexp(all(k).name, '\d+', 'match', 'once');
+        if ~isempty(tok), nums(k) = str2double(tok); end
+    end
+    [~, idx] = sort(nums);
+    all = all(idx);
+
+    files = cellfun(@(nm) fullfile(folder, nm), {all.name}, ...
+                    'UniformOutput', false);
 end
 
 
-% ======================================================================
-%  HELPERS
-% ======================================================================
+%% ====================================================================
+%  SERIES ENTRY BUILDER
+%% ====================================================================
 
-function mreType = determineMREType(seriesList)
-    roles = {seriesList.Role};
-    hasEPI = any(contains(roles, 'EPI_'));
-    hasGRE = any(contains(roles, 'GRE_'));
-    if hasEPI && hasGRE,     mreType = 'both';
-    elseif hasEPI,           mreType = 'EPI';
-    elseif hasGRE,           mreType = 'GRE';
-    else,                    mreType = 'none';
+function entry = buildEntry(folder, files, hdr)
+    entry.Folder            = folder;
+    entry.FolderName        = lower(leafName(folder));
+    entry.SeriesNumber      = safeNum(hdr, 'SeriesNumber');
+    entry.SeriesDescription = safeStr(hdr, 'SeriesDescription');
+    entry.ImageType         = safeStr(hdr, 'ImageType');
+    entry.nImages           = numel(files);
+    entry.nPhases           = safeNum(hdr, 'NumberOfTemporalPositions');
+    if isnan(entry.nPhases), entry.nPhases = 1; end
+    entry.BitDepth          = safeNum(hdr, 'BitsAllocated');
+    if isnan(entry.BitDepth), entry.BitDepth = 16; end
+    spp = safeNum(hdr, 'SamplesPerPixel');
+    entry.IsGrayscale       = ~isnan(spp) && spp == 1;
+    if isnan(spp)
+        entry.IsGrayscale   = ~contains(lower(safeStr(hdr,'PhotometricInterpretation')),'rgb');
+    end
+    entry.SeqName           = safePrivateTag(hdr, 'Private_0019_109c');
+    entry.SeqType           = safePrivateTag(hdr, 'Private_0019_109e');
+    entry.ScanOptions       = safeStr(hdr, 'ScanOptions');
+    entry.ScanningSequence  = safeStr(hdr, 'ScanningSequence');
+    entry.Header            = hdr;
+    entry.Files             = files;
+    entry.Role              = 'Unknown';
+end
+
+function n = leafName(folder)
+    [~, n] = fileparts(folder);
+    if isempty(n), [~, n] = fileparts(fileparts(folder)); end
+end
+
+
+%% ====================================================================
+%  CLASSIFICATION  (3-tier: GE private tag / description / folder name)
+%% ====================================================================
+
+function entry = classifySeries(entry)
+    seq     = lower(entry.SeqName);
+    itype   = lower(entry.ImageType);
+    desc    = lower(entry.SeriesDescription);
+    fnam    = lower(entry.FolderName);
+    gray    = entry.IsGrayscale;
+    bits    = entry.BitDepth;
+    nImg    = entry.nImages; %#ok<NASGU>
+    scanopt = lower(entry.ScanOptions);
+
+    % RGB — skip
+    if ~gray
+        entry.Role = 'RGB_Visualization'; return
+    end
+
+    % ── Localizer ─────────────────────────────────────────────────────
+    if hit(seq,  {'ssfse','ssfp','fiesta'}) || ...
+       hit(desc, {'localizer','localiser','3-plane','3plane','scout', ...
+                  'survey','aahscout','loc_'}) || ...
+       hit(fnam, {'loc','scout','survey','3plane','localiz'})
+        entry.Role = 'Localizer'; return
+    end
+
+    % ── IDEAL-IQ ─────────────────────────────────────────────────────
+    if hit(seq,  {'ideal3darc','ideal3d','idealarc','ideal'}) || ...
+       hit(desc, {'ideal','idealiq','ideal-iq','fat frac','fatfrac', ...
+                  'pdff','water:','t2*:'}) || ...
+       hit(fnam, {'ideal','idealiq','dixon','pdff'})
+        if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
+           hit(fnam,{'pdff','fatfrac'})
+            entry.Role = 'IDEALIQ_PDFF';
+        elseif hit(desc,{'t2*','t2star','t2_star'})
+            entry.Role = 'IDEALIQ_T2s';
+        elseif contains(desc,'water') && entry.nImages < 50
+            entry.Role = 'IDEALIQ_Raw';
+        else
+            entry.Role = 'IDEALIQ_Multi';
+        end
+        return
+    end
+
+    % ── EPI-MRE ──────────────────────────────────────────────────────
+    isEPI = hit(seq,  {'epimre','epi_mre'}) || ...
+            (hit(desc,{'mre','elastograph'}) && ...
+             (hit(desc,{'epi mre','epi-mre','epimre'}) || ...
+              contains(scanopt,'epi_gems'))) || ...
+            hit(fnam, {'epimre','epi_mre'}) || ...
+            (hit(fnam,{'mre'}) && hit(fnam,{'epi'}));
+
+    if isEPI
+        if contains(itype,'original') && contains(itype,'primary')
+            entry.Role = 'EPI_RawIQ';
+        elseif contains(itype,'derived') && bits == 16
+            entry = mreGraySub(entry, 'EPI');
+        else
+            entry.Role = 'Unknown';
+        end
+        return
+    end
+
+    % ── GRE-MRE ──────────────────────────────────────────────────────
+    isGRE = hit(seq,  {'fgremre','fgre_mre','gremre'}) || ...
+            hit(desc, {'gre mre','gre-mre','2d gre mre','mre 2d','mre2d'}) || ...
+            (hit(desc,{'mre','elastograph'}) && hit(seq,{'fgre','spgr','gre'})) || ...
+            hit(fnam, {'gremre','fgremre','gre_mre'}) || ...
+            (hit(fnam,{'mre'}) && ~hit(fnam,{'epi'}));
+
+    if isGRE
+        if contains(itype,'original')
+            % ORIGINAL GRE series always = raw phase-contrast + magnitude
+            entry.Role = 'GRE_WaveMag_Raw';
+        elseif contains(itype,'derived') && bits == 16
+            entry = mreGraySub(entry, 'GRE');
+        else
+            entry.Role = 'Unknown';
+        end
+        return
+    end
+
+    % ── Generic MRE fallback ─────────────────────────────────────────
+    if hit(desc,{'mre','elastograph','wave image','stiffness'}) || ...
+       hit(fnam,{'mre','elastog'})
+        if contains(itype,'original')
+            entry.Role = 'GRE_WaveMag';
+        elseif bits == 16
+            entry = mreGraySub(entry, 'GRE');
+        end
+    end
+end
+
+function entry = mreGraySub(entry, prefix)
+% Sub-classify a 16-bit gray derived MRE series.
+% GRE rule: ORIGINAL GRE has already been labeled as raw wave+magnitude.
+% Therefore a DERIVED GRE grayscale series should never be sent down the
+% raw split path again. It is either processed wave, stiffness, or confidence.
+% EPI rule: some DERIVED EPI series really are raw phase+mag, so keep the
+% older raw-detection logic for EPI only.
+    if strcmpi(prefix, 'GRE')
+        if isConf(entry)
+            entry.Role = [prefix '_ConfMap'];
+        elseif isStiff(entry)
+            entry.Role = [prefix '_Stiffness'];
+        else
+            entry.Role = [prefix '_WaveMag_Proc'];
+        end
+        return
+    end
+
+    isRawWaveMag = isWaveMagRaw(entry);
+    if isRawWaveMag
+        entry.Role = [prefix '_WaveMag_Raw'];
+    elseif isProcWave(entry)
+        entry.Role = [prefix '_WaveMag_Proc'];
+    elseif isConf(entry)
+        entry.Role = [prefix '_ConfMap'];
+    elseif isStiff(entry)
+        entry.Role = [prefix '_Stiffness'];
+    else
+        entry.Role = [prefix '_ProcWave'];
+    end
+end
+
+function tf = isWaveMagRaw(e)
+% Raw wave+mag: large series with nImages = nSlices × nPhases × 2,
+% AND description contains "phs and mag" or "phase and mag".
+% (For GRE, ORIGINAL is already caught above; this handles EPI DERIVED.)
+    desc = lower(e.SeriesDescription);
+    hasPhasMag = contains(desc,'phs and mag') || contains(desc,'phase and mag') || ...
+                 contains(desc,'phase+mag')   || contains(desc,'phs+mag');
+    sizeFit    = (e.nImages >= 20) && (e.nPhases > 1) && ...
+                 mod(e.nImages, e.nPhases * 2) == 0;
+    tf = hasPhasMag || (sizeFit && ~isProcWave(e));
+end
+
+function tf = isProcWave(e)
+% Processed wave: keyword in description indicates processed content.
+    desc = lower(e.SeriesDescription);
+    tf = contains(desc,'curl') || contains(desc,'divergence') || ...
+         contains(desc,'unwrap') || contains(desc,'filtered') || ...
+         contains(desc,'interpolat') || ...
+         (contains(desc,'wave') && ~contains(desc,'mag'));
+end
+
+function tf = isStiff(e)
+% Stiffness: WindowCenter in 1000-15000 Pa range, small series
+    wc = getWinCenter(e.Header);
+    tf = (e.nImages <= 20) && (wc >= 1000) && (wc <= 15000) && ~isConf(e);
+end
+
+function tf = isConf(e)
+% Confidence: WindowCenter~950, WindowWidth narrow (~100)
+    hdr = e.Header;
+    wc = getWinCenter(hdr);
+    ww = 1000;
+    if isfield(hdr,'WindowWidth') && ~isempty(hdr.WindowWidth)
+        ww = double(hdr.WindowWidth(1));
+    end
+    tf = (wc > 500) && (ww < 500);
+end
+
+function wc = getWinCenter(hdr)
+    wc = 0;
+    if isfield(hdr,'WindowCenter') && ~isempty(hdr.WindowCenter)
+        wc = double(hdr.WindowCenter(1));
+    end
+end
+
+function tf = hit(str, kwList)
+% True if str contains any keyword in kwList (case-already-lowered).
+    tf = false;
+    for k = 1:numel(kwList)
+        if contains(str, kwList{k}), tf = true; return; end
+    end
+end
+
+
+function seriesList = normalizeEPIFamilyRoles(seriesList)
+% Apply Mayo-specific EPI family numbering rules, overriding ambiguous
+% description-based recon labels.
+% 2D EPI family example:
+%   S0004     -> EPI_RawIQ
+%   S0401     -> EPI_WaveMag_Raw
+%   S040100   -> EPI_Stiffness
+%   S040105   -> EPI_WaveMag_Proc
+%   S040107   -> EPI_ConfMap
+% 3D EPI family example:
+%   S0005     -> EPI_RawIQ
+%   S000501/2/3 -> EPI_WaveMag_Raw (x/y/z)
+%   S000504-7   -> EPI_WaveMag_Proc
+%   S000508     -> EPI_Stiffness
+%   S000515     -> EPI_ConfMap
+    if isempty(seriesList), return; end
+    epiIdx = find(startsWith({seriesList.Role}, 'EPI_') | isLikelyEPIEntry(seriesList));
+    if isempty(epiIdx), return; end
+
+    rawRoots = [];
+    for k = epiIdx
+        if strcmp(seriesList(k).Role, 'EPI_RawIQ')
+            rawRoots(end+1) = double(seriesList(k).SeriesNumber); %#ok<AGROW>
+        end
+    end
+    rawRoots = unique(rawRoots);
+    if isempty(rawRoots)
+        return
+    end
+
+    for k = epiIdx
+        s = seriesList(k);
+        root = findEPIRawRoot(double(s.SeriesNumber), rawRoots);
+        if isnan(root)
+            continue
+        end
+        rem = familyRemainder(root, double(s.SeriesNumber));
+        if isempty(rem)
+            seriesList(k).Role = 'EPI_RawIQ';
+            continue
+        end
+
+        % Exact Mayo numbering rules first.
+        if strcmp(rem, '01') || strcmp(rem, '02') || strcmp(rem, '03')
+            seriesList(k).Role = 'EPI_WaveMag_Raw';
+        elseif strcmp(rem, '08')
+            seriesList(k).Role = 'EPI_Stiffness';
+        elseif strcmp(rem, '15')
+            seriesList(k).Role = 'EPI_ConfMap';
+        elseif any(strcmp(rem, {'04','05','06','07'}))
+            seriesList(k).Role = 'EPI_WaveMag_Proc';
+        elseif startsWith(rem, '01') && numel(rem) == 4
+            tail = rem(3:4);
+            if strcmp(tail, '00')
+                seriesList(k).Role = 'EPI_Stiffness';
+            elseif strcmp(tail, '07')
+                seriesList(k).Role = 'EPI_ConfMap';
+            elseif any(strcmp(tail, {'04','05','06'}))
+                seriesList(k).Role = 'EPI_WaveMag_Proc';
+            else
+                seriesList(k).Role = 'EPI_WaveMag_Raw';
+            end
+        else
+            % Conservative fallback for other derived members in the same family.
+            if isConf(seriesList(k))
+                seriesList(k).Role = 'EPI_ConfMap';
+            elseif isStiff(seriesList(k))
+                seriesList(k).Role = 'EPI_Stiffness';
+            elseif isProcWave(seriesList(k))
+                seriesList(k).Role = 'EPI_WaveMag_Proc';
+            else
+                seriesList(k).Role = 'EPI_ProcWave';
+            end
+        end
+    end
+end
+
+function tf = isLikelyEPIEntry(s)
+    try
+        seq = lower(s.SeqName);
+        desc = lower(s.SeriesDescription);
+        fnam = lower(s.FolderName);
+        scanopt = lower(s.ScanOptions);
+        tf = contains(seq, 'epimre') || contains(seq, 'epi_mre') || ...
+             (contains(desc, 'mre') && (contains(desc, 'epi') || contains(scanopt, 'epi_gems'))) || ...
+             (contains(fnam, 'mre') && contains(fnam, 'epi'));
+    catch
+        tf = false;
+    end
+end
+
+function root = findEPIRawRoot(sn, rawRoots)
+    root = NaN;
+    candidates = [sn, epiAncestorCandidates(sn)];
+    for i = 1:numel(candidates)
+        c = candidates(i);
+        if any(rawRoots == c)
+            root = c;
+            return
+        end
+    end
+end
+
+function chain = epiAncestorCandidates(sn)
+    chain = [];
+    sn = floor(double(sn));
+    while sn >= 100
+        sn = floor(sn / 100);
+        chain(end+1) = sn; %#ok<AGROW>
+    end
+end
+
+function rem = familyRemainder(root, sn)
+    rs = sprintf('%d', floor(double(root)));
+    ss = sprintf('%d', floor(double(sn)));
+    if startsWith(ss, rs)
+        rem = ss(numel(rs)+1:end);
+    else
+        rem = '';
+    end
+end
+
+
+%% ====================================================================
+%  UTILITIES
+%% ====================================================================
+
+function mreType = detectMREType(sl)
+    if isempty(sl), mreType = 'none'; return; end
+    roles  = {sl.Role};
+    hasEPI = any(contains(roles,'EPI_'));
+    hasGRE = any(contains(roles,'GRE_'));
+    if hasEPI && hasGRE,  mreType = 'both';
+    elseif hasEPI,        mreType = 'EPI';
+    elseif hasGRE,        mreType = 'GRE';
+    else,                 mreType = 'none';
     end
 end
 
 function exam = initExamStruct(dir_)
-    exam.ExamRootDir  = dir_;
-    exam.PatientID    = '';
-    exam.StudyDate    = '';
-    exam.ScannerModel = '';
-    exam.MREType      = 'none';
-    exam.Series       = struct([]);
+    exam = struct('ExamRootDir',dir_,'PatientID','','StudyDate','', ...
+                  'ScannerModel','','MREType','none','Series',struct([]));
 end
 
-function v = safeTag(hdr, field)
-    if isfield(hdr, field) && ~isempty(hdr.(field))
-        v = char(hdr.(field));
-    else
-        v = '';
-    end
+function v = safeStr(hdr, field)
+    if isfield(hdr,field) && ~isempty(hdr.(field)), v = char(hdr.(field));
+    else, v = ''; end
 end
 
-function v = safeTagNum(hdr, field)
-    if isfield(hdr, field) && ~isempty(hdr.(field))
-        v = double(hdr.(field)(1));
-    else
-        v = NaN;
-    end
+function v = safeNum(hdr, field)
+    if isfield(hdr,field) && ~isempty(hdr.(field)), v = double(hdr.(field)(1));
+    else, v = NaN; end
 end
 
-function v = safeGEPrivateTag(hdr, field)
-% GE private tags may be char or numeric.
-    if isfield(hdr, field) && ~isempty(hdr.(field))
+function v = safePrivateTag(hdr, field)
+    if isfield(hdr,field) && ~isempty(hdr.(field))
         raw = hdr.(field);
-        if ischar(raw) || isstring(raw)
-            v = char(raw);
-        else
-            v = '';
-        end
-    else
-        v = '';
-    end
+        if ischar(raw) || isstring(raw), v = char(raw);
+        else, v = ''; end
+    else, v = ''; end
 end
 
 function opts = applyDefaults(opts, defaults)
-    fields = fieldnames(defaults);
-    for k = 1:numel(fields)
-        if ~isfield(opts, fields{k})
-            opts.(fields{k}) = defaults.(fields{k});
-        end
+    for f = fieldnames(defaults)'
+        if ~isfield(opts, f{1}), opts.(f{1}) = defaults.(f{1}); end
     end
 end
 

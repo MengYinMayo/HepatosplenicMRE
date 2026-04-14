@@ -1,6 +1,28 @@
 function matPath = mre_buildMATFile(exam, opts)
 % MRE_BUILDMATFILE  Build the .mat input file for mmdi_roi_gui from DICOM.
 %
+%   MATPATH = MRE_BUILDMATFILE(EXAM) uses mre_parseDICOMExam output directly.
+%   MATPATH = MRE_BUILDMATFILE(SELECTION) uses output from mre_selectSeriesGUI.
+%
+%   The second form is preferred in the interactive workflow:
+%     exam      = mre_parseDICOMExam(rootDir);
+%     selection = mre_selectSeriesGUI(exam);
+%     matPath   = mre_buildMATFile(selection);
+%
+%   When called with a SELECTION struct, the function uses exactly the series
+%   the user chose rather than auto-detecting from exam roles.
+
+    if nargin < 2, opts = struct(); end
+
+    % ── Detect whether input is exam or selection ─────────────────────
+    if isfield(exam, 'Confirmed')
+        % Input is a selection struct from mre_selectSeriesGUI
+        matPath = buildFromSelection(exam, opts);
+        return
+    end
+
+    % Otherwise fall through to original exam-based logic below
+%
 %   MATPATH = MRE_BUILDMATFILE(EXAM) reads all relevant DICOM series from the
 %   exam struct (produced by mre_parseDICOMExam), assembles the M/W/S/LapC/H
 %   variables, and saves them to a .mat file ready for mmdi_roi_gui.
@@ -30,27 +52,8 @@ function matPath = mre_buildMATFile(exam, opts)
 %   AUTHOR  HepatosplenicMRE Platform — Phase 3
 
     if nargin < 2, opts = struct(); end
-
-    % ── Accept either exam struct or selection struct ──────────────────
-    % selection (from mre_selectSeriesGUI) has .MREGroup and .Confirmed.
-    % Convert it to an exam-compatible struct so the rest of the function
-    % can use exam.Series, exam.MREType, exam.ExamRootDir uniformly.
-    if isfield(exam, 'Confirmed') && isfield(exam, 'MREGroup')
-        % Build synthetic exam from selection
-        exam = selectionToExam(exam);
-    end
-
-    % Derive outputDir from series files when not supplied
-    defaultOutDir = '';
-    if isfield(exam,'ExamRootDir') && ~isempty(exam.ExamRootDir)
-        defaultOutDir = exam.ExamRootDir;
-    elseif isfield(exam,'Series') && ~isempty(exam.Series) && ...
-           isfield(exam.Series(1),'Files') && ~isempty(exam.Series(1).Files)
-        defaultOutDir = fileparts(exam.Series(1).Files{1});
-    end
-
     opts = applyDefaults(opts, struct( ...
-        'outputDir',       defaultOutDir, ...
+        'outputDir',       exam.ExamRootDir, ...
         'fileName',        'mre_data.mat', ...
         'interpolateWave', true, ...
         'verbose',         true, ...
@@ -93,9 +96,6 @@ function matPath = mre_buildMATFile(exam, opts)
     end
 
     % ── 1.  Read Wave + Magnitude ──────────────────────────────────────
-    % For GRE: magnitude comes from GRE_WaveMag (S700, second half of files).
-    %          Wave comes from GRE_ProcWave (S705) — processed, 8-phase interpolated.
-    %          Fall back to splitting GRE_WaveMag if GRE_ProcWave is absent.
     wmSeries = getSeries(waveMagRole);
     if isempty(wmSeries)
         error('mre_buildMATFile:noWaveMag', 'Wave+Mag series not found.');
@@ -103,51 +103,41 @@ function matPath = mre_buildMATFile(exam, opts)
     wmSeries = wmSeries(1);  % take first if multiple
 
     vprint(opts, 'Reading wave+magnitude series: S%d', wmSeries.SeriesNumber);
-    [W_raw, M, sinfo, ~] = mre_readWaveMagSeries(wmSeries, opts);
+    [W_raw, M, sinfo, ~, M_raw] = mre_readWaveMagSeries(wmSeries, opts);
 
     if isempty(W_raw)
         error('mre_buildMATFile:readFail', 'Failed to read wave+magnitude data.');
     end
 
-    % ── 1b.  GRE: override W from ProcWave series (S705/S707) if present ─
-    % Try each GRE_ProcWave candidate (sorted by SeriesNumber) until we
-    % get a non-zero wave volume.  This handles scanners that put the
-    % processed wave in S707 (nPhases>1) rather than the more common S705.
-    if ismember(exam.MREType, {'GRE','both'})
-        procWaveCandidates = getSeries('GRE_ProcWave');
-        foundProcWave = false;
-        for pwIdx = 1:numel(procWaveCandidates)
-            pw = procWaveCandidates(pwIdx);
-            vprint(opts, 'GRE: trying processed wave from S%d (%d files)', ...
-                pw.SeriesNumber, numel(pw.Files));
-            [W_proc, ~, sinfo_pw, ~] = mre_readWaveMagSeries(pw, opts);
-            if ~isempty(W_proc) && max(abs(W_proc(:))) > 0
-                W_raw = W_proc;
-                if ~isempty(sinfo_pw) && isstruct(sinfo_pw) && ~isempty(fieldnames(sinfo_pw))
-                    sinfo = sinfo_pw;
-                end
-                vprint(opts, 'GRE: wave from S%d — %d phases, range [%.1f, %.1f]', ...
-                    pw.SeriesNumber, size(W_raw,4), min(W_raw(:)), max(W_raw(:)));
-                foundProcWave = true;
-                break
+    % ── 2.  Prefer processed wave for display when available ───────────────
+    W = [];
+    procGroup  = findSameMREGroup(exam.Series, wmSeries);
+    procSeries = findBestProcSeries(procGroup, wmSeries, size(W_raw,3));
+    if ~isempty(procSeries)
+        vprint(opts, 'Reading processed wave: S%d  %s', procSeries.SeriesNumber, procSeries.SeriesDescription);
+        procOpts = opts; procOpts.forceProcessedWave = true;
+        [W_proc, ~, ~, ~] = mre_readWaveMagSeries(procSeries, procOpts);
+        if ~isempty(W_proc)
+            if size(W_proc,3) ~= size(W_raw,3)
+                vprint(opts, 'Processed wave slice count %d mismatches raw %d - ignoring proc series.', size(W_proc,3), size(W_raw,3));
             else
-                vprint(opts, 'GRE: S%d gave empty/zero wave — trying next candidate.', ...
-                    pw.SeriesNumber);
+                if opts.interpolateWave && shouldInterpolateForMREType(exam.MREType) && size(W_proc,4) > 1 && size(W_proc,4) < 8
+                    vprint(opts, 'Interpolating processed wave (%d->8).', size(W_proc,4));
+                    W_proc = mre_interpolatePhases(W_proc, 8);
+                end
+                W = W_proc;
+                vprint(opts, 'W (display): processed wave %s', mat2str(size(W)));
             end
-        end
-        if ~foundProcWave
-            vprint(opts, 'GRE: no valid ProcWave found — using WaveMag split for wave.');
         end
     end
 
-    % ── 2.  Interpolate wave phases (4 → 8) if not already 8 ─────────
-    if opts.interpolateWave && size(W_raw, 4) < 8
-        vprint(opts, 'Interpolating wave phases (%d→8)...', size(W_raw, 4));
-        W = mre_interpolatePhases(W_raw, 8);
-    else
-        W = W_raw;
-        if size(W, 4) >= 8
-            vprint(opts, 'Wave already has %d phases — skipping interpolation.', size(W,4));
+    % Fallback to raw wave interpolation only if no valid processed wave exists.
+    if isempty(W)
+        if opts.interpolateWave && shouldInterpolateForMREType(exam.MREType) && size(W_raw,4) < 8
+            vprint(opts, 'No valid processed wave found - interpolating raw %d->8 phases.', size(W_raw,4));
+            W = mre_interpolatePhases(W_raw, 8);
+        else
+            W = W_raw;
         end
     end
 
@@ -187,28 +177,28 @@ function matPath = mre_buildMATFile(exam, opts)
 
     % ── 5.  Build DICOM header struct ─────────────────────────────────
     H = buildHeaderStruct(wmSeries.Header, sinfo);
-    % Embed full spatial info in H for cross-series co-localization
-    H.SpatialInfo = sinfo;
 
     % ── 6.  Match S and LapC dimensions to W/M ────────────────────────
     [nR, nC, nZ] = size(W, 1, 2, 3);
     S    = matchVolumeDimensions(S,    nR, nC, nZ, 'S');
     LapC = matchVolumeDimensions(LapC, nR, nC, nZ, 'LapC');
     M    = matchVolumeDimensions(M,    nR, nC, nZ, 'M');
+    M_raw = normalizeWaveDims(M_raw, nZ, 'M_raw');
 
     % ── 7.  Save to .mat ──────────────────────────────────────────────
     vprint(opts, 'Saving: %s', matPath);
     vprint(opts, '  M:    %s  double', mat2str(size(M)));
+    vprint(opts, '  M_raw:%s  double (raw mag phases)', mat2str(size(M_raw)));
     vprint(opts, '  W:    %s  double (radians)', mat2str(size(W)));
     vprint(opts, '  S:    %s  double (kPa)', mat2str(size(S)));
     vprint(opts, '  LapC: %s  double (0-1)', mat2str(size(LapC)));
 
     % Try v7.3 for large arrays, fall back to v7
     try
-        save(matPath, 'M', 'W', 'S', 'LapC', 'H', '-v7.3');
+        save(matPath, 'M', 'M_raw', 'W', 'W_raw', 'S', 'LapC', 'H', '-v7.3');
         vprint(opts, 'Saved as v7.3 MAT.');
     catch
-        save(matPath, 'M', 'W', 'S', 'LapC', 'H');
+        save(matPath, 'M', 'M_raw', 'W', 'W_raw', 'S', 'LapC', 'H');
         vprint(opts, 'Saved as v7 MAT.');
     end
 
@@ -349,36 +339,605 @@ function opts = applyDefaults(opts, defaults)
     end
 end
 
-function exam = selectionToExam(selection)
-% Convert a selection struct (from mre_selectSeriesGUI) into an exam-compatible
-% struct with .Series, .MREType, and .ExamRootDir fields.
-    exam = struct();
-    exam.Series     = selection.MREGroup;
-    exam.ExamRootDir = '';
-
-    % Derive root dir from first series file
-    if ~isempty(exam.Series) && isfield(exam.Series(1),'Files') && ...
-       ~isempty(exam.Series(1).Files)
-        exam.ExamRootDir = fileparts(exam.Series(1).Files{1});
-    end
-
-    % Determine MREType from roles present
-    roles = {exam.Series.Role};
-    hasGRE = any(strncmp(roles, 'GRE_', 4));
-    hasEPI = any(strncmp(roles, 'EPI_', 4));
-    if hasGRE && hasEPI
-        exam.MREType = 'both';
-    elseif hasGRE
-        exam.MREType = 'GRE';
-    elseif hasEPI
-        exam.MREType = 'EPI';
-    else
-        exam.MREType = 'unknown';
-    end
-end
-
 function vprint(opts, fmt, varargin)
     if isfield(opts,'verbose') && opts.verbose
         fprintf(['[mre_buildMATFile] ' fmt '\n'], varargin{:});
+    end
+end
+
+
+function tf = shouldInterpolateForMREType(typeOrRole)
+    tf = true;
+    try
+        s = char(typeOrRole);
+    catch
+        s = '';
+    end
+    s = upper(strtrim(s));
+    if startsWith(s, 'EPI')
+        tf = false;
+    end
+end
+
+% ======================================================================
+%  SELECTION-BASED ENTRY POINT
+% ======================================================================
+
+function matPath = buildFromSelection(sel, opts)
+%BUILDFROMSELECTION  Build .mat using explicit user selection from mre_selectSeriesGUI.
+
+    opts = applyDefaults(opts, struct( ...
+        'outputDir',       '', ...
+        'fileName',        'mre_data.mat', ...
+        'interpolateWave', true, ...
+        'verbose',         true, ...
+        'forceRebuild',    false));
+
+    if isempty(opts.outputDir) && ~isempty(sel.MRE)
+        opts.outputDir = fileparts(sel.MRE.Folder);
+        if isempty(opts.outputDir)
+            opts.outputDir = sel.MRE.Folder;
+        end
+    end
+    if isempty(opts.outputDir)
+        opts.outputDir = pwd;
+    end
+
+    matPath = fullfile(opts.outputDir, opts.fileName);
+
+    if isfile(matPath) && ~opts.forceRebuild
+        vprint(opts, 'MAT file exists: %s  (use forceRebuild=true to overwrite)', matPath);
+        return
+    end
+
+    vprint(opts, '=== mre_buildMATFile (from selection) ===');
+
+    W_raw = []; W = []; M = []; M_raw = []; sinfo = struct(); S = []; LapC = []; H = [];
+
+    if ~isempty(sel.MRE)
+        grp = sel.MREGroup;
+        if isempty(grp), grp = sel.MRE; end
+        grp = filterMREGroupToAnchorFamily(grp, sel.MRE);
+        if isempty(grp), grp = sel.MRE; end
+
+        isEPI = false;
+        try
+            roles = {grp.Role};
+            isEPI = any(startsWith(roles, 'EPI_')) || startsWith(sel.MRE.Role, 'EPI_');
+        catch
+        end
+
+        if isEPI
+            [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionEPI(grp, opts);
+        else
+            % -------- Existing GRE / legacy path unchanged --------
+            rawSeries = findRoleInGroup(grp, ...
+                {'EPI_WaveMag_Raw','GRE_WaveMag_Raw', ...
+                 'EPI_WaveMag',    'GRE_WaveMag'});
+            if isempty(rawSeries), rawSeries = sel.MRE; end
+
+            vprint(opts, 'Reading raw wave+mag: S%d  %s', ...
+                rawSeries.SeriesNumber, rawSeries.SeriesDescription);
+            [W_raw, M, sinfo, ~, M_raw] = mre_readWaveMagSeries(rawSeries, opts);
+
+            procSeries = findBestProcSeries(grp, rawSeries, size(W_raw,3));
+
+            if ~isempty(procSeries)
+                vprint(opts, 'Reading processed wave: S%d  %s', ...
+                    procSeries.SeriesNumber, procSeries.SeriesDescription);
+                procOpts = opts; procOpts.forceProcessedWave = true;
+                [W_proc, ~, ~, ~] = mre_readWaveMagSeries(procSeries, procOpts);
+                if ~isempty(W_proc)
+                    if ~isempty(W_raw) && size(W_proc,3) ~= size(W_raw,3)
+                        vprint(opts, 'Processed wave slice count %d mismatches raw %d - ignoring proc series.', ...
+                            size(W_proc,3), size(W_raw,3));
+                    else
+                        if opts.interpolateWave && size(W_proc,4) > 1 && size(W_proc,4) < 8
+                            vprint(opts, 'Interpolating processed wave (%d->8).', size(W_proc,4));
+                            W_proc = mre_interpolatePhases(W_proc, 8);
+                        end
+                        W = W_proc;
+                        vprint(opts, 'W (display): processed wave %s', mat2str(size(W)));
+                    end
+                end
+            end
+
+            if isempty(W) && ~isempty(W_raw)
+                if opts.interpolateWave && size(W_raw,4) < 8
+                    vprint(opts, 'No valid processed wave found - interpolating raw %d→8 phases.', ...
+                        size(W_raw,4));
+                    W = mre_interpolatePhases(W_raw, 8);
+                else
+                    W = W_raw;
+                end
+            end
+
+            if isempty(M) && ~isempty(W_raw)
+                vprint(opts, 'No separate magnitude — using raw wave amplitude envelope.');
+                M = mean(abs(W_raw), 4);
+            end
+            if isempty(M_raw) && ~isempty(M)
+                M_raw = repmat(M, [1 1 1 max(1, size(W_raw,4))]);
+            end
+
+            stiffSeries = findRoleInGroup(grp, {'EPI_Stiffness','GRE_Stiffness'});
+            if ~isempty(stiffSeries)
+                vprint(opts, 'Reading stiffness: S%d', stiffSeries.SeriesNumber);
+                nZ = max(1, round(size(W_raw,3)));
+                S_raw = readGrayscaleVolume(stiffSeries.Files, 256, 256, nZ);
+                S = double(S_raw) / 1000.0;
+            end
+
+            confSeries = findRoleInGroup(grp, {'EPI_ConfMap','GRE_ConfMap'});
+            if isempty(confSeries)
+                confSeries = findByDesc(grp, {'confidence','conf map','laplacian'});
+            end
+            if ~isempty(confSeries)
+                vprint(opts, 'Reading confidence: S%d', confSeries.SeriesNumber);
+                nZ = max(1, round(size(W_raw,3)));
+                LapC_raw = readGrayscaleVolume(confSeries.Files, 256, 256, nZ);
+                LapC = double(LapC_raw) / 1000.0;
+            end
+
+            H = buildHeaderStruct(rawSeries.Header, sinfo);
+        end
+    end
+
+    if isempty(W) && isempty(W_raw)
+        error('mre_buildMATFile:noWave','No wave data could be read.');
+    end
+    if isempty(W), W = W_raw; end
+
+    [nR, nC, nZ] = size(W, 1, 2, 3);
+
+    if isempty(S),     S     = zeros(nR, nC, nZ); end
+    if isempty(LapC),  LapC  = ones(nR, nC, nZ);  end
+    if isempty(M),     M     = zeros(nR, nC, nZ); end
+    if isempty(W_raw), W_raw = W;                 end
+    if isempty(M_raw), M_raw = repmat(M, [1 1 1 max(1,size(W_raw,4))]); end
+
+    S     = matchVolumeDimensions(S,     nR, nC, nZ, 'S');
+    LapC  = matchVolumeDimensions(LapC,  nR, nC, nZ, 'LapC');
+    M     = matchVolumeDimensions(M,     nR, nC, nZ, 'M');
+    M_raw = normalizeWaveDims(M_raw, nZ, 'M_raw');
+    W_raw = normalizeWaveDims(W_raw, nZ, 'W_raw');
+
+    vprint(opts, 'Saving: %s', matPath);
+    vprint(opts, '  M:     %s', mat2str(size(M)));
+    vprint(opts, '  W:     %s  (processed, for display)', mat2str(size(W)));
+    vprint(opts, '  W_raw: %s  (raw, for QC)', mat2str(size(W_raw)));
+    vprint(opts, '  M_raw: %s  (raw mag phases)', mat2str(size(M_raw)));
+    vprint(opts, '  S:     %s  (kPa)', mat2str(size(S)));
+    vprint(opts, '  LapC:  %s  (0-1)', mat2str(size(LapC)));
+
+    try
+        save(matPath, 'M','M_raw','W','W_raw','S','LapC','H', '-v7.3');
+    catch
+        save(matPath, 'M','M_raw','W','W_raw','S','LapC','H');
+    end
+    vprint(opts, 'Done.');
+end
+
+function grpOut = filterMREGroupToAnchorFamily(grpIn, anchor)
+%FILTERMREGROUPTOANCHORFAMILY  Keep only series in the same numeric family
+% as the selected MRE anchor.
+%
+% Examples:
+%   anchor S4      -> keep S4, S401, S40100, S40105, S40107
+%   anchor S5      -> keep S5, S501...S517
+%   anchor S7      -> keep S7, S701...S707
+%
+% This is selection-stage hygiene only. It does not change GRE behavior.
+
+    grpOut = struct([]);
+    if isempty(grpIn) || isempty(anchor) || ~isfield(anchor,'SeriesNumber')
+        grpOut = grpIn;
+        return
+    end
+
+    rootNum = double(anchor.SeriesNumber);
+    while rootNum >= 100
+        rootNum = floor(rootNum / 100);
+    end
+    rootStr = sprintf('%d', rootNum);
+
+    for k = 1:numel(grpIn)
+        s = grpIn(k);
+        sNum = double(s.SeriesNumber);
+        sRoot = sNum;
+        while sRoot >= 100
+            sRoot = floor(sRoot / 100);
+        end
+        sRootStr = sprintf('%d', sRoot);
+
+        % same top-level family root only
+        if strcmp(sRootStr, rootStr)
+            if isempty(grpOut)
+                grpOut = s;
+            else
+                grpOut(end+1) = s; %#ok<AGROW>
+            end
+        end
+    end
+
+    if isempty(grpOut)
+        grpOut = anchor;
+    else
+        [~, ord] = sort([grpOut.SeriesNumber]);
+        grpOut = grpOut(ord);
+    end
+end
+
+function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionEPI(grp, opts)
+%BUILDFROMSELECTIONEPI  EPI-specific 2D/3D load rules with no interpolation.
+
+    W_raw = []; W = []; M = []; M_raw = []; S = []; LapC = []; H = [];
+    sinfo = struct();
+
+    grp = sortStructBySeriesNumber(grp);
+    rootSeries = chooseEPIRootSeries(grp);
+    rootNum = double(rootSeries.SeriesNumber);
+
+    rems = cell(size(grp));
+    for k = 1:numel(grp)
+        rems{k} = epiRemainder(rootNum, double(grp(k).SeriesNumber));
+    end
+
+    is3D = any(strcmp(rems,'02')) && any(strcmp(rems,'03'));
+    if ~is3D
+        nDesc = sum(~cellfun(@isempty, rems));
+        if nDesc > 10
+            is3D = true;
+        end
+    end
+
+    epiOpts = opts;
+    epiOpts.interpolateWave = false;
+
+    if is3D
+        rawSet  = pickEPISeriesByRemainder(grp, rootNum, {'01','02','03'}, {'EPI_WaveMag_Raw'});
+        procSet = pickEPISeriesByRemainder(grp, rootNum, {'04','05','06'}, {'EPI_WaveMag_Proc','EPI_ProcWave'});
+        stiffSeries = pickEPISeriesByRemainder(grp, rootNum, {'08'}, {'EPI_Stiffness'});
+        confSeries  = pickEPISeriesByRemainder(grp, rootNum, {'15'}, {'EPI_ConfMap'});
+
+        [W_raw, M, M_raw, sinfo, rawHdr] = readAndPackEPIRawSet(rawSet, epiOpts);
+        W = readAndPackEPIProcSet(procSet, epiOpts, size(W_raw,3));
+
+    else
+        rawSeries   = firstOrEmpty(pickEPISeriesByRemainder(grp, rootNum, {'01'}, {'EPI_WaveMag_Raw'}));
+        procSeries  = firstOrEmpty(pickEPISeriesByRemainder(grp, rootNum, {'0105'}, {'EPI_WaveMag_Proc','EPI_ProcWave'}));
+        stiffSeries = firstOrEmpty(pickEPISeriesByRemainder(grp, rootNum, {'0100'}, {'EPI_Stiffness'}));
+        confSeries  = firstOrEmpty(pickEPISeriesByRemainder(grp, rootNum, {'0107'}, {'EPI_ConfMap'}));
+
+        if isempty(rawSeries)
+            error('mre_buildMATFile:noEPI2DRaw', 'No EPI 2D raw wave/mag series (..01) found.');
+        end
+
+        vprint(epiOpts, 'Reading EPI 2D raw wave+mag: S%d  %s', rawSeries.SeriesNumber, rawSeries.SeriesDescription);
+        [W_raw, M, sinfo, ~, M_raw] = mre_readWaveMagSeries(rawSeries, epiOpts);
+        rawHdr = rawSeries.Header;
+
+        if ~isempty(procSeries)
+            procOpts = epiOpts;
+            procOpts.forceProcessedWave = true;
+            vprint(procOpts, 'Reading EPI 2D processed wave: S%d  %s', procSeries.SeriesNumber, procSeries.SeriesDescription);
+            [W, ~, ~, ~] = mre_readWaveMagSeries(procSeries, procOpts);
+        else
+            W = [];
+        end
+    end
+
+    if isempty(W)
+        W = W_raw;
+    end
+
+    nZ = max(1, size(W_raw,3));
+    if ~isempty(stiffSeries)
+        stiffSeries = firstOrEmpty(stiffSeries);
+        vprint(epiOpts, 'Reading EPI stiffness: S%d', stiffSeries.SeriesNumber);
+        S_raw = readGrayscaleVolume(stiffSeries.Files, size(W_raw,1), size(W_raw,2), nZ);
+        S = double(S_raw) / 1000.0;
+    end
+
+    if ~isempty(confSeries)
+        confSeries = firstOrEmpty(confSeries);
+        vprint(epiOpts, 'Reading EPI confidence: S%d', confSeries.SeriesNumber);
+        LapC_raw = readGrayscaleVolume(confSeries.Files, size(W_raw,1), size(W_raw,2), nZ);
+        LapC = double(LapC_raw) / 1000.0;
+    end
+
+    H = buildHeaderStruct(rawHdr, sinfo);
+end
+
+function rootSeries = chooseEPIRootSeries(grp)
+    rootSeries = grp(1);
+    bestLen = inf;
+    for k = 1:numel(grp)
+        if strcmp(grp(k).Role, 'EPI_RawIQ')
+            sn = sprintf('%d', double(grp(k).SeriesNumber));
+            if numel(sn) < bestLen
+                bestLen = numel(sn);
+                rootSeries = grp(k);
+            end
+        end
+    end
+end
+
+function rem = epiRemainder(rootNum, seriesNum)
+    rs = sprintf('%d', floor(double(rootNum)));
+    ss = sprintf('%d', floor(double(seriesNum)));
+    if startsWith(ss, rs)
+        rem = ss(numel(rs)+1:end);
+    else
+        rem = '';
+    end
+end
+
+function out = pickEPISeriesByRemainder(grp, rootNum, wantedRemainders, wantedRoles)
+    out = struct([]);
+    for k = 1:numel(grp)
+        g = grp(k);
+        rem = epiRemainder(rootNum, double(g.SeriesNumber));
+        if isempty(rem)
+            continue
+        end
+        if ~any(strcmp(rem, wantedRemainders))
+            continue
+        end
+        if ~isempty(wantedRoles) && ~any(strcmp(g.Role, wantedRoles))
+            continue
+        end
+        if isempty(out)
+            out = g;
+        else
+            out(end+1) = g; %#ok<AGROW>
+        end
+    end
+    if ~isempty(out)
+        [~, ord] = sort([out.SeriesNumber]);
+        out = out(ord);
+    end
+end
+
+function [W_raw, M, M_raw, sinfo, rawHdr] = readAndPackEPIRawSet(rawSet, opts)
+    if isempty(rawSet)
+        error('mre_buildMATFile:noEPI3DRaw', 'No EPI 3D raw directional series (..01/..02/..03) found.');
+    end
+
+    Wcells = {};
+    Mcells = {};
+    MrawCells = {};
+    sinfo = struct();
+    rawHdr = rawSet(1).Header;
+
+    for k = 1:numel(rawSet)
+        [Wk, Mk, sinfoK, ~, MrawK] = mre_readWaveMagSeries(rawSet(k), opts);
+        if isempty(Wk)
+            continue
+        end
+        if isempty(sinfo) || ~isfield(sinfo,'VoxelSize')
+            sinfo = sinfoK;
+            rawHdr = rawSet(k).Header;
+        end
+        Wcells{end+1} = Wk; %#ok<AGROW>
+        if ~isempty(Mk)
+            Mcells{end+1} = Mk; %#ok<AGROW>
+        end
+        if ~isempty(MrawK)
+            MrawCells{end+1} = MrawK; %#ok<AGROW>
+        end
+    end
+
+    if isempty(Wcells)
+        error('mre_buildMATFile:noReadableEPI3DRaw', 'Could not read any EPI 3D raw directional series.');
+    end
+
+    W_raw = Wcells{1};
+    for k = 2:numel(Wcells)
+        W_raw = cat(4, W_raw, Wcells{k});
+    end
+
+    if ~isempty(Mcells)
+        M = Mcells{1};
+        for k = 2:numel(Mcells)
+            M = M + Mcells{k};
+        end
+        M = M ./ numel(Mcells);
+    else
+        M = mean(abs(W_raw), 4);
+    end
+
+    if ~isempty(MrawCells)
+        M_raw = MrawCells{1};
+        for k = 2:numel(MrawCells)
+            M_raw = cat(4, M_raw, MrawCells{k});
+        end
+    else
+        M_raw = repmat(M, [1 1 1 max(1, size(W_raw,4))]);
+    end
+end
+
+function W = readAndPackEPIProcSet(procSet, opts, rawSlices)
+    W = [];
+    if isempty(procSet)
+        return
+    end
+
+    Wcells = {};
+    procOpts = opts;
+    procOpts.forceProcessedWave = true;
+
+    for k = 1:numel(procSet)
+        [Wk, ~, ~, ~] = mre_readWaveMagSeries(procSet(k), procOpts);
+        if isempty(Wk)
+            continue
+        end
+        if rawSlices > 0 && size(Wk,3) ~= rawSlices
+            continue
+        end
+        Wcells{end+1} = Wk; %#ok<AGROW>
+    end
+
+    if isempty(Wcells)
+        return
+    end
+
+    W = Wcells{1};
+    for k = 2:numel(Wcells)
+        W = cat(4, W, Wcells{k});
+    end
+end
+
+function s = firstOrEmpty(s)
+    if ~isempty(s) && numel(s) > 1
+        s = s(1);
+    end
+end
+
+function grp = sortStructBySeriesNumber(grp)
+    if isempty(grp), return; end
+    [~, ord] = sort([grp.SeriesNumber]);
+    grp = grp(ord);
+end
+
+function W = normalizeWaveDims(W, expSlices, name)
+    if nargin < 3, name = 'W'; end
+    if isempty(W) || ndims(W) ~= 4 || isempty(expSlices) || expSlices < 1
+        return
+    end
+    sz = size(W);
+    if sz(3) ~= expSlices && sz(4) == expSlices
+        W = permute(W, [1 2 4 3]);
+        fprintf('normalizeWaveDims: swapped dims 3/4 for %s -> %s\n', name, mat2str(size(W)));
+    end
+end
+
+function s = findRoleInGroup(grp, roles)
+    s = [];
+    for k = 1:numel(grp)
+        if any(strcmp(grp(k).Role, roles))
+            s = grp(k); return
+        end
+    end
+end
+
+function s = findByDesc(grp, kws)
+    s = [];
+    for k = 1:numel(grp)
+        desc = lower(grp(k).SeriesDescription);
+        for w = 1:numel(kws)
+            if contains(desc, kws{w}), s = grp(k); return; end
+        end
+    end
+end
+
+function grp = findSameMREGroup(seriesList, anchor)
+    if isempty(anchor)
+        grp = seriesList;
+        return
+    end
+    grp = struct([]);
+    baseNum = floor(anchor.SeriesNumber / 100) * 100;
+    for k = 1:numel(seriesList)
+        s = seriesList(k);
+        sBase = floor(s.SeriesNumber / 100) * 100;
+        if sBase == baseNum
+            if isempty(grp)
+                grp = s;
+            else
+                grp(end+1) = s; %#ok<AGROW>
+            end
+        end
+    end
+    if isempty(grp)
+        grp = anchor;
+    end
+end
+
+function s = findBestProcSeries(grp, rawSeries, rawSlices)
+%FINDBESTPROCSERIES  Prefer the true processed-wave series (e.g. XX07/S705)
+%over interpolated raw. Uses DICOM-derived counts and avoids stiffness/conf maps.
+    s = [];
+    bestScore = -inf;
+    for k = 1:numel(grp)
+        g = grp(k);
+        if ~isempty(rawSeries) && g.SeriesNumber == rawSeries.SeriesNumber
+            continue
+        end
+        [ok, score] = scoreProcCandidate(g, rawSlices);
+        if ok && score > bestScore
+            s = g;
+            bestScore = score;
+        end
+    end
+end
+
+function [ok, score] = scoreProcCandidate(g, rawSlices)
+%SCOREPROCCANDIDATE  Pick the true processed-wave series (for example S705)
+%and exclude the raw GRE anchor, stiffness, and confidence maps.
+    ok = false;
+    score = -inf;
+    try
+        desc  = lower(g.SeriesDescription);
+        role  = lower(g.Role);
+        itype = lower(g.ImageType);
+        nImg  = double(g.nImages);
+        hdr   = g.Header;
+        wc = 0; ww = 0;
+        if isfield(hdr,'WindowCenter') && ~isempty(hdr.WindowCenter), wc = double(hdr.WindowCenter(1)); end
+        if isfield(hdr,'WindowWidth')  && ~isempty(hdr.WindowWidth),  ww = double(hdr.WindowWidth(1));  end
+
+        % Reject obvious non-wave derived maps.
+        hasConfDesc  = contains(desc, 'conf') || contains(desc, 'confidence') || contains(desc, 'lap');
+        hasStiffDesc = contains(desc, 'stiff') || contains(desc, 'elasto') || contains(desc, 'kpa');
+        confLikeHdr  = (ww > 0 && ww < 500) && (wc > 500);
+        stiffLikeHdr = (wc >= 1000 && wc <= 15000) && (nImg <= max(rawSlices, 8));
+        if hasConfDesc || hasStiffDesc || confLikeHdr || stiffLikeHdr
+            return
+        end
+
+        % Prefer DERIVED multi-frame wave series in the same block.
+        isOrig = contains(itype, 'original');
+        isDer  = contains(itype, 'derived');
+        if isOrig && ~contains(role, 'proc')
+            return
+        end
+        if nImg < 2 * max(rawSlices,1)
+            return
+        end
+
+        % Expected processed-wave phase count from same slice count.
+        if rawSlices > 0
+            if mod(nImg, rawSlices) ~= 0
+                return
+            end
+            nPh = nImg / rawSlices;
+        else
+            nPh = max(1, double(g.nPhases));
+        end
+        if nPh < 2
+            return
+        end
+
+        score = 0;
+        if isDer, score = score + 120; end
+        if contains(role, 'proc'), score = score + 80; end
+        if contains(desc, 'proc') || contains(desc, 'wave') || contains(desc, 'unwrap') || contains(desc, 'curl')
+            score = score + 30;
+        end
+        if rawSlices > 0 && (nImg / max(nPh,1)) == rawSlices
+            score = score + 20;
+        end
+        if nPh >= 8
+            score = score + 20;
+        end
+        snMod = mod(double(g.SeriesNumber), 100);
+        if snMod == 5 || snMod == 7
+            score = score + 10;
+        end
+        ok = true;
+    catch
+        ok = false;
+        score = -inf;
     end
 end

@@ -1,45 +1,25 @@
-function [W, M, spatialInfo, phases_rad] = mre_readWaveMagSeries(seriesEntry, opts)
-% MRE_READWAVEMAGSERIES  Read a combined GE MRE wave+magnitude DICOM series.
+function [W, M, spatialInfo, phases_rad, M_raw] = mre_readWaveMagSeries(seriesEntry, opts)
+% MRE_READWAVEMAGSERIES  Read GE MRE raw or processed wave series.
 %
-%   Handles both EPI (series 3001) and GRE (series 07) which store phase-contrast
-%   wave images and magnitude images together in one folder:
-%     - First half (by InstanceNumber): phase-contrast wave images
-%     - Second half: magnitude images
+% OUTPUTS
+%   W           [row col slice phase]  double
+%   M           [row col slice]        double (time-averaged magnitude)
+%   spatialInfo struct
+%   phases_rad  nominal phase offsets
+%   M_raw       [row col slice phase]  double (raw magnitude phases)
 %
-%   [W, M, SPATIALINFO, PHASES_RAD] = MRE_READWAVEMAGSERIES(SERIESENTRY)
-%
-%   OUTPUTS
-%     W           [nRow × nCol × nSlices × nPhases]  double, radians
-%                 Phase-contrast wave images. Converted from raw GE integer
-%                 encoding to radians using pixel scaling.
-%     M           [nRow × nCol × nSlices]  double, arbitrary units
-%                 Time-averaged magnitude image (mean across phase offsets).
-%     spatialInfo struct from io_extractSpatialInfo
-%     phases_rad  [1 × nPhases] double  phase offset values (0 to 2π, evenly spaced)
-%
-%   SPLITTING STRATEGY
-%     1. Sort all files by InstanceNumber (primary) and SliceLocation (secondary).
-%     2. Identify wave files: PixelRepresentation=1 (signed int → phase data)
-%        OR SmallestImagePixelValue < 0.
-%        Identify mag files: PixelRepresentation=0 (unsigned → magnitude).
-%     3. If representation tags are ambiguous: use InstanceNumber split
-%        (first nSlices×nPhases = wave, last nSlices×nPhases = magnitude).
-%     4. Reshape each group into [row × col × nSlices × nPhases].
-%
-%   WAVE SCALING
-%     GE encodes phase as integer pixels where the full ±π range spans
-%     the pixel window. Raw pixel → radians:
-%       radians = double(pixel) × π / (WindowWidth/2)
-%     For series 3001: WindowWidth=6283 ≈ 2π×1000, so scale=π/3141.5.
-%
-%   SEE ALSO  mre_parseDICOMExam, mre_buildMATFile, io_extractSpatialInfo
-%
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3
+% Notes
+% - Raw GRE combined series (S7) contains wave in the first half and
+%   magnitude in the second half after InstanceNumber sorting.
+% - Processed GRE series (S705) is a separate derived series and must be
+%   read directly in native signed pixel units. For this series, the most
+%   reliable slice index is InStackPositionNumber, while phase order is
+%   recovered by InstanceNumber inside each slice.
 
     if nargin < 2, opts = struct(); end
     opts = applyDefaults(opts, struct('verbose', true));
 
-    W = []; M = []; spatialInfo = struct(); phases_rad = [];
+    W = []; M = []; spatialInfo = struct(); phases_rad = []; M_raw = [];
 
     files = seriesEntry.Files;
     nFiles = numel(files);
@@ -48,177 +28,230 @@ function [W, M, spatialInfo, phases_rad] = mre_readWaveMagSeries(seriesEntry, op
         return
     end
 
-    vprint(opts, 'Reading %s: %d files', seriesEntry.Role, nFiles);
+    vprint(opts, 'Reading %s: %d files', safeField(seriesEntry,'Role','(no role)'), nFiles);
 
     % ------------------------------------------------------------------
-    % 1.  Read all file headers (fast — no pixel data yet)
+    % Fast path for processed-wave series (e.g., GRE S705)
+    % ------------------------------------------------------------------
+    if isProcessedWaveSeries(seriesEntry, files)
+        [W, M, spatialInfo, phases_rad, M_raw] = readProcWave(seriesEntry, files, opts);
+        return
+    end
+
+    % ------------------------------------------------------------------
+    % Raw combined wave+magnitude path
     % ------------------------------------------------------------------
     headers = readAllHeaders(files, opts);
 
-    % ------------------------------------------------------------------
-    % 2.  Sort by InstanceNumber
-    % ------------------------------------------------------------------
-    instNums   = [headers.InstanceNumber];
-    sliceLocs  = [headers.SliceLocation];
-    pixReps    = [headers.PixelRepresentation];  % 0=unsigned, 1=signed
-    minPx      = [headers.SmallestImagePixelValue];
+    instNums = [headers.InstanceNumber];
+    [~, sortIdx] = sort(instNums(:), 'ascend');
+    files   = files(sortIdx);
+    headers = headers(sortIdx);
 
-    [~, sortIdx] = sortrows([instNums(:), sliceLocs(:)]);
-    files      = files(sortIdx);
-    pixReps    = pixReps(sortIdx);
-    minPx      = minPx(sortIdx);
-    headers    = headers(sortIdx);
+    % Raw GRE: first half = wave, second half = magnitude.
+    nHalf = floor(numel(files) / 2);
+    waveFiles = files(1:nHalf);
+    magFiles  = files(nHalf+1:end);
+    waveHdrs  = headers(1:nHalf);
+    magHdrs   = headers(nHalf+1:end);
 
-    % ------------------------------------------------------------------
-    % 3.  Classify each file as wave or magnitude
-    % ------------------------------------------------------------------
-    % Wave = signed phase data (PixelRepresentation=1 OR min pixel < 0)
-    isWave = (pixReps == 1) | (minPx < 0);
-
-    if sum(isWave) == 0 || sum(~isWave) == 0
-        % Fallback: assume first half = wave, second half = mag
-        vprint(opts, 'Cannot distinguish wave/mag by sign — using 50/50 split.');
-        isWave = false(1, nFiles);
-        isWave(1 : floor(nFiles/2)) = true;
+    if isempty(waveFiles)
+        warning('mre_readWaveMagSeries:noWave', 'No wave images identified in series.');
+        return
     end
 
-    waveFiles = files(isWave);
-    magFiles  = files(~isWave);
-    waveHdrs  = headers(isWave);
-    magHdrs   = headers(~isWave);
+    nRow = double(waveHdrs(1).Rows);
+    nCol = double(waveHdrs(1).Columns);
 
-    % ------------------------------------------------------------------
-    % 4.  Determine geometry from wave files
-    % ------------------------------------------------------------------
-    uniqueSliceLocs = unique([waveHdrs.SliceLocation]);
-    nSlices = numel(uniqueSliceLocs);
-    nPhases = numel(waveFiles) / nSlices;
+    % Prefer slice index from InStackPositionNumber when available.
+    nPhasesHdr = getNominalPhaseCount(waveHdrs);
+    nSlicesExp = max(1, round(numel(waveFiles) / max(1, nPhasesHdr)));
+    [waveSliceIdx, nSlices] = getSliceIndices(waveHdrs, nSlicesExp);
+    nPhases = max(1, round(numel(waveFiles) / max(1, nSlices)));
 
-    if nPhases ~= round(nPhases)
-        % Try with all files
-        warning('mre_readWaveMagSeries:geometry', ...
-            'Cannot evenly divide %d wave files into %d slices. Trying NumberOfTemporalPositions.', ...
-            numel(waveFiles), nSlices);
-        nPhases = double(headers(1).NumberOfTemporalPositions);
-        nSlices = numel(waveFiles) / nPhases;
-    end
-
-    nPhases = round(nPhases);
-    nSlices = round(nSlices);
-    nRow = double(headers(1).Rows);
-    nCol = double(headers(1).Columns);
-
-    vprint(opts, 'Geometry: %d rows × %d cols × %d slices × %d phases', ...
-        nRow, nCol, nSlices, nPhases);
-
-    % Wave pixel-to-radian scale
-    ww = double(waveHdrs(1).WindowWidth);
-    if isempty(ww) || ww == 0, ww = 6283; end
-    waveScale = pi / (ww / 2);   % scale factor: raw int → radians
-
-    % Phase offset values (0 to 2π exclusive)
     phases_rad = linspace(0, 2*pi, nPhases+1);
     phases_rad = phases_rad(1:nPhases);
 
-    % ------------------------------------------------------------------
-    % 5.  Read wave pixels and reshape
-    % ------------------------------------------------------------------
+    % Raw wave should stay in native signed units for QC display.
     W = zeros(nRow, nCol, nSlices, nPhases, 'double');
-
-    for k = 1:numel(waveFiles)
-        try
-            pxData = double(dicomread(waveFiles{k}));
-        catch
-            continue
-        end
-        % Map InstanceNumber → (sliceIdx, phaseIdx)
-        sl = find(uniqueSliceLocs == waveHdrs(k).SliceLocation, 1);
-        ph = waveHdrs(k).TemporalPositionIdentifier;
-        if isempty(sl) || isempty(ph) || ph < 1 || ph > nPhases
-            continue
-        end
-        % Convert to radians
-        W(:,:,sl,ph) = pxData .* waveScale;
-    end
-
-    % ------------------------------------------------------------------
-    % 6.  Read magnitude pixels, average across phases
-    % ------------------------------------------------------------------
-    if ~isempty(magFiles)
-        uniqueMagLocs = unique([magHdrs.SliceLocation]);
-        nMagSlices    = numel(uniqueMagLocs);
-        Mraw = zeros(nRow, nCol, nMagSlices, 'double');
-        Mcnt = zeros(1, nMagSlices);
-
-        for k = 1:numel(magFiles)
+    for sl = 1:nSlices
+        sel = (waveSliceIdx == sl);
+        slFiles = waveFiles(sel);
+        slHdrs  = waveHdrs(sel);
+        [~, ord] = orderWithinSlice(slHdrs);
+        slFiles = slFiles(ord);
+        nThis = min(numel(slFiles), nPhases);
+        for ph = 1:nThis
             try
-                pxData = double(dicomread(magFiles{k}));
+                W(:,:,sl,ph) = double(dicomread(slFiles{ph}));
             catch
-                continue
-            end
-            sl = find(uniqueMagLocs == magHdrs(k).SliceLocation, 1);
-            if isempty(sl), continue; end
-            Mraw(:,:,sl) = Mraw(:,:,sl) + pxData;
-            Mcnt(sl) = Mcnt(sl) + 1;
-        end
-        % Average
-        for sl = 1:nMagSlices
-            if Mcnt(sl) > 0
-                Mraw(:,:,sl) = Mraw(:,:,sl) / Mcnt(sl);
             end
         end
-        M = Mraw;
-    else
-        % Fallback: compute magnitude from wave amplitude
-        vprint(opts, 'No separate magnitude found — using wave amplitude.');
-        M = mean(abs(W), 4);
     end
 
-    % ------------------------------------------------------------------
-    % 7.  Spatial info from first wave header
-    % ------------------------------------------------------------------
-    waveFilesCell = waveFiles;
-    firstHdr = waveHdrs(1);
-    spatialInfo = io_extractSpatialInfo(waveFilesCell, firstHdr, nSlices, nPhases);
+    % Magnitude: second half, same slice/phase ordering rule.
+    if ~isempty(magFiles)
+        [magSliceIdx, nMagSlices] = getSliceIndices(magHdrs, nSlices);
+        nMagPhases = max(1, round(numel(magFiles) / max(1, nMagSlices)));
+        M_raw = zeros(nRow, nCol, nMagSlices, nMagPhases, 'double');
+        for sl = 1:nMagSlices
+            sel = (magSliceIdx == sl);
+            slFiles = magFiles(sel);
+            slHdrs  = magHdrs(sel);
+            [~, ord] = orderWithinSlice(slHdrs);
+            slFiles = slFiles(ord);
+            nThis = min(numel(slFiles), nMagPhases);
+            for ph = 1:nThis
+                try
+                    M_raw(:,:,sl,ph) = double(dicomread(slFiles{ph}));
+                catch
+                end
+            end
+        end
+        M = mean(M_raw, 4);
+    else
+        M = mean(abs(W), 4);
+        M_raw = repmat(M, [1 1 1 max(1, size(W,4))]);
+    end
 
-    vprint(opts, 'Done. W: %s, M: %s', mat2str(size(W)), mat2str(size(M)));
+    try
+        spatialInfo = io_extractSpatialInfo(waveFiles, waveHdrs(1), nSlices, nPhases);
+    catch
+        spatialInfo = struct();
+    end
+
+    vprint(opts, 'Raw path done. W: %s  M_raw: %s', mat2str(size(W)), mat2str(size(M_raw)));
 end
 
+% =====================================================================
+%  PROCESSED WAVE PATH
+% =====================================================================
+function [W, M, spatialInfo, phases_rad, M_raw] = readProcWave(seriesEntry, files, opts)
+% Read processed-wave-only series directly from native pixel values.
+% For GRE S705-like data, InStackPositionNumber is reliable for slice,
+% while phase order should fall back to InstanceNumber.
 
-% ======================================================================
-%  LOCAL HELPERS
-% ======================================================================
+    W = []; M = []; spatialInfo = struct(); phases_rad = []; M_raw = [];
+    headers = readAllHeaders(files, opts);
+
+    instNums = [headers.InstanceNumber];
+    [~, sortIdx] = sort(instNums(:), 'ascend');
+    files   = files(sortIdx);
+    headers = headers(sortIdx);
+
+    nFiles = numel(files);
+    nRow   = double(headers(1).Rows);
+    nCol   = double(headers(1).Columns);
+
+    nPhasesHdr = getNominalPhaseCount(headers);
+    nSlicesExp = max(1, round(nFiles / max(1, nPhasesHdr)));
+    [sliceIdx, nSlices] = getSliceIndices(headers, nSlicesExp);
+    nPhases = max(1, round(nFiles / max(1, nSlices)));
+
+    phases_rad = linspace(0, 2*pi, nPhases+1);
+    phases_rad = phases_rad(1:nPhases);
+
+    vprint(opts, 'Processed wave geometry: %d x %d x %d slices x %d phases', ...
+        nRow, nCol, nSlices, nPhases);
+
+    W = zeros(nRow, nCol, nSlices, nPhases, 'double');
+    for sl = 1:nSlices
+        sel = (sliceIdx == sl);
+        slFiles = files(sel);
+        slHdrs  = headers(sel);
+        [~, ord] = orderWithinSlice(slHdrs);
+        slFiles = slFiles(ord);
+        nThis = min(numel(slFiles), nPhases);
+        for ph = 1:nThis
+            try
+                W(:,:,sl,ph) = double(dicomread(slFiles{ph}));
+            catch
+            end
+        end
+    end
+
+    try
+        spatialInfo = io_extractSpatialInfo(files, headers(1), nSlices, nPhases);
+    catch
+        spatialInfo = struct();
+    end
+
+    % No magnitude in processed-wave series.
+    M = [];
+    M_raw = [];
+end
+
+% =====================================================================
+%  HEADER / ORDER HELPERS
+% =====================================================================
+function tf = isProcessedWaveSeries(seriesEntry, files)
+    role = lower(safeField(seriesEntry, 'Role', ''));
+    desc = lower(safeField(seriesEntry, 'SeriesDescription', ''));
+    sn   = safeField(seriesEntry, 'SeriesNumber', NaN);
+
+    try
+        h = dicominfo(files{1}, 'UseDictionaryVR', true);
+    catch
+        h = struct();
+    end
+
+    itype = lower(joinImageType(safeField(h,'ImageType','')));
+    wc    = getN(h, 'WindowCenter', NaN);
+    ww    = getN(h, 'WindowWidth',  NaN);
+    bits  = getN(h, 'BitsAllocated', NaN);
+    pr    = getN(h, 'PixelRepresentation', NaN);
+
+    tf = false;
+
+    % Explicit role/name matches first.
+    if contains(role, 'proc') || contains(role, 'processed') || contains(desc, 'processed')
+        tf = true;
+    end
+
+    % GE GRE processed wave marker from uploaded headers:
+    %   Series xx05, DERIVED\SECONDARY\PROCESSED, 16-bit signed,
+    %   WC ~ 0, WW ~ 10000.
+    if ~tf
+        tf = contains(itype, 'derived') && contains(itype, 'processed') && ...
+             ~contains(itype, 'screen') && bits == 16 && pr == 1 && ...
+             isfinite(sn) && mod(sn,100) == 5 && isfinite(ww) && ww >= 5000 && ...
+             isfinite(wc) && abs(wc) <= max(500, 0.10 * ww);
+    end
+end
 
 function headers = readAllHeaders(files, opts)
-%READALLHEADERS  Quickly read key tags from every file header.
     nFiles = numel(files);
-    % Pre-allocate struct array
     headers = repmat(struct( ...
-        'InstanceNumber',          NaN, ...
-        'SliceLocation',           NaN, ...
-        'TemporalPositionIdentifier', 1, ...
-        'NumberOfTemporalPositions',  1, ...
-        'PixelRepresentation',     0, ...
-        'SmallestImagePixelValue', 0, ...
-        'WindowWidth',             6283, ...
-        'Rows',                    256, ...
-        'Columns',                 256), 1, nFiles);
+        'InstanceNumber',              NaN, ...
+        'SliceLocation',               NaN, ...
+        'TemporalPositionIdentifier',  1, ...
+        'NumberOfTemporalPositions',   1, ...
+        'PixelRepresentation',         0, ...
+        'SmallestImagePixelValue',     0, ...
+        'WindowCenter',                0, ...
+        'WindowWidth',                 6283, ...
+        'Rows',                        256, ...
+        'Columns',                     256, ...
+        'ImagePositionPatient',        [NaN NaN NaN], ...
+        'ImageOrientationPatient',     [NaN NaN NaN NaN NaN NaN], ...
+        'InStackPositionNumber',       NaN), 1, nFiles);
 
     for k = 1:nFiles
         try
             info = dicominfo(files{k}, 'UseDictionaryVR', true);
-            headers(k).InstanceNumber   = getN(info,'InstanceNumber',    k);
-            headers(k).SliceLocation    = getN(info,'SliceLocation',     0);
-            headers(k).TemporalPositionIdentifier = ...
-                                          getN(info,'TemporalPositionIdentifier', 1);
-            headers(k).NumberOfTemporalPositions  = ...
-                                          getN(info,'NumberOfTemporalPositions',  1);
+            headers(k).InstanceNumber   = getN(info,'InstanceNumber', k);
+            headers(k).SliceLocation    = getN(info,'SliceLocation', NaN);
+            headers(k).TemporalPositionIdentifier = getN(info,'TemporalPositionIdentifier', 1);
+            headers(k).NumberOfTemporalPositions  = getN(info,'NumberOfTemporalPositions',  1);
             headers(k).PixelRepresentation = getN(info,'PixelRepresentation', 0);
-            headers(k).SmallestImagePixelValue = ...
-                                          getN(info,'SmallestImagePixelValue',   0);
-            headers(k).WindowWidth      = getN(info,'WindowWidth',        6283);
-            headers(k).Rows             = getN(info,'Rows',               256);
-            headers(k).Columns          = getN(info,'Columns',            256);
+            headers(k).SmallestImagePixelValue = getN(info,'SmallestImagePixelValue', 0);
+            headers(k).WindowCenter     = getN(info,'WindowCenter', 0);
+            headers(k).WindowWidth      = getN(info,'WindowWidth', 6283);
+            headers(k).Rows             = getN(info,'Rows', 256);
+            headers(k).Columns          = getN(info,'Columns', 256);
+            headers(k).ImagePositionPatient = getVec(info, 'ImagePositionPatient', [NaN NaN NaN]);
+            headers(k).ImageOrientationPatient = getVec(info, 'ImageOrientationPatient', [NaN NaN NaN NaN NaN NaN]);
+            headers(k).InStackPositionNumber = getN(info, 'InStackPositionNumber', NaN);
         catch
             headers(k).InstanceNumber = k;
         end
@@ -228,9 +261,161 @@ function headers = readAllHeaders(files, opts)
     end
 end
 
+function nPh = getNominalPhaseCount(headers)
+    if isempty(headers), nPh = 1; return; end
+    cand = double(headers(1).NumberOfTemporalPositions);
+    if isempty(cand) || ~isfinite(cand) || cand < 1, cand = NaN; end
+    tpos = [headers.TemporalPositionIdentifier];
+    uT = unique(tpos(isfinite(tpos)));
+    if isfinite(cand)
+        nPh = round(cand);
+    elseif numel(uT) > 1
+        nPh = numel(uT);
+    else
+        nPh = 4;
+    end
+    nPh = max(1, nPh);
+end
+
+function [sliceIdx, nSlices] = getSliceIndices(headers, nExpected)
+% Prefer InStackPositionNumber when informative. Otherwise fall back to
+% physical coordinates clustered with tolerance.
+    isp = [headers.InStackPositionNumber];
+    uI = unique(isp(isfinite(isp) & isp > 0));
+    if numel(uI) >= 2
+        [~,~,sliceIdx] = unique(isp(:), 'stable');
+        nSlices = max(sliceIdx);
+        return
+    end
+
+    coords = getSliceCoords(headers);
+    [sliceIdx, centers] = clusterSliceCoords(coords, nExpected); %#ok<ASGLU>
+    nSlices = max(sliceIdx);
+end
+
+function coords = getSliceCoords(headers)
+    n = numel(headers);
+    coords = nan(1, n);
+    for k = 1:n
+        ipp = headers(k).ImagePositionPatient;
+        iop = headers(k).ImageOrientationPatient;
+        if numel(ipp) >= 3 && all(isfinite(ipp(1:3)))
+            if numel(iop) >= 6 && all(isfinite(iop(1:6)))
+                rowDir = double(iop(1:3));
+                colDir = double(iop(4:6));
+                sn = cross(rowDir, colDir);
+                if all(isfinite(sn)) && norm(sn) > 0
+                    sn = sn / norm(sn);
+                    coords(k) = dot(double(ipp(1:3)), sn);
+                    continue
+                end
+            end
+            coords(k) = double(ipp(3));
+        elseif isfinite(headers(k).SliceLocation)
+            coords(k) = double(headers(k).SliceLocation);
+        else
+            coords(k) = double(headers(k).InstanceNumber);
+        end
+    end
+end
+
+function [sliceIdx, centers] = clusterSliceCoords(coords, nExpected)
+    coords = double(coords(:));
+    n = numel(coords);
+    if n == 0
+        sliceIdx = zeros(0,1); centers = zeros(1,0); return
+    end
+    valid = isfinite(coords);
+    if ~any(valid)
+        sliceIdx = ones(n,1); centers = 0; return
+    end
+    coords(~valid) = median(coords(valid));
+    nExpected = round(nExpected);
+    nExpected = max(1, min(nExpected, n));
+    [sortedCoords, order] = sort(coords, 'ascend');
+    if nExpected == 1
+        idxSorted = ones(n,1);
+    elseif nExpected >= n
+        idxSorted = (1:n).';
+    else
+        gaps = abs(diff(sortedCoords));
+        [~, gapRank] = sort(gaps, 'descend');
+        cutPos = sort(gapRank(1:(nExpected-1)));
+        idxSorted = zeros(n,1);
+        startPos = 1; cls = 1;
+        for c = 1:numel(cutPos)
+            idxSorted(startPos:cutPos(c)) = cls;
+            cls = cls + 1;
+            startPos = cutPos(c) + 1;
+        end
+        idxSorted(startPos:end) = cls;
+    end
+    sliceIdx = zeros(n,1);
+    sliceIdx(order) = idxSorted;
+    nSlices = max(sliceIdx);
+    centers = zeros(1, nSlices);
+    for s = 1:nSlices
+        centers(s) = median(coords(sliceIdx == s));
+    end
+end
+
+function [sortVals, order] = orderWithinSlice(headers)
+    tpos = [headers.TemporalPositionIdentifier];
+    inst = [headers.InstanceNumber];
+    uT = unique(tpos(isfinite(tpos)));
+    if numel(uT) == numel(headers) && numel(uT) > 1
+        sortVals = tpos;
+    else
+        sortVals = inst;
+    end
+    [sortVals, order] = sort(sortVals(:), 'ascend');
+end
+
+function s = joinImageType(v)
+    if iscell(v)
+        try
+            s = strjoin(v, '\\');
+        catch
+            s = '';
+        end
+    elseif isstring(v)
+        s = char(join(v, '\\'));
+    else
+        s = char(v);
+    end
+end
+
+function v = safeField(s, field, default)
+    if isstruct(s) && isfield(s, field) && ~isempty(s.(field))
+        v = s.(field);
+    else
+        v = default;
+    end
+end
+
 function v = getN(info, field, default)
     if isfield(info, field) && ~isempty(info.(field))
-        v = double(info.(field)(1));
+        try
+            v = double(info.(field)(1));
+        catch
+            v = default;
+        end
+    else
+        v = default;
+    end
+end
+
+function v = getVec(info, field, default)
+    if isfield(info, field) && ~isempty(info.(field))
+        try
+            tmp = double(info.(field));
+            tmp = tmp(:).';
+            v = default;
+            n = min(numel(default), numel(tmp));
+            v(1:n) = tmp(1:n);
+        catch
+            v = default;
+        end
     else
         v = default;
     end

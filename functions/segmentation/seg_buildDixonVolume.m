@@ -52,6 +52,8 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     rawSeries   = findRole(dixonGroup, 'IDEALIQ_Raw');
     pdffSeries  = findRole(dixonGroup, 'IDEALIQ_PDFF');
     t2sSeries   = findRole(dixonGroup, 'IDEALIQ_T2s');
+    waterSeries = findBestNamedSeries(dixonGroup, {'water'});
+    fatSeries   = findBestNamedSeries(dixonGroup, {'fat'}, {'fatfrac','fat frac','pdff'});
 
     % ── 2.  Read multi-contrast series ────────────────────────────────
     if ~isempty(multiSeries)
@@ -76,6 +78,33 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
         if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
             dixon.SpatialInfo = pdffInfo;
         end
+    end
+
+    % Fill explicit WATER/FAT single-contrast recons when present.
+    if isempty(dixon.Water) && ~isempty(waterSeries)
+        vprint(opts, 'Reading explicit WATER from: S%d', waterSeries(1).SeriesNumber);
+        dixon.Water = readSingleContrast(waterSeries(1).Files, opts);
+        if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
+            dixon = fillSpatialInfo(dixon, waterSeries(1).Files);
+        end
+    end
+
+    if isempty(dixon.Fat) && ~isempty(fatSeries)
+        vprint(opts, 'Reading explicit FAT from: S%d', fatSeries(1).SeriesNumber);
+        dixon.Fat = readSingleContrast(fatSeries(1).Files, opts);
+        if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
+            dixon = fillSpatialInfo(dixon, fatSeries(1).Files);
+        end
+    end
+
+    % For this platform's three-panel UI, WATER feeds the in-phase panel and
+    % FAT feeds the out-of-phase panel when explicit InPhase/OutPhase images
+    % are not available in the selected Dixon family.
+    if isempty(dixon.InPhase) && ~isempty(dixon.Water)
+        dixon.InPhase = dixon.Water;
+    end
+    if isempty(dixon.OutPhase) && ~isempty(dixon.Fat)
+        dixon.OutPhase = dixon.Fat;
     end
 
     % Compute PDFF from Water/Fat if still missing
@@ -413,6 +442,30 @@ function s = findRole(group, role)
             else,          s(end+1) = group(k); end %#ok<AGROW>
         end
     end
+end
+
+function s = findBestNamedSeries(group, includeTokens, excludeTokens)
+    if nargin < 3, excludeTokens = {}; end
+    s = [];
+    keep = [];
+    for k = 1:numel(group)
+        desc = lower(group(k).SeriesDescription);
+        if ~all(cellfun(@(tok) contains(desc, lower(tok)), includeTokens))
+            continue
+        end
+        if any(cellfun(@(tok) contains(desc, lower(tok)), excludeTokens))
+            continue
+        end
+        keep(end+1) = k; %#ok<AGROW>
+    end
+    if isempty(keep)
+        return
+    end
+    % Prefer slice counts consistent with the dedicated PDFF map when available,
+    % then the smallest image count among named recons to avoid raw multi-series.
+    nImgs = arrayfun(@(x) double(group(x).nImages), keep);
+    [~, ord] = sort(nImgs, 'ascend');
+    s = group(keep(ord));
 end
 
 function s = sizeStr(v)

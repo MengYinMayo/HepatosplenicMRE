@@ -190,48 +190,60 @@ function groups = buildGroups(seriesList)
         end
     end
 
-    % ── Dixon: IDEAL-IQ preferred; IP/OP always shown as fallback ─────
-    idealRoles = {'IDEALIQ_PDFF','IDEALIQ_Multi','IDEALIQ_T2s','IDEALIQ_Raw'};
-    for k = 1:numel(seriesList)
-        if any(strcmp(seriesList(k).Role, idealRoles))
-            dixCell{end+1} = seriesList(k); %#ok<AGROW>
-        end
+    % ── Dixon: resolve acquisition families independently from MRE ────
+    try
+        dixonExam = dixon_parseDICOMExam(struct('Series', seriesList));
+    catch
+        dixonExam = struct('Families', struct([]));
     end
-    for k = 1:numel(seriesList)
-        s = seriesList(k);
-        if isIPOP(s)
-            entry      = s;
-            entry.Role = 'IPOP_Fallback';
-            dixCell{end+1} = entry; %#ok<AGROW>
+    if isfield(dixonExam,'Families') && ~isempty(dixonExam.Families)
+        for k = 1:numel(dixonExam.Families)
+            anchor = dixonExam.Families(k).Anchor;
+            if strcmpi(dixonExam.Families(k).Type,'IPOP')
+                anchor.Role = 'IPOP_Family';
+            else
+                anchor.Role = 'IDEALIQ_Family';
+            end
+            dixCell{end+1} = anchor; %#ok<AGROW>
         end
-    end
-    % Last resort: show any grayscale 16-bit series that isn't noise
-    if isempty(dixCell)
+    else
+        % Last resort: preserve historical behavior if family resolver fails.
+        idealRoles = {'IDEALIQ_PDFF','IDEALIQ_Multi','IDEALIQ_T2s','IDEALIQ_Raw'};
+        for k = 1:numel(seriesList)
+            if any(strcmp(seriesList(k).Role, idealRoles))
+                dixCell{end+1} = seriesList(k); %#ok<AGROW>
+            end
+        end
         for k = 1:numel(seriesList)
             s = seriesList(k);
-            if s.IsGrayscale && s.BitDepth==16 && ...
-               ~ismember(s.Role,{'EPI_RawIQ','GRE_WaveMag','EPI_WaveMag','Localizer'})
-                dixCell{end+1} = s; %#ok<AGROW>
+            if isIPOP(s)
+                entry      = s;
+                entry.Role = 'IPOP_Fallback';
+                dixCell{end+1} = entry; %#ok<AGROW>
             end
         end
     end
 
-    % ── MRE: one anchor per (type × drive-frequency) group ───────────
+    % ── MRE: one anchor per inferred raw-series family ───────────────
     mreRoles = {'EPI_WaveMag_Raw','EPI_WaveMag_Proc','EPI_WaveMag','EPI_Stiffness','EPI_ConfMap','EPI_ProcWave','EPI_RawIQ', ...
                 'GRE_WaveMag_Raw','GRE_WaveMag_Proc','GRE_WaveMag','GRE_Stiffness','GRE_ConfMap','GRE_ProcWave'};
     seen = containers.Map();
     for k = 1:numel(seriesList)
         s = seriesList(k);
         if ~any(strcmp(s.Role, mreRoles)), continue; end
-        freq    = extractFreq(s.SeriesDescription);
-        baseNum = floor(s.SeriesNumber / 100) * 100;
-        key     = sprintf('%s|%.0f|%d', s.Role(1:3), freq, baseNum);
+        famAnchor = inferMREFamilyAnchor(seriesList, s);
+        key = sprintf('%s|%d', s.Role(1:3), famAnchor);
         if ~isKey(seen, key)
-            seen(key)    = true;
-            mreCell{end+1} = s; %#ok<AGROW>
+            seen(key) = true;
+            anchorSeries = findSeriesByNumber(seriesList, famAnchor, s.Role(1:3));
+            if isempty(anchorSeries)
+                mreCell{end+1} = s; %#ok<AGROW>
+            else
+                mreCell{end+1} = anchorSeries; %#ok<AGROW>
+            end
         end
     end
-
+    
     % ── Convert cells → struct arrays, sorted by SeriesNumber ─────────
     groups.localizer = cellToSortedStructArray(locCell);
     groups.dixon     = cellToSortedStructArray(dixCell);
@@ -268,9 +280,9 @@ function populateTree(tree, seriesList, colType)
             cats = {'Localizer'};
             labels = {'3-Plane Localizer'};
         case 'dixon'
-            cats   = {'IDEALIQ_PDFF','IDEALIQ_Multi','IDEALIQ_T2s','IDEALIQ_Raw', ...
+            cats   = {'IDEALIQ_Family','IPOP_Family','IDEALIQ_PDFF','IDEALIQ_Multi','IDEALIQ_T2s','IDEALIQ_Raw', ...
                       'IPOP_Fallback','Unknown'};
-            labels = {'PDFF Map','Multi-contrast (all)','T2* Map','Water (raw)', ...
+            labels = {'IDEAL-IQ / mDixon family','Conventional IP/OP family','PDFF Map','Multi-contrast (all)','T2* Map','Water (raw)', ...
                       'IP/OP (PDFF fallback)','Other (manual)'};
         case 'mre'
             cats   = {'EPI_WaveMag_Raw','GRE_WaveMag_Raw', ...
@@ -357,61 +369,262 @@ end
 % ======================================================================
 
 function group = findRelatedMRE(seriesList, anchor)
-%FINDRELATEDMRE  Return all series belonging to the same MRE acquisition group.
-%   Criteria: same drive frequency AND same base series number block.
-
-    freq    = extractFreq(anchor.SeriesDescription);
-    baseNum = floor(anchor.SeriesNumber / 100) * 100;
-    mreType = anchor.Role(1:3);   % 'EPI' or 'GRE'
-
-    mreRoles = {'EPI_WaveMag_Raw','EPI_WaveMag_Proc','EPI_WaveMag','EPI_Stiffness','EPI_ConfMap','EPI_ProcWave','EPI_RawIQ', ...
-                'GRE_WaveMag_Raw','GRE_WaveMag_Proc','GRE_WaveMag','GRE_Stiffness','GRE_ConfMap','GRE_ProcWave'};
+%FINDRELATEDMRE  Return all series belonging to the same MRE family.
+%   Uses prefix-based series-number derivation with 2-digit steps so it
+%   safely handles S7->S700-S707, S30->S3001->S300101-S300107, and
+%   S401->S40100-S40107 without mixing in sibling families.
 
     group = struct([]);
+    if isempty(anchor)
+        return
+    end
+
+    anchorNum  = inferMREFamilyAnchor(seriesList, anchor);
+    anchorType = anchor.Role(1:3);
+    anchorFreq = extractFreq(anchor.SeriesDescription);
+
     for k = 1:numel(seriesList)
         s = seriesList(k);
-        if ~any(strcmp(s.Role, mreRoles)), continue; end
-
-        sFreq    = extractFreq(s.SeriesDescription);
-        sBase    = floor(s.SeriesNumber / 100) * 100;
-        sMREType = s.Role(1:3);
-
-        % Match on: same type prefix AND (same freq OR same base block)
-        if strcmp(sMREType, mreType) && ...
-           (abs(sFreq - freq) < 1 || sBase == baseNum)
-            if isempty(group)
-                group = s;
-            else
-                group(end+1) = s; %#ok<AGROW>
-            end
+        if numel(s.Role) < 3 || ~strcmp(s.Role(1:3), anchorType)
+            continue
+        end
+        if inferMREFamilyAnchor(seriesList, s) ~= anchorNum
+            continue
+        end
+        sFreq = extractFreq(s.SeriesDescription);
+        if anchorFreq > 0 && sFreq > 0 && abs(anchorFreq - sFreq) >= 1
+            continue
+        end
+        if isempty(group)
+            group = s;
+        else
+            group(end+1) = s; %#ok<AGROW>
         end
     end
 
     if isempty(group)
-        group = anchor;   % at minimum return anchor
+        group = anchor;
+    else
+        [~, ord] = sort([group.SeriesNumber]);
+        group = group(ord);
+    end
+end
+
+function anchorNum = inferMREFamilyAnchor(seriesList, s)
+%INFERMREFAMILYANCHOR  Assign an MRE series to the correct family anchor.
+%
+% EPI:
+%   Use the raw IQ parent as the true family root.
+%   Examples:
+%     S4 (2D) -> root 4
+%     S401    -> root 4
+%     S40100  -> root 4
+%     S40105  -> root 4
+%     S40107  -> root 4
+%
+%     S5 (3D) -> root 5
+%     S501    -> root 5
+%     S502    -> root 5
+%     S503    -> root 5
+%     S504    -> root 5
+%     S505    -> root 5
+%     S506    -> root 5
+%     S508    -> root 5
+%     S515    -> root 5
+%
+% GRE:
+%   Keep existing raw-anchor behavior unchanged.
+
+    anchorNum = s.SeriesNumber;
+    if isempty(seriesList) || isempty(s) || ~isfield(s,'Role') || numel(s.Role) < 3
+        return
+    end
+
+    typePrefix = s.Role(1:3);
+    freq       = extractFreq(s.SeriesDescription);
+    sNumStr    = sprintf('%d', s.SeriesNumber);
+
+    % -------- EPI: anchor to raw IQ root only --------
+    if strcmp(typePrefix, 'EPI')
+        rawIQNums = [];
+        for ii = 1:numel(seriesList)
+            g = seriesList(ii);
+            if ~strcmp(g.Role, 'EPI_RawIQ')
+                continue
+            end
+            gFreq = extractFreq(g.SeriesDescription);
+            if freq > 0 && gFreq > 0 && abs(freq - gFreq) >= 1
+                continue
+            end
+            rawIQNums(end+1) = g.SeriesNumber; %#ok<AGROW>
+        end
+
+        if ~isempty(rawIQNums)
+            bestLen = -inf;
+            bestNum = anchorNum;
+            for ii = 1:numel(rawIQNums)
+                cand = rawIQNums(ii);
+                cStr = sprintf('%d', cand);
+                if isSeriesNumberDescendant(cStr, sNumStr)
+                    if numel(cStr) > bestLen
+                        bestLen = numel(cStr);
+                        bestNum = cand;
+                    end
+                end
+            end
+            anchorNum = bestNum;
+            return
+        end
+    end
+
+    % -------- GRE (unchanged) --------
+    rawNums = [];
+    for ii = 1:numel(seriesList)
+        g = seriesList(ii);
+        if numel(g.Role) < 3 || ~strcmp(g.Role(1:3), typePrefix)
+            continue
+        end
+        gFreq = extractFreq(g.SeriesDescription);
+        if freq > 0 && gFreq > 0 && abs(freq - gFreq) >= 1
+            continue
+        end
+        if isRawMREAnchorRole(g.Role)
+            rawNums(end+1) = g.SeriesNumber; %#ok<AGROW>
+        end
+    end
+    if isempty(rawNums)
+        return
+    end
+
+    bestLen = -inf;
+    bestNum = anchorNum;
+    for ii = 1:numel(rawNums)
+        cand = rawNums(ii);
+        cStr = sprintf('%d', cand);
+        if isSeriesNumberDescendant(cStr, sNumStr)
+            if numel(cStr) > bestLen
+                bestLen = numel(cStr);
+                bestNum = cand;
+            end
+        end
+    end
+    anchorNum = bestNum;
+end
+
+function tf = isSeriesNumberDescendant(parentStr, childStr)
+    parentStr = regexprep(char(parentStr), '^0+', '');
+    childStr  = regexprep(char(childStr),  '^0+', '');
+    if isempty(parentStr), parentStr = '0'; end
+    if isempty(childStr),  childStr  = '0'; end
+    if length(parentStr) > length(childStr)
+        tf = false;
+        return
+    end
+    if ~strncmp(childStr, parentStr, length(parentStr))
+        tf = false;
+        return
+    end
+    remLen = length(childStr) - length(parentStr);
+    tf = ismember(remLen, [0 2 4]);
+end
+
+function tf = isRawMREAnchorRole(role)
+    tf = any(strcmp(role, {'EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'}));
+end
+
+function s = findSeriesByNumber(seriesList, seriesNumber, typePrefix)
+    s = [];
+    for ii = 1:numel(seriesList)
+        g = seriesList(ii);
+        if g.SeriesNumber == seriesNumber && numel(g.Role) >= 3 && strcmp(g.Role(1:3), typePrefix)
+            s = g;
+            return
+        end
     end
 end
 
 function group = findRelatedDixon(seriesList, anchor)
-%FINDRELATEDDIXON  Return all IDEAL-IQ series that belong to the same acquisition.
+%FINDRELATEDDIXON  Return the selected Dixon acquisition family only.
+% Robust, parser-independent grouping:
+%   IDEAL-IQ:
+%     - same image count as the selected anchor
+%     - description contains IDEAL
+%     - keep only useful recons: FatFrac / Water / Fat
+%     - ignore raw multi stacks and mismatched-count series
+%   Conventional IP/OP:
+%     - keep only IP/OP-looking series
 
-    idealRoles = {'IDEALIQ_PDFF','IDEALIQ_Multi','IDEALIQ_T2s','IDEALIQ_Raw','IPOP_Fallback'};
     group = struct([]);
-    for k = 1:numel(seriesList)
-        s = seriesList(k);
-        if any(strcmp(s.Role, idealRoles))
-            if isempty(group)
-                group = s;
-            else
-                group(end+1) = s; %#ok<AGROW>
+
+    anchorDesc = lower(char(anchor.SeriesDescription));
+    targetN    = double(anchor.nImages);
+
+    isIdealAnchor = strcmp(anchor.Role,'IDEALIQ_Family') || ...
+                    strcmp(anchor.Role,'IDEALIQ_PDFF')   || ...
+                    strcmp(anchor.Role,'IDEALIQ_Multi')  || ...
+                    strcmp(anchor.Role,'IDEALIQ_T2s')    || ...
+                    strcmp(anchor.Role,'IDEALIQ_Raw')    || ...
+                    contains(anchorDesc,'ideal');
+
+    if isIdealAnchor
+        for k = 1:numel(seriesList)
+            s = seriesList(k);
+            sdesc = lower(char(s.SeriesDescription));
+
+            sameCount = double(s.nImages) == targetN;
+            isIdeal   = contains(sdesc,'ideal');
+
+            % useful explicit IDEAL-IQ recons only
+            isUseful  = contains(sdesc,'fatfrac') || ...
+                        contains(sdesc,'water')   || ...
+                        contains(sdesc,'fat');
+
+            % exclude raw/multi generic stack names
+            isRawMulti = ~contains(sdesc,'fatfrac') && ...
+                         ~contains(sdesc,'water')   && ...
+                         ~contains(sdesc,'fat');
+
+            if sameCount && isIdeal && isUseful && ~isRawMulti
+                if isempty(group)
+                    group = s;
+                else
+                    group(end+1) = s; %#ok<AGROW>
+                end
             end
         end
-    end
-    if isempty(group)
-        group = anchor;
-    end
-end
 
+        if ~isempty(group)
+            [~, idx] = sort([group.SeriesNumber]);
+            group = group(idx);
+            return
+        end
+    end
+
+    isIPOPAnchor = strcmp(anchor.Role,'IPOP_Family') || ...
+                   strcmp(anchor.Role,'IPOP_Fallback') || ...
+                   isIPOP(anchor);
+
+    if isIPOPAnchor
+        for k = 1:numel(seriesList)
+            s = seriesList(k);
+            if isIPOP(s)
+                if isempty(group)
+                    group = s;
+                else
+                    group(end+1) = s; %#ok<AGROW>
+                end
+            end
+        end
+
+        if ~isempty(group)
+            [~, idx] = sort([group.SeriesNumber]);
+            group = group(idx);
+            return
+        end
+    end
+
+    group = anchor;
+end
 
 % ======================================================================
 %  UTILITY

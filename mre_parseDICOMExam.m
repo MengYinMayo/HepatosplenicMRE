@@ -96,6 +96,7 @@ function exam = mre_parseDICOMExam(examRootDir, opts)
     if ~isempty(seriesList)
         [~, idx] = sort([seriesList.SeriesNumber]);
         seriesList = seriesList(idx);
+        seriesList = normalizeEPIFamilyRoles(seriesList);
     end
 
     exam.Series  = seriesList;
@@ -345,24 +346,34 @@ end
 
 function entry = mreGraySub(entry, prefix)
 % Sub-classify a 16-bit gray derived MRE series.
-% For GRE: DERIVED series are always processed (raw=ORIGINAL, already handled).
-% For EPI: "Phs and Mag" in description → raw wave+mag;
-%          large nImages = nSlices×nPhases×2 also → raw wave+mag.
-    desc = lower(entry.SeriesDescription);
-    isRawWaveMag = isWaveMagRaw(entry);
+% GRE rule: ORIGINAL GRE has already been labeled as raw wave+magnitude.
+% Therefore a DERIVED GRE grayscale series should never be sent down the
+% raw split path again. It is either processed wave, stiffness, or confidence.
+% EPI rule: some DERIVED EPI series really are raw phase+mag, so keep the
+% older raw-detection logic for EPI only.
+    if strcmpi(prefix, 'GRE')
+        if isConf(entry)
+            entry.Role = [prefix '_ConfMap'];
+        elseif isStiff(entry)
+            entry.Role = [prefix '_Stiffness'];
+        else
+            entry.Role = [prefix '_WaveMag_Proc'];
+        end
+        return
+    end
 
+    isRawWaveMag = isWaveMagRaw(entry);
     if isRawWaveMag
-        entry.Role = [prefix '_WaveMag_Raw'];   % contains both wave + mag
+        entry.Role = [prefix '_WaveMag_Raw'];
     elseif isProcWave(entry)
-        entry.Role = [prefix '_WaveMag_Proc'];  % processed wave only
+        entry.Role = [prefix '_WaveMag_Proc'];
     elseif isConf(entry)
         entry.Role = [prefix '_ConfMap'];
     elseif isStiff(entry)
         entry.Role = [prefix '_Stiffness'];
     else
-        entry.Role = [prefix '_ProcWave'];      % other derived grayscale
+        entry.Role = [prefix '_ProcWave'];
     end
-    %#ok<NODEF>
 end
 
 function tf = isWaveMagRaw(e)
@@ -415,6 +426,129 @@ function tf = hit(str, kwList)
     tf = false;
     for k = 1:numel(kwList)
         if contains(str, kwList{k}), tf = true; return; end
+    end
+end
+
+
+function seriesList = normalizeEPIFamilyRoles(seriesList)
+% Apply Mayo-specific EPI family numbering rules, overriding ambiguous
+% description-based recon labels.
+% 2D EPI family example:
+%   S0004     -> EPI_RawIQ
+%   S0401     -> EPI_WaveMag_Raw
+%   S040100   -> EPI_Stiffness
+%   S040105   -> EPI_WaveMag_Proc
+%   S040107   -> EPI_ConfMap
+% 3D EPI family example:
+%   S0005     -> EPI_RawIQ
+%   S000501/2/3 -> EPI_WaveMag_Raw (x/y/z)
+%   S000504-7   -> EPI_WaveMag_Proc
+%   S000508     -> EPI_Stiffness
+%   S000515     -> EPI_ConfMap
+    if isempty(seriesList), return; end
+    epiIdx = find(startsWith({seriesList.Role}, 'EPI_') | isLikelyEPIEntry(seriesList));
+    if isempty(epiIdx), return; end
+
+    rawRoots = [];
+    for k = epiIdx
+        if strcmp(seriesList(k).Role, 'EPI_RawIQ')
+            rawRoots(end+1) = double(seriesList(k).SeriesNumber); %#ok<AGROW>
+        end
+    end
+    rawRoots = unique(rawRoots);
+    if isempty(rawRoots)
+        return
+    end
+
+    for k = epiIdx
+        s = seriesList(k);
+        root = findEPIRawRoot(double(s.SeriesNumber), rawRoots);
+        if isnan(root)
+            continue
+        end
+        rem = familyRemainder(root, double(s.SeriesNumber));
+        if isempty(rem)
+            seriesList(k).Role = 'EPI_RawIQ';
+            continue
+        end
+
+        % Exact Mayo numbering rules first.
+        if strcmp(rem, '01') || strcmp(rem, '02') || strcmp(rem, '03')
+            seriesList(k).Role = 'EPI_WaveMag_Raw';
+        elseif strcmp(rem, '08')
+            seriesList(k).Role = 'EPI_Stiffness';
+        elseif strcmp(rem, '15')
+            seriesList(k).Role = 'EPI_ConfMap';
+        elseif any(strcmp(rem, {'04','05','06','07'}))
+            seriesList(k).Role = 'EPI_WaveMag_Proc';
+        elseif startsWith(rem, '01') && numel(rem) == 4
+            tail = rem(3:4);
+            if strcmp(tail, '00')
+                seriesList(k).Role = 'EPI_Stiffness';
+            elseif strcmp(tail, '07')
+                seriesList(k).Role = 'EPI_ConfMap';
+            elseif any(strcmp(tail, {'04','05','06'}))
+                seriesList(k).Role = 'EPI_WaveMag_Proc';
+            else
+                seriesList(k).Role = 'EPI_WaveMag_Raw';
+            end
+        else
+            % Conservative fallback for other derived members in the same family.
+            if isConf(seriesList(k))
+                seriesList(k).Role = 'EPI_ConfMap';
+            elseif isStiff(seriesList(k))
+                seriesList(k).Role = 'EPI_Stiffness';
+            elseif isProcWave(seriesList(k))
+                seriesList(k).Role = 'EPI_WaveMag_Proc';
+            else
+                seriesList(k).Role = 'EPI_ProcWave';
+            end
+        end
+    end
+end
+
+function tf = isLikelyEPIEntry(s)
+    try
+        seq = lower(s.SeqName);
+        desc = lower(s.SeriesDescription);
+        fnam = lower(s.FolderName);
+        scanopt = lower(s.ScanOptions);
+        tf = contains(seq, 'epimre') || contains(seq, 'epi_mre') || ...
+             (contains(desc, 'mre') && (contains(desc, 'epi') || contains(scanopt, 'epi_gems'))) || ...
+             (contains(fnam, 'mre') && contains(fnam, 'epi'));
+    catch
+        tf = false;
+    end
+end
+
+function root = findEPIRawRoot(sn, rawRoots)
+    root = NaN;
+    candidates = [sn, epiAncestorCandidates(sn)];
+    for i = 1:numel(candidates)
+        c = candidates(i);
+        if any(rawRoots == c)
+            root = c;
+            return
+        end
+    end
+end
+
+function chain = epiAncestorCandidates(sn)
+    chain = [];
+    sn = floor(double(sn));
+    while sn >= 100
+        sn = floor(sn / 100);
+        chain(end+1) = sn; %#ok<AGROW>
+    end
+end
+
+function rem = familyRemainder(root, sn)
+    rs = sprintf('%d', floor(double(root)));
+    ss = sprintf('%d', floor(double(sn)));
+    if startsWith(ss, rs)
+        rem = ss(numel(rs)+1:end);
+    else
+        rem = '';
     end
 end
 

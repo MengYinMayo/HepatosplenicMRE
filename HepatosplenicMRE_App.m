@@ -98,8 +98,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         MRETab              matlab.ui.container.Tab
         MREGrid             matlab.ui.container.GridLayout
         AxMREMag            matlab.ui.control.UIAxes
+        AxMRERawWave        matlab.ui.control.UIAxes
         AxMREWave           matlab.ui.control.UIAxes
         AxMREStiff          matlab.ui.control.UIAxes
+        AxMREWaveBar        matlab.ui.control.UIAxes
+        AxMREStiffBar       matlab.ui.control.UIAxes
         SldrMRE             matlab.ui.control.Slider
         LblMRESlice         matlab.ui.control.Label
         LblMREInfo          matlab.ui.control.Label
@@ -108,8 +111,15 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnStiff8           matlab.ui.control.Button
         BtnStiff20          matlab.ui.control.Button
         BtnConfMap          matlab.ui.control.StateButton
+        EdtConfThresh       matlab.ui.control.NumericEditField
         BtnROI_LiverMRE     matlab.ui.control.Button
         BtnROI_SpleenMRE    matlab.ui.control.Button
+        BtnROI_MuscleMRE    matlab.ui.control.Button
+        BtnROI_FatMRE       matlab.ui.control.Button
+        EdtLiverConfThresh  matlab.ui.control.NumericEditField
+        EdtSpleenConfThresh matlab.ui.control.NumericEditField
+        EdtMuscleConfThresh matlab.ui.control.NumericEditField
+        EdtFatConfThresh    matlab.ui.control.NumericEditField
         BtnClearMREROIs     matlab.ui.control.Button
 
         % Results tab
@@ -137,8 +147,27 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         ValMuscleSATRatio   matlab.ui.control.Label
         ValLiverStiff       matlab.ui.control.Label
         ValSpleenStiff      matlab.ui.control.Label
+        % NOTE FOR MAINTAINERS:
+        % The following *IQR properties keep their historical names for
+        % backward compatibility with older app revisions, but they no
+        % longer display interquartile range. In the current UI they are
+        % repurposed to show the combined text "N / volume" for each
+        % MRE ROI. Use the visible panel text, not the property suffix,
+        % as the source of truth for interpretation.
         ValLiverStiffIQR    matlab.ui.control.Label
         ValSpleenStiffIQR   matlab.ui.control.Label
+        ValMuscleMREStiff   matlab.ui.control.Label
+        ValMuscleMREStiffIQR matlab.ui.control.Label
+        ValFatMREStiff      matlab.ui.control.Label
+        ValFatMREStiffIQR   matlab.ui.control.Label
+        % The legacy *Vol properties below are retained only for code
+        % compatibility with earlier revisions. The visible panel now
+        % combines N and volume onto a single line, so these handles are
+        % no longer shown separately in the active UI.
+        ValLiverStiffVol    matlab.ui.control.Label
+        ValSpleenStiffVol   matlab.ui.control.Label
+        ValMuscleMREStiffVol matlab.ui.control.Label
+        ValFatMREStiffVol   matlab.ui.control.Label
         ValSegConf          matlab.ui.control.Label
         ValCoverage         matlab.ui.control.Label
 
@@ -180,16 +209,33 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'MREPhase',     1, ...
             'MREPlaying',   false, ...
             'MRETimer',     [], ...
+            'MREPlaybackWasOnBeforeROI', false, ...
+            'MRERefreshBusy', false, ...
+            'MREROIBusy',  false, ...
             'StiffCLim',    [0 8], ...
-            'WaveMax',      0, ...    % 0 = auto-range; >0 = manual ±WaveMax
+            'WaveMax',      2000, ... % default processed-wave half-range (W/L)
             'DixonContrast', 'PDFF', ...  % 'PDFF'|'Water'|'Fat'|'T2star'|'InPhase'|'OutPhase'
             'DixonCmap',    'hot', ...   % colormap name for current contrast
             'DixonClimMin', 0, ...       % display range min
             'DixonClimMax', 100, ...     % display range max
-            'DispWave',     [], ...   % current wave slice for cursor readout
+            'DispWave',     [], ...   % current processed-wave slice for cursor readout
+            'DispWaveRaw',  [], ...   % current raw-wave slice
             'DispStiff',    [], ...   % current stiffness slice
             'DispDixon',    [], ...   % current Dixon slice
             'ShowConfMask', false, ...
+            'ConfThresh',   0.50, ...
+            'MREObjectConf', struct('LiverMRE',0.90,'SpleenMRE',0.75,'MuscleMRE',0.50,'FatMRE',0.90), ...
+            'MRETechFailure', struct('LiverMRE',false,'SpleenMRE',false,'MuscleMRE',false,'FatMRE',false), ...
+            'MREROIActive', false, ...
+            'MREROIName',   '', ...
+            'MREROISlice',  NaN, ...
+            'MREROIOuterMask', [], ...
+            'MREROIBaseInnerMask', [], ...
+            'MREROIConfMask', [], ...
+            'MREROIFinalMask', [], ...
+            'MREROIErodePx', 2, ...
+            'MRETargetAxis', 'mag', ...
+            'MREROIDrawing', false, ...
             'ROIs',         struct( ...   % all ROI masks
                 'LiverDixon',  struct('Slices',struct()), ...
                 'SpleenDixon', struct('Slices',struct()), ...
@@ -198,7 +244,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'SATL1',       [], ...
                 'SATL2',       [], ...
                 'LiverMRE',    struct('Slices',struct()), ...
-                'SpleenMRE',   struct('Slices',struct())))
+                'SpleenMRE',   struct('Slices',struct()), ...
+                'MuscleMRE',   struct('Slices',struct()), ...
+                'FatMRE',      struct('Slices',struct())))
     end
 
     % =====================================================================
@@ -212,6 +260,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.UIFigure.Name      = 'HepatosplenicMRE Analysis Platform  v2.0';
             app.UIFigure.Resize    = 'on';
             app.UIFigure.CloseRequestFcn = @(~,~) app.onClose();
+            app.UIFigure.WindowKeyPressFcn = @(~,e) app.onKeyPress(e);
 
             createMenus(app);
 
@@ -228,7 +277,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BodyGrid = uigridlayout(outer,[1 3]);
             app.BodyGrid.Layout.Row    = 2;
             app.BodyGrid.Layout.Column = 1;
-            app.BodyGrid.ColumnWidth   = {260,'1x',230};
+            app.BodyGrid.ColumnWidth   = {260,'1x',250};
             app.BodyGrid.RowHeight     = {'1x'};
             app.BodyGrid.Padding       = [0 0 0 0];
             app.BodyGrid.ColumnSpacing = 0;
@@ -301,10 +350,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BtnRunPipeline.Tooltip = 'Run full analysis pipeline';
             app.BtnRunPipeline.Enable  = 'off';
 
-            app.BtnConfirmL12 = mkBtn(tg,3,'Confirm L1-L2', ...
+            app.BtnConfirmL12 = mkBtn(tg,3,'Confirm T12-L3', ...
                 [0.58 0.29 0.07],[1 1 1],14);
             app.BtnConfirmL12.ButtonPushedFcn = @(~,~)app.confirmL12();
-            app.BtnConfirmL12.Tooltip = 'Confirm L1-L2 levels and propagate to Dixon/MRE';
+            app.BtnConfirmL12.Tooltip = 'Confirm T12-L3 levels and propagate to Dixon/MRE';
             app.BtnConfirmL12.Enable  = 'off';
 
             app.BtnExportCSV = mkBtn(tg,4,'Export CSV', ...
@@ -366,7 +415,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         % ── LOCALIZER TAB ────────────────────────────────────────────────
         function createLocalizerTab(app)
-            app.LocTab = uitab(app.ImageTabGroup,'Title','Localizer / L1-L2');
+            app.LocTab = uitab(app.ImageTabGroup,'Title','Localizer / T12-L3');
 
             % Grid: images row | controls row
             app.LocGrid = uigridlayout(app.LocTab,[3 2]);
@@ -379,12 +428,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Coronal axis
             app.AxLocCoronal = uiaxes(app.LocGrid);
             app.AxLocCoronal.Layout.Row=1; app.AxLocCoronal.Layout.Column=1;
-            setupDarkAxes(app.AxLocCoronal,'Coronal  (L1-L2 identification)');
+            setupDarkAxes(app.AxLocCoronal,'Coronal  (T12-L3 identification)');
 
             % Sagittal axis
             app.AxLocSagittal = uiaxes(app.LocGrid);
             app.AxLocSagittal.Layout.Row=1; app.AxLocSagittal.Layout.Column=2;
-            setupDarkAxes(app.AxLocSagittal,'Sagittal  (L1-L2 verification)');
+            setupDarkAxes(app.AxLocSagittal,'Sagittal  (T12-L3 verification)');
 
             % Sliders (row 2)
             corSliderGrid = uigridlayout(app.LocGrid,[1 3]);
@@ -422,18 +471,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             app.BtnPlaceL1 = uibutton(ctrlGrid,'push');
             app.BtnPlaceL1.Layout.Column=1;
-            app.BtnPlaceL1.Text='Mark L1';
+            app.BtnPlaceL1.Text='Mark T12';
             app.BtnPlaceL1.FontSize=12; app.BtnPlaceL1.FontWeight='bold';
             app.BtnPlaceL1.BackgroundColor=[0.92 0.60 0.12];
-            app.BtnPlaceL1.Tooltip='Click, then click on L1 in either the coronal or sagittal image';
+            app.BtnPlaceL1.Tooltip='Click, then click on T12 in either the coronal or sagittal image';
             app.BtnPlaceL1.ButtonPushedFcn = @(~,~)app.placeL1();
 
             app.BtnPlaceL2 = uibutton(ctrlGrid,'push');
             app.BtnPlaceL2.Layout.Column=2;
-            app.BtnPlaceL2.Text='Mark L2';
+            app.BtnPlaceL2.Text='Mark L3';
             app.BtnPlaceL2.FontSize=12; app.BtnPlaceL2.FontWeight='bold';
             app.BtnPlaceL2.BackgroundColor=[0.38 0.62 0.92];
-            app.BtnPlaceL2.Tooltip='Click, then click on L2 in either the coronal or sagittal image';
+            app.BtnPlaceL2.Tooltip='Click, then click on L3 in either the coronal or sagittal image';
             app.BtnPlaceL2.ButtonPushedFcn = @(~,~)app.placeL2();
 
             app.BtnClearL12 = uibutton(ctrlGrid,'push');
@@ -444,7 +493,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             app.LblL12Status = uilabel(ctrlGrid);
             app.LblL12Status.Layout.Column=[4 5];
-            app.LblL12Status.Text='Scroll wheel over image to navigate.  Click Mark L1/L2, then click in coronal or sagittal.';
+            app.LblL12Status.Text='Scroll wheel over image to navigate.  Click Mark T12/L3, then click in coronal or sagittal.';
             app.LblL12Status.FontSize=12; app.LblL12Status.FontColor=[0.4 0.4 0.4];
 
             % Scroll-wheel and mouse-hover tracking (figure-level, registered once)
@@ -462,26 +511,28 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.DixonGrid.Padding      = [4 4 4 4];
             app.DixonGrid.ColumnSpacing = 6;
 
-            % Image area: 2 control rows + large image + slice ctrl
+            % Image area: header row + PDFF controls + three fixed panels + slice slider.
             imgArea = uipanel(app.DixonGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
             imgG = uigridlayout(imgArea,[4 1]);
-            imgG.RowHeight   = {32,30,'1x',32}; imgG.ColumnWidth = {'1x'};
-            imgG.Padding     = [0 0 0 0]; imgG.RowSpacing = 3;
+            imgG.RowHeight   = {28,30,'1x',32};
+            imgG.ColumnWidth = {'1x'};
+            imgG.Padding     = [0 0 0 0];
+            imgG.RowSpacing  = 3;
 
-            % Row 1: contrast selector + slice info
+            % Row 1: static panel labels + slice/info.
             contRow = uigridlayout(imgG,[1 4]);
             contRow.Layout.Row=1;
-            contRow.ColumnWidth = {70,'1x',55,110};
+            contRow.ColumnWidth = {180,'1x',55,140};
             contRow.Padding=[0 2 0 2]; contRow.ColumnSpacing=6;
             lcon = uilabel(contRow); lcon.Layout.Column=1;
-            lcon.Text='Contrast:'; lcon.FontSize=13; lcon.FontWeight='bold';
+            lcon.Text='Panels: PDFF | In | Out'; lcon.FontSize=13; lcon.FontWeight='bold';
             app.DdlDixonContrast = uidropdown(contRow);
             app.DdlDixonContrast.Layout.Column=2;
-            app.DdlDixonContrast.Items     = {'PDFF (%)','Water','Fat','T2* (ms)','In-Phase','Out-Phase'};
-            app.DdlDixonContrast.ItemsData = {'PDFF','Water','Fat','T2star','InPhase','OutPhase'};
+            app.DdlDixonContrast.Items     = {'PDFF'};
+            app.DdlDixonContrast.ItemsData = {'PDFF'};
             app.DdlDixonContrast.Value     = 'PDFF';
-            app.DdlDixonContrast.FontSize  = 13;
+            app.DdlDixonContrast.Visible   = 'off';
             app.DdlDixonContrast.ValueChangedFcn = @(~,~)app.onDixonContrastChange();
             app.LblDixonSlice = uilabel(contRow); app.LblDixonSlice.Layout.Column=3;
             app.LblDixonSlice.Text='1/1'; app.LblDixonSlice.FontSize=12;
@@ -490,13 +541,13 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblDixonInfo.Text='';
             app.LblDixonInfo.FontSize=10; app.LblDixonInfo.FontColor=[0.5 0.5 0.5];
 
-            % Row 2: colormap + display range (min/max)
+            % Row 2: PDFF colormap + display range controls.
             scaleRow = uigridlayout(imgG,[1 7]);
             scaleRow.Layout.Row=2;
             scaleRow.ColumnWidth = {60,'1x',40,50,10,50,50};
             scaleRow.Padding=[0 1 0 1]; scaleRow.ColumnSpacing=4;
             lcm = uilabel(scaleRow); lcm.Layout.Column=1;
-            lcm.Text='Colormap:'; lcm.FontSize=11; lcm.FontWeight='bold';
+            lcm.Text='PDFF map:'; lcm.FontSize=11; lcm.FontWeight='bold';
             app.DdlDixonCmap = uidropdown(scaleRow);
             app.DdlDixonCmap.Layout.Column=2;
             app.DdlDixonCmap.Items     = {'Hot','Gray','Parula','Jet','Turbo','Hot (rev)','Gray (rev)'};
@@ -521,12 +572,28 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             btnAuto.FontSize=11;
             btnAuto.ButtonPushedFcn = @(~,~)app.onDixonAutoScale();
 
-            % Row 3: large single image panel
-            app.AxDixon = uiaxes(imgG);
-            app.AxDixon.Layout.Row=3;
-            setupDarkAxes(app.AxDixon,'Water');
+            % Row 3: three fixed display panels.
+            panelGrid = uigridlayout(imgG,[1 3]);
+            panelGrid.Layout.Row=3;
+            panelGrid.ColumnWidth={'1x','1x','1x'};
+            panelGrid.Padding=[0 0 0 0]; panelGrid.ColumnSpacing=6;
 
-            % Row 4: slice slider
+            app.AxDixonPDFF = uiaxes(panelGrid);
+            app.AxDixonPDFF.Layout.Column = 1;
+            setupDarkAxes(app.AxDixonPDFF,'PDFF (%)');
+
+            app.AxDixonIP = uiaxes(panelGrid);
+            app.AxDixonIP.Layout.Column = 2;
+            setupDarkAxes(app.AxDixonIP,'In-phase');
+
+            app.AxDixonWater = uiaxes(panelGrid);
+            app.AxDixonWater.Layout.Column = 3;
+            setupDarkAxes(app.AxDixonWater,'Out-of-phase');
+
+            % Keep the legacy ROI drawing path anchored to the PDFF panel.
+            app.AxDixon = app.AxDixonPDFF;
+
+            % Row 4: slice slider.
             slCtrl = uigridlayout(imgG,[1 3]);
             slCtrl.Layout.Row=4;
             slCtrl.ColumnWidth={60,'1x',50}; slCtrl.Padding=[0 2 0 2];
@@ -558,22 +625,22 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 [0.20 0.50 0.70],[1 1 1]);
             app.BtnROI_SpleenDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('SpleenDixon');
 
-            uilabel(rg,'Text','L1-L2 body comp:','FontSize',11, ...
+            uilabel(rg,'Text','T12-L3 body comp:','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
 
-            app.BtnROI_MuscleL1 = roiBtn(rg,5,'Muscle @ L1', ...
+            app.BtnROI_MuscleL1 = roiBtn(rg,5,'Muscle @ T12', ...
                 [0.78 0.22 0.12],[1 1 1]);
             app.BtnROI_MuscleL1.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleL1');
 
-            app.BtnROI_MuscleL2 = roiBtn(rg,6,'Muscle @ L2', ...
+            app.BtnROI_MuscleL2 = roiBtn(rg,6,'Muscle @ L3', ...
                 [0.90 0.40 0.12],[1 1 1]);
             app.BtnROI_MuscleL2.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleL2');
 
-            app.BtnROI_SATL1 = roiBtn(rg,7,'SAT @ L1', ...
+            app.BtnROI_SATL1 = roiBtn(rg,7,'SAT @ T12', ...
                 [0.14 0.28 0.85],[1 1 1]);
             app.BtnROI_SATL1.ButtonPushedFcn = @(~,~)app.drawDixonROI('SATL1');
 
-            app.BtnROI_SATL2 = roiBtn(rg,8,'SAT @ L2', ...
+            app.BtnROI_SATL2 = roiBtn(rg,8,'SAT @ L3', ...
                 [0.30 0.44 0.92],[1 1 1]);
             app.BtnROI_SATL2.ButtonPushedFcn = @(~,~)app.drawDixonROI('SATL2');
 
@@ -592,76 +659,101 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.MREGrid.Padding      = [4 4 4 4];
             app.MREGrid.ColumnSpacing = 6;
 
-            % Image area: 3 equal-width image panels + colorbar row + controls
+            % Image area: 3 columns. The left column shows magnitude and raw
+            % wave with slice navigation placed between them. The processed
+            % wave and stiffness panels occupy the middle and right columns,
+            % with dedicated color strips below and controls at the bottom.
             imgArea = uipanel(app.MREGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
-            imgG = uigridlayout(imgArea,[3 3]);
-            imgG.RowHeight   = {'1x', 28, 44};
+            imgG = uigridlayout(imgArea,[5 3]);
+            imgG.RowHeight   = {'1x',42,'1x',66,56};
             imgG.ColumnWidth = {'1x','1x','1x'};
-            imgG.Padding     = [0 0 0 0]; imgG.ColumnSpacing = 4; imgG.RowSpacing = 2;
-
-            app.AxMREMag = uiaxes(imgG);
-            app.AxMREMag.Layout.Row=1; app.AxMREMag.Layout.Column=1;
-            setupDarkAxes(app.AxMREMag,'Magnitude');
-
-            app.AxMREWave = uiaxes(imgG);
-            app.AxMREWave.Layout.Row=1; app.AxMREWave.Layout.Column=2;
-            setupDarkAxes(app.AxMREWave,'Wave (phase 1/4)');
-            colormap(app.AxMREWave, mreWaveCmap());
+            imgG.Padding     = [0 0 0 0];
+            imgG.ColumnSpacing = 4;
+            imgG.RowSpacing    = 4;
 
             app.AxMREStiff = uiaxes(imgG);
-            app.AxMREStiff.Layout.Row=1; app.AxMREStiff.Layout.Column=3;
+            app.AxMREStiff.Layout.Row=[1 3]; app.AxMREStiff.Layout.Column=1;
             setupDarkAxes(app.AxMREStiff,'Stiffness (kPa)');
             colormap(app.AxMREStiff, mreStiffCmap());
+            app.AxMREStiff.ButtonDownFcn = @(~,~)app.setCurrentMRETargetAxis('stiff');
 
-            % Row 2: awave colorbar under wave (col 2), aaasmo under stiffness (col 3)
-            % Col 1 (magnitude) gets an empty spacer — no colorbar needed there
-            sp1 = uilabel(imgG,'Text',''); sp1.Layout.Row=2; sp1.Layout.Column=1;
-            colorbar(app.AxMREWave, ...
-                'Location','southoutside', ...
-                'FontSize',9,'Color',[0.7 0.7 0.7]);
-            colorbar(app.AxMREStiff, ...
-                'Location','southoutside', ...
-                'FontSize',9,'Color',[0.7 0.7 0.7]);
+            app.AxMREWave = uiaxes(imgG);
+            app.AxMREWave.Layout.Row=[1 3]; app.AxMREWave.Layout.Column=2;
+            setupDarkAxes(app.AxMREWave,'Processed wave');
+            colormap(app.AxMREWave, mreWaveCmap());
+            app.AxMREWave.ButtonDownFcn = @(~,~)app.setCurrentMRETargetAxis('proc');
 
-            % Controls row  [Slice: | slider | n/N | ▶Play | W±: | waveMax | 0-8kPa | 0-20kPa | Conf]
-            ctrlG = uigridlayout(imgG,[1 9]);
-            ctrlG.Layout.Row=3; ctrlG.Layout.Column=[1 3];
-            ctrlG.ColumnWidth={56,'1x',56,90,30,58,80,80,80}; ctrlG.Padding=[0 4 0 4];
+            app.AxMREMag = uiaxes(imgG);
+            app.AxMREMag.Layout.Row=1; app.AxMREMag.Layout.Column=3;
+            setupDarkAxes(app.AxMREMag,'Magnitude');
+            colormap(app.AxMREMag,'gray');
+            app.AxMREMag.ButtonDownFcn = @(~,~)app.setCurrentMRETargetAxis('mag');
 
-            lmr = uilabel(ctrlG); lmr.Layout.Column=1;
-            lmr.Text='Slice:'; lmr.FontSize=13; lmr.FontWeight='bold';
+            navG = uigridlayout(imgG,[1 3]);
+            navG.Layout.Row = 2; navG.Layout.Column = 3;
+            navG.ColumnWidth = {64,'1x',64};
+            navG.Padding = [4 10 4 10];
+            navG.ColumnSpacing = 10;
 
-            app.SldrMRE = uislider(ctrlG);
-            app.SldrMRE.Layout.Column=2; app.SldrMRE.Limits=[1 4];
-            app.SldrMRE.Value=2; app.SldrMRE.MajorTicks=[];
-            app.SldrMRE.MinorTicks=[];
-            app.SldrMRE.ValueChangedFcn = @(src,~)app.onMRESlide(src);
+            prevBtn = uibutton(navG,'push');
+            prevBtn.Layout.Column = 1;
+            prevBtn.Text = 'Prev';
+            prevBtn.FontSize = 12; prevBtn.FontWeight = 'bold'; prevBtn.BackgroundColor = [1.00 0.93 0.25]; prevBtn.FontColor = [0.75 0.10 0.10]; prevBtn.Tooltip = 'Previous slice';
+            prevBtn.ButtonPushedFcn = @(~,~)app.nudgeMRESlice(-1);
 
-            app.LblMRESlice = uilabel(ctrlG); app.LblMRESlice.Layout.Column=3;
-            app.LblMRESlice.Text='2/4'; app.LblMRESlice.FontSize=12;
-            app.LblMRESlice.HorizontalAlignment='center';
+            app.LblMRESlice = uilabel(navG);
+            app.LblMRESlice.Layout.Column = 2;
+            app.LblMRESlice.Text = '2/4';
+            app.LblMRESlice.FontSize = 12;
+            app.LblMRESlice.FontWeight = 'bold';
+            app.LblMRESlice.HorizontalAlignment = 'center';
+
+            nextBtn = uibutton(navG,'push');
+            nextBtn.Layout.Column = 3;
+            nextBtn.Text = 'Next';
+            nextBtn.FontSize = 12; nextBtn.FontWeight = 'bold'; nextBtn.BackgroundColor = [1.00 0.93 0.25]; nextBtn.FontColor = [0.75 0.10 0.10]; nextBtn.Tooltip = 'Next slice';
+            nextBtn.ButtonPushedFcn = @(~,~)app.nudgeMRESlice(1);
+
+            app.AxMRERawWave = uiaxes(imgG);
+            app.AxMRERawWave.Layout.Row=3; app.AxMRERawWave.Layout.Column=3;
+            setupDarkAxes(app.AxMRERawWave,'Raw wave');
+            colormap(app.AxMRERawWave,'gray');
+            app.AxMRERawWave.ButtonDownFcn = @(~,~)app.setCurrentMRETargetAxis('raw');
+
+            app.AxMREStiffBar = uiaxes(imgG);
+            app.AxMREStiffBar.Layout.Row = 4; app.AxMREStiffBar.Layout.Column = 1;
+            setupColorStripAxes(app.AxMREStiffBar);
+
+            app.AxMREWaveBar = uiaxes(imgG);
+            app.AxMREWaveBar.Layout.Row = 4; app.AxMREWaveBar.Layout.Column = 2;
+            setupColorStripAxes(app.AxMREWaveBar);
+
+            ctrlG = uigridlayout(imgG,[1 8]);
+            ctrlG.Layout.Row=5; ctrlG.Layout.Column=[1 3];
+            ctrlG.ColumnWidth={92,64,64,80,80,88,24,64};
+            ctrlG.Padding=[0 4 0 4];
 
             app.BtnMREPlay = uibutton(ctrlG,'push');
-            app.BtnMREPlay.Layout.Column=4;
+            app.BtnMREPlay.Layout.Column=1;
             app.BtnMREPlay.Text='▶ Play wave';
             app.BtnMREPlay.FontSize=12; app.BtnMREPlay.FontWeight='bold';
             app.BtnMREPlay.BackgroundColor=[0.18 0.60 0.34];
             app.BtnMREPlay.FontColor=[1 1 1];
             app.BtnMREPlay.ButtonPushedFcn = @(~,~)app.toggleMREPlay();
 
-            wlbl = uilabel(ctrlG); wlbl.Layout.Column=5;
-            wlbl.Text='W±:'; wlbl.FontSize=11; wlbl.HorizontalAlignment='right';
+            wlbl = uilabel(ctrlG); wlbl.Layout.Column=2;
+            wlbl.Text='Waves W/L'; wlbl.FontSize=11; wlbl.HorizontalAlignment='right';
 
             app.EdtWaveMax = uieditfield(ctrlG,'numeric');
-            app.EdtWaveMax.Layout.Column=6;
-            app.EdtWaveMax.Value=0; app.EdtWaveMax.Limits=[0 Inf];
+            app.EdtWaveMax.Layout.Column=3;
+            app.EdtWaveMax.Value=2000; app.EdtWaveMax.Limits=[0 Inf];
             app.EdtWaveMax.FontSize=11;
-            app.EdtWaveMax.Tooltip='Wave display max (0=auto)';
+            app.EdtWaveMax.Tooltip='Processed-wave half-range for display (default 2000). Raw wave uses automatic native scaling.';
             app.EdtWaveMax.ValueChangedFcn = @(src,~)app.onWaveMaxChange(src);
 
             app.BtnStiff8 = uibutton(ctrlG,'push');
-            app.BtnStiff8.Layout.Column=7;
+            app.BtnStiff8.Layout.Column=4;
             app.BtnStiff8.Text='0-8 kPa';
             app.BtnStiff8.FontSize=12; app.BtnStiff8.FontWeight='bold';
             app.BtnStiff8.BackgroundColor=[0.25 0.55 0.85];
@@ -669,7 +761,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BtnStiff8.ButtonPushedFcn = @(~,~)app.setStiffScale([0 8]);
 
             app.BtnStiff20 = uibutton(ctrlG,'push');
-            app.BtnStiff20.Layout.Column=8;
+            app.BtnStiff20.Layout.Column=5;
             app.BtnStiff20.Text='0-20 kPa';
             app.BtnStiff20.FontSize=12;
             app.BtnStiff20.BackgroundColor=[0.70 0.88 0.70];
@@ -677,42 +769,96 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BtnStiff20.ButtonPushedFcn = @(~,~)app.setStiffScale([0 20]);
 
             app.BtnConfMap = uibutton(ctrlG,'state');
-            app.BtnConfMap.Layout.Column=9;
+            app.BtnConfMap.Layout.Column=6;
             app.BtnConfMap.Text='Conf. mask';
             app.BtnConfMap.FontSize=12;
             app.BtnConfMap.Value=false;
+            app.BtnConfMap.Tooltip = 'Overlay low-confidence pixels on the stiffness map';
             app.BtnConfMap.ValueChangedFcn = @(~,~)app.toggleConfMask();
+
+            clbl = uilabel(ctrlG); clbl.Layout.Column=7;
+            clbl.Text='≥'; clbl.FontSize=12; clbl.HorizontalAlignment='center';
+
+            app.EdtConfThresh = uieditfield(ctrlG,'numeric');
+            app.EdtConfThresh.Layout.Column=8;
+            app.EdtConfThresh.Limits = [0 1];
+            app.EdtConfThresh.Value  = 0.50;
+            app.EdtConfThresh.FontSize = 11;
+            app.EdtConfThresh.Tooltip = 'General confidence threshold for the overlay checkbox on the elastogram';
+            app.EdtConfThresh.ValueChangedFcn = @(src,~)app.onConfThreshChange(src);
 
             % ROI panel
             roiPnl = uipanel(app.MREGrid,'Title','MRE ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[8 1]);
-            rg.RowHeight   = repmat({36},1,8); rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
+            rg = uigridlayout(roiPnl,[12 1]);
+            rg.RowHeight   = {24,36,24,36,24,36,24,36,24,24,'1x',36};
+            rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
-            uilabel(rg,'Text','Stiffness ROIs (2-stage):','FontSize',11, ...
+            uilabel(rg,'Text','Stiffness ROIs (same-slice, any panel):','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
 
             app.BtnROI_LiverMRE = roiBtn(rg,2,'Liver stiffness', ...
-                [0.22 0.55 0.22],[1 1 1]);
+                [0.15 0.85 0.15],[1 1 1]);
             app.BtnROI_LiverMRE.ButtonPushedFcn = @(~,~)app.drawMREROI('LiverMRE');
+            liverConfGrid = uigridlayout(rg,[1 3]);
+            liverConfGrid.Layout.Row = 3; liverConfGrid.ColumnWidth = {50,34,'1x'}; liverConfGrid.Padding = [4 0 4 0]; liverConfGrid.ColumnSpacing = 4;
+            uilabel(liverConfGrid,'Text','Conf.','FontSize',10,'HorizontalAlignment','right','FontColor',[0.35 0.35 0.35]);
+            uilabel(liverConfGrid,'Text','≥','FontSize',10,'HorizontalAlignment','center','FontColor',[0.35 0.35 0.35]);
+            app.EdtLiverConfThresh = uieditfield(liverConfGrid,'numeric');
+            app.EdtLiverConfThresh.Layout.Column = 3; app.EdtLiverConfThresh.Limits = [0 1]; app.EdtLiverConfThresh.Value = 0.90; app.EdtLiverConfThresh.ValueDisplayFormat = '%.2f'; app.EdtLiverConfThresh.FontSize = 10;
+            app.EdtLiverConfThresh.Tooltip = 'Confidence threshold used for Liver ROI masking';
+            app.EdtLiverConfThresh.ValueChangedFcn = @(src,~)app.onMREObjectConfChange('LiverMRE', src);
 
-            app.BtnROI_SpleenMRE = roiBtn(rg,3,'Spleen stiffness', ...
-                [0.20 0.50 0.70],[1 1 1]);
+            app.BtnROI_SpleenMRE = roiBtn(rg,4,'Spleen stiffness', ...
+                [0.15 0.65 0.95],[1 1 1]);
             app.BtnROI_SpleenMRE.ButtonPushedFcn = @(~,~)app.drawMREROI('SpleenMRE');
+            spleenConfGrid = uigridlayout(rg,[1 3]);
+            spleenConfGrid.Layout.Row = 5; spleenConfGrid.ColumnWidth = {50,34,'1x'}; spleenConfGrid.Padding = [4 0 4 0]; spleenConfGrid.ColumnSpacing = 4;
+            uilabel(spleenConfGrid,'Text','Conf.','FontSize',10,'HorizontalAlignment','right','FontColor',[0.35 0.35 0.35]);
+            uilabel(spleenConfGrid,'Text','≥','FontSize',10,'HorizontalAlignment','center','FontColor',[0.35 0.35 0.35]);
+            app.EdtSpleenConfThresh = uieditfield(spleenConfGrid,'numeric');
+            app.EdtSpleenConfThresh.Layout.Column = 3; app.EdtSpleenConfThresh.Limits = [0 1]; app.EdtSpleenConfThresh.Value = 0.75; app.EdtSpleenConfThresh.ValueDisplayFormat = '%.2f'; app.EdtSpleenConfThresh.FontSize = 10;
+            app.EdtSpleenConfThresh.Tooltip = 'Confidence threshold used for Spleen ROI masking';
+            app.EdtSpleenConfThresh.ValueChangedFcn = @(src,~)app.onMREObjectConfChange('SpleenMRE', src);
 
-            uilabel(rg,'Text','Workflow:','FontSize',11, ...
+            app.BtnROI_MuscleMRE = roiBtn(rg,6,'Muscle stiffness', ...
+                [0.95 0.55 0.15],[1 1 1]);
+            app.BtnROI_MuscleMRE.ButtonPushedFcn = @(~,~)app.drawMREROI('MuscleMRE');
+            muscleConfGrid = uigridlayout(rg,[1 3]);
+            muscleConfGrid.Layout.Row = 7; muscleConfGrid.ColumnWidth = {50,34,'1x'}; muscleConfGrid.Padding = [4 0 4 0]; muscleConfGrid.ColumnSpacing = 4;
+            uilabel(muscleConfGrid,'Text','Conf.','FontSize',10,'HorizontalAlignment','right','FontColor',[0.35 0.35 0.35]);
+            uilabel(muscleConfGrid,'Text','≥','FontSize',10,'HorizontalAlignment','center','FontColor',[0.35 0.35 0.35]);
+            app.EdtMuscleConfThresh = uieditfield(muscleConfGrid,'numeric');
+            app.EdtMuscleConfThresh.Layout.Column = 3; app.EdtMuscleConfThresh.Limits = [0 1]; app.EdtMuscleConfThresh.Value = 0.50; app.EdtMuscleConfThresh.ValueDisplayFormat = '%.2f'; app.EdtMuscleConfThresh.FontSize = 10;
+            app.EdtMuscleConfThresh.Tooltip = 'Confidence threshold used for Muscle ROI masking';
+            app.EdtMuscleConfThresh.ValueChangedFcn = @(src,~)app.onMREObjectConfChange('MuscleMRE', src);
+
+            app.BtnROI_FatMRE = roiBtn(rg,8,'Fat stiffness', ...
+                [0.85 0.30 0.85],[1 1 1]);
+            app.BtnROI_FatMRE.ButtonPushedFcn = @(~,~)app.drawMREROI('FatMRE');
+            fatConfGrid = uigridlayout(rg,[1 3]);
+            fatConfGrid.Layout.Row = 9; fatConfGrid.ColumnWidth = {50,34,'1x'}; fatConfGrid.Padding = [4 0 4 0]; fatConfGrid.ColumnSpacing = 4;
+            uilabel(fatConfGrid,'Text','Conf.','FontSize',10,'HorizontalAlignment','right','FontColor',[0.35 0.35 0.35]);
+            uilabel(fatConfGrid,'Text','≥','FontSize',10,'HorizontalAlignment','center','FontColor',[0.35 0.35 0.35]);
+            app.EdtFatConfThresh = uieditfield(fatConfGrid,'numeric');
+            app.EdtFatConfThresh.Layout.Column = 3; app.EdtFatConfThresh.Limits = [0 1]; app.EdtFatConfThresh.Value = 0.90; app.EdtFatConfThresh.ValueDisplayFormat = '%.2f'; app.EdtFatConfThresh.FontSize = 10;
+            app.EdtFatConfThresh.Tooltip = 'Confidence threshold used for Fat ROI masking';
+            app.EdtFatConfThresh.ValueChangedFcn = @(src,~)app.onMREObjectConfChange('FatMRE', src);
+
+            workflowLbl = uilabel(rg,'Text','Workflow:','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
-
+            workflowLbl.Layout.Row = 10;
             app.LblMREInfo = uilabel(rg);
-            app.LblMREInfo.Layout.Row=[5 7];
-            app.LblMREInfo.Text=sprintf(['Stage 1: polygon on Magnitude → organ boundary\n' ...
-                'Stage 2: auto-eroded polygon on Stiffness → measurement ROI\n' ...
-                'LapC masking applied automatically.']);
+            app.LblMREInfo.Layout.Row=11;
+            app.LblMREInfo.Text = sprintf(['MRE ROI workflow:' char(10) ...
+                'Choose organ, click target panel, then use hotkeys:' char(10) ...
+                'F = freehand on selected panel, D = seed + auto on Magnitude' char(10) ...
+                'E = exclude, I = include, +/- = erosion, A/Enter = accept, Esc = cancel']);
             app.LblMREInfo.FontSize=11; app.LblMREInfo.WordWrap='on';
             app.LblMREInfo.FontColor=[0.45 0.45 0.45];
 
-            app.BtnClearMREROIs = roiBtn(rg,8,'Clear this slice', ...
+            app.BtnClearMREROIs = roiBtn(rg,12,'Clear this slice', ...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearMREROIs.ButtonPushedFcn = @(~,~)app.clearMRESlice();
         end
@@ -737,8 +883,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'FontSize',13,'FontWeight','bold');
             app.RightPanel.Layout.Column = 3;
 
-            app.RightGrid = uigridlayout(app.RightPanel,[6 1]);
-            app.RightGrid.RowHeight   = {110,100,110,110,80,80};
+            app.RightGrid = uigridlayout(app.RightPanel,[4 1]);
+            app.RightGrid.RowHeight   = {110,100,110,'1x'};
             app.RightGrid.ColumnWidth = {'1x'};
             app.RightGrid.Padding     = [2 2 2 2];
             app.RightGrid.RowSpacing  = 2;
@@ -748,27 +894,33 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 {'ValLiverDixonVol','ValLiverDixonPDFF', ...
                  'ValSpleenDixonVol','ValSpleenDixonPDFF'});
 
-            addMeasSection(app,2,'L1-L2 — Muscle', ...
-                {'Muscle area L1','Muscle PDFF L1', ...
-                 'Muscle area L2','Muscle PDFF L2'}, ...
+            addMeasSection(app,2,'Muscle', ...
+                {'Muscle area T12','Muscle PDFF T12', ...
+                 'Muscle area L3','Muscle PDFF L3'}, ...
                 {'ValMuscleL1Area','ValMuscleL1PDFF', ...
                  'ValMuscleL2Area','ValMuscleL2PDFF'});
 
-            addMeasSection(app,3,'L1-L2 — SAT & ratio', ...
-                {'SAT area L1','SAT PDFF L1', ...
-                 'SAT area L2','SAT PDFF L2','Muscle:SAT ratio'}, ...
+            addMeasSection(app,3,'SAT & ratio', ...
+                {'SAT area T12','SAT PDFF T12', ...
+                 'SAT area L3','SAT PDFF L3','Muscle:SAT ratio'}, ...
                 {'ValSATL1Area','ValSATL1PDFF', ...
                  'ValSATL2Area','ValSATL2PDFF','ValMuscleSATRatio'});
 
+            % NOTE FOR MAINTAINERS:
+            % The visible labels below were changed from stiffness + IQR to
+            % stiffness + combined "N / volume" text. The backing UI
+            % handle names ending in *IQR are intentionally retained to
+            % avoid widespread refactoring, but those handles now show
+            % "N / volume" rather than interquartile range.
             addMeasSection(app,4,'MRE — Stiffness', ...
-                {'Liver stiffness','Liver IQR', ...
-                 'Spleen stiffness','Spleen IQR'}, ...
+                {'Liver stiffness','Liver N/vol.', ...
+                 'Spleen stiffness','Spleen N/vol.', ...
+                 'Muscle stiffness','Muscle N/vol.', ...
+                 'Fat stiffness','Fat N/vol.'}, ...
                 {'ValLiverStiff','ValLiverStiffIQR', ...
-                 'ValSpleenStiff','ValSpleenStiffIQR'});
-
-            addMeasSection(app,5,'QC', ...
-                {'Seg. confidence','Coverage'}, ...
-                {'ValSegConf','ValCoverage'});
+                 'ValSpleenStiff','ValSpleenStiffIQR', ...
+                 'ValMuscleMREStiff','ValMuscleMREStiffIQR', ...
+                 'ValFatMREStiff','ValFatMREStiffIQR'});
         end
 
         function addMeasSection(app, row, sectionTitle, labels, propNames)
@@ -800,7 +952,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BottomGrid.ColumnWidth  = {'1x','1x','1x','1x',8,'2x'};
             app.BottomGrid.Padding      = [6 3 6 2]; app.BottomGrid.ColumnSpacing=4;
 
-            stepLabels = {'Localizer / L1-L2','Dixon + ROIs','MRE + ROIs','Export'};
+            stepLabels = {'Localizer / T12-L3','Dixon + ROIs','MRE + ROIs','Export'};
             stepProps  = {'BtnStepLoc','BtnStepDixon','BtnStepMRE','BtnStepResults'};
             stepCBs    = {@(~,~)app.activateTab('loc'), ...
                           @(~,~)app.activateTab('dixon'), ...
@@ -837,6 +989,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
     % =====================================================================
     methods (Access = private)
         function startupFcn(app)
+            try, app.EdtConfThresh.Value = app.AppData.ConfThresh; catch, end
+            try, app.EdtLiverConfThresh.Value = app.AppData.MREObjectConf.LiverMRE; catch, end
+            try, app.EdtSpleenConfThresh.Value = app.AppData.MREObjectConf.SpleenMRE; catch, end
+            try, app.EdtMuscleConfThresh.Value = app.AppData.MREObjectConf.MuscleMRE; catch, end
+            try, app.EdtFatConfThresh.Value = app.AppData.MREObjectConf.FatMRE; catch, end
             setStatus(app,'Ready — click Load Study to begin.');
         end
     end
@@ -876,7 +1033,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     'Message','Loading series data...','Indeterminate','on');
 
                 matOpts = struct('outputDir',folderPath,'verbose',false, ...
-                                 'forceRebuild',false,'interpolateWave',true);
+                                 'forceRebuild',true,'interpolateWave',true);
                 matPath = '';
 
                 % 4. Build MRE MAT (only if MRE series was selected)
@@ -906,7 +1063,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 % 7. Load MRE .mat
                 if ~isempty(matPath) && isfile(matPath)
                     dlg.Message = 'Loading MRE data...';
-                    tmp = load(matPath,'M','W','S','LapC','H');
+                    tmp = load(matPath,'M','M_raw','W','W_raw','S','LapC','H');
+                    if ~isfield(tmp,'W_raw') || isempty(tmp.W_raw)
+                        tmp.W_raw = tmp.W;
+                    end
+                    tmp = normalizeMREStruct(app, tmp);
                     app.AppData.MRE = tmp;
                     populateMRETab(app);
                 end
@@ -938,7 +1099,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             uialert(app.UIFigure, ...
                 sprintf(['Full automated pipeline (Phase 4-6) is not yet implemented.\n\n' ...
                          'Use the manual workflow:\n' ...
-                         '  1. Localizer tab → mark L1 and L2, then Confirm L1-L2\n' ...
+                         '  1. Localizer tab → mark T12 and L3, then Confirm T12-L3\n' ...
                          '  2. Dixon tab → draw Liver, Spleen, Muscle, SAT ROIs\n' ...
                          '  3. MRE tab → draw Liver and Spleen stiffness ROIs\n' ...
                          '  4. Export CSV when done']), ...
@@ -976,8 +1137,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Arm click to reposition
             app.AppData.AwaitingClick = 'L1';
             app.BtnPlaceL1.BackgroundColor = [1.0 0.95 0.2];
-            setStatus(app,'L1 line shown.  Click on coronal or sagittal image to reposition.');
-            app.LblL12Status.Text = 'L1 line shown — click image to reposition, scroll to navigate.';
+            setStatus(app,'T12 line shown.  Click on coronal or sagittal image to reposition.');
+            app.LblL12Status.Text = 'T12 line shown — click image to reposition, scroll to navigate.';
             app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor','L1');
             app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag','L1');
         end
@@ -998,8 +1159,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Arm click to reposition
             app.AppData.AwaitingClick = 'L2';
             app.BtnPlaceL2.BackgroundColor = [0.80 0.95 1.0];
-            setStatus(app,'L2 line shown.  Click on coronal or sagittal image to reposition.');
-            app.LblL12Status.Text = 'L2 line shown — click image to reposition, scroll to navigate.';
+            setStatus(app,'L3 line shown.  Click on coronal or sagittal image to reposition.');
+            app.LblL12Status.Text = 'L3 line shown — click image to reposition, scroll to navigate.';
             app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor','L2');
             app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag','L2');
         end
@@ -1021,28 +1182,28 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AppData.L2_SagRow = NaN;
             refreshLocCoronal(app);
             refreshLocSagittal(app);
-            app.LblL12Status.Text = 'L1/L2 cleared.';
-            setStatus(app,'L1-L2 cleared.');
+            app.LblL12Status.Text = 'T12/L3 cleared.';
+            setStatus(app,'T12-L3 cleared.');
         end
 
         function updateL12Status(app)
             l1r = app.AppData.L1_CorRow;
             l2r = app.AppData.L2_CorRow;
             if isnan(l1r) && isnan(l2r)
-                app.LblL12Status.Text = 'No L1/L2 placed yet.';
+                app.LblL12Status.Text = 'No T12/L3 placed yet.';
             elseif isnan(l2r)
-                app.LblL12Status.Text = sprintf('L1 placed  |  L2: not placed yet.  Click Mark L2.');
+                app.LblL12Status.Text = sprintf('T12 placed  |  L3: not placed yet.  Click Mark L3.');
             elseif isnan(l1r)
-                app.LblL12Status.Text = sprintf('L1: not placed  |  L2 placed.  Click Mark L1.');
+                app.LblL12Status.Text = sprintf('T12: not placed  |  L3 placed.  Click Mark T12.');
             else
-                app.LblL12Status.Text = sprintf('L1 placed  |  L2 placed  — press Confirm L1-L2 in toolbar.');
+                app.LblL12Status.Text = sprintf('T12 placed  |  L3 placed  — press Confirm T12-L3 in toolbar.');
                 app.BtnConfirmL12.Enable = 'on';
             end
         end
 
         function confirmL12(app)
             if isnan(app.AppData.L1_CorRow) || isnan(app.AppData.L2_CorRow)
-                uialert(app.UIFigure,'Place both L1 and L2 markers first.','Missing Marks');
+                uialert(app.UIFigure,'Place both T12 and L3 markers first.','Missing Marks');
                 return
             end
             % Convert row position to mm using localizer spatial info
@@ -1059,7 +1220,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 app.AppData.L12_Dixon = loc_propagateToSpace(L12, ...
                     app.AppData.Dixon.SpatialInfo, struct('verbose',false));
                 setStatus(app,sprintf( ...
-                    'L1/L2 confirmed.  Dixon: L1→sl%d  L2→sl%d.  Switch to Dixon tab.', ...
+                    'T12/L3 confirmed.  Dixon: T12→sl%d  L3→sl%d.  Switch to Dixon tab.', ...
                     app.AppData.L12_Dixon.L1_sliceIdx, app.AppData.L12_Dixon.L2_sliceIdx));
             end
 
@@ -1126,8 +1287,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 h = drawfreehand(app.AxDixon,'Color',dixonROIColor(roiName), ...
                     'LineWidth',2,'FaceAlpha',0.15);
                 wait(h);
-                nR = size(app.AppData.Dixon.Water,1);
-                nC = size(app.AppData.Dixon.Water,2);
+                baseVol = dixonPreferredDisplayVolume(app.AppData.Dixon, 'PDFF');
+                if isempty(baseVol), baseVol = dixonPreferredDisplayVolume(app.AppData.Dixon, 'InPhase'); end
+                if isempty(baseVol), baseVol = dixonPreferredDisplayVolume(app.AppData.Dixon, 'OutPhase'); end
+                nR = size(baseVol,1);
+                nC = size(baseVol,2);
                 mask = logical(h.createMask());
                 storeROI(app, roiName, sl, mask, nR, nC);
                 overlayROIOnDixon(app, roiName, mask);
@@ -1151,31 +1315,136 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         % ── MRE ───────────────────────────────────────────────────────────
-        function onMRESlide(app, src)
-            sl = round(src.Value);
-            app.AppData.MRESlice = sl;
-            nZ = max(1, size(app.AppData.MRE.S,3));
-            app.LblMRESlice.Text = sprintf('%d/%d',sl,nZ);
-            refreshMRE(app);
-        end
+        
+function onMRESlide(app, src)
+    if app.isMREROIWorkflowActive()
+        keepSl = app.AppData.MREROISlice;
+        if isnan(keepSl), keepSl = app.AppData.MRESlice; end
+        src.Value = keepSl;
+        app.AppData.MRESlice = keepSl;
+        nZ = max(1, size(app.AppData.MRE.S,3));
+        app.LblMRESlice.Text = sprintf('%d/%d', keepSl, nZ);
+        setStatus(app, 'Finish the active MRE ROI with Enter or cancel with Esc before changing slices.');
+        refreshMRE(app);
+        return
+    end
+    sl = round(src.Value);
+    app.AppData.MRESlice = sl;
+    nZ = max(1, size(app.AppData.MRE.S,3));
+    app.LblMRESlice.Text = sprintf('%d/%d',sl,nZ);
+    refreshMRE(app);
+end
 
-        function toggleMREPlay(app)
-            if app.AppData.MREPlaying
-                % Stop
+function stopMREPlayback(app)
+            try
                 if ~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer)
                     stop(app.AppData.MRETimer);
                     delete(app.AppData.MRETimer);
-                    app.AppData.MRETimer = [];
                 end
-                app.AppData.MREPlaying = false;
-                app.BtnMREPlay.Text = '▶ Play wave';
+            catch
+            end
+            app.AppData.MRETimer = [];
+            app.AppData.MREPlaying = false;
+            try
+                app.BtnMREPlay.Text = sprintf('%s Play wave', char(9654));
                 app.BtnMREPlay.BackgroundColor = [0.18 0.60 0.34];
+            catch
+            end
+        end
+
+function pauseMREPlaybackForROI(app)
+            try
+                if app.AppData.MREPlaying || (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer))
+                    app.stopMREPlayback();
+                    setStatus(app, 'Wave playback paused while saving the MRE ROI.');
+                end
+            catch
+                app.stopMREPlayback();
+            end
+        end
+
+function finishMREROIDrawing(app)
+            try
+                app.AppData.MREROIDrawing = false;
+            catch
+            end
+            try
+                app.updateMREPlaybackButtonEnabled();
+            catch
+            end
+        end
+
+function clearMRERefreshBusy(app)
+            try
+                app.AppData.MRERefreshBusy = false;
+            catch
+            end
+        end
+
+function clearMREROIBusy(app)
+            resumePlayback = false;
+            try
+                app.AppData.MREROIBusy = false;
+            catch
+            end
+            try
+                if isfield(app.AppData,'MREPlaybackWasOnBeforeROI') && app.AppData.MREPlaybackWasOnBeforeROI
+                    resumePlayback = true;
+                end
+                app.AppData.MREPlaybackWasOnBeforeROI = false;
+            catch
+            end
+            try
+                app.updateMREPlaybackButtonEnabled();
+            catch
+            end
+            if resumePlayback
+                try
+                    activeTab = app.ImageTabGroup.SelectedTab;
+                    if isequal(activeTab, app.MRETab) && ~app.AppData.MREPlaying && ...
+                            ~(isfield(app.AppData,'MREROIDrawing') && app.AppData.MREROIDrawing) && ...
+                            ~(isfield(app.AppData,'MRERefreshBusy') && app.AppData.MRERefreshBusy)
+                        app.toggleMREPlay();
+                    end
+                catch
+                end
+            end
+        end
+
+function updateMREPlaybackButtonEnabled(app)
+            state = 'on';
+            try
+                if isempty(app.AppData.MRE)
+                    state = 'off';
+                elseif isfield(app.AppData,'MREROIBusy') && app.AppData.MREROIBusy
+                    state = 'off';
+                end
+            catch
+                state = 'on';
+            end
+            try
+                app.BtnMREPlay.Enable = state;
+            catch
+            end
+        end
+
+function toggleMREPlay(app)
+            if isfield(app.AppData,'MREROIBusy') && app.AppData.MREROIBusy
+                app.stopMREPlayback();
+                setStatus(app, 'Wave playback is disabled only while saving an MRE ROI.');
+                return
+            end
+            if app.AppData.MREPlaying
+                app.stopMREPlayback();
             else
-                % Start
                 app.AppData.MREPlaying = true;
-                app.BtnMREPlay.Text = '⏸ Pause';
+                try
+                    app.BtnMREPlay.Text = sprintf('%s Pause', char(9208));
+                catch
+                    app.BtnMREPlay.Text = 'Pause';
+                end
                 app.BtnMREPlay.BackgroundColor = [0.75 0.35 0.10];
-                t = timer('ExecutionMode','fixedRate','Period',0.15, ...
+                t = timer('ExecutionMode','fixedRate','BusyMode','drop','Period',0.15, ...
                     'TimerFcn',@(~,~)app.advanceWaveFrame());
                 app.AppData.MRETimer = t;
                 start(t);
@@ -1184,90 +1453,850 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         function advanceWaveFrame(app)
             if isempty(app.AppData.MRE) || ~isfield(app.AppData.MRE,'W'), return; end
+            try
+                activeTab = app.ImageTabGroup.SelectedTab;
+                if ~isequal(activeTab, app.MRETab)
+                    app.stopMREPlayback();
+                    return
+                end
+            catch
+            end
+            if (isfield(app.AppData,'MREROIBusy') && app.AppData.MREROIBusy) || ...
+                    (isfield(app.AppData,'MRERefreshBusy') && app.AppData.MRERefreshBusy)
+                return
+            end
             nPh = size(app.AppData.MRE.W, 4);
             ph  = mod(app.AppData.MREPhase, nPh) + 1;
             app.AppData.MREPhase = ph;
-            sl  = app.AppData.MRESlice;
-            W   = app.AppData.MRE.W;
-            img = double(W(:,:,min(sl,end),ph));
-            imagesc(app.AxMREWave, img);
-            title(app.AxMREWave, sprintf('Wave (phase %d/%d)', ph, nPh), ...
-                'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+            refreshMRE(app);
         end
 
-        function drawMREROI(app, roiName)
-            % Two-stage MRE ROI workflow (adapted from mmdi_roi_gui):
-            %   Stage 1 — draw outer organ contour on Magnitude (drawpolygon)
-            %   Stage 2 — auto-erode to inner stiffness ROI, editable on Stiffness
-            if isempty(app.AppData.MRE)
-                uialert(app.UIFigure,'No MRE data loaded.','No Data');
+function drawMREROI(app, roiName)
+    if isempty(app.AppData.MRE)
+        uialert(app.UIFigure,'No MRE data loaded.','No Data');
+        return
+    end
+    app.cancelMREROIWorkflow(false);
+    app.clearMREROIPreviewOverlay();
+    app.AppData.MREROIActive = true;
+    app.AppData.MREROIName = roiName;
+    app.AppData.MREROISlice = app.AppData.MRESlice;
+    app.AppData.MREROIOuterMask = [];
+    app.AppData.MREROIBaseInnerMask = [];
+    app.AppData.MREROIConfMask = [];
+    app.AppData.MREROIFinalMask = [];
+    app.AppData.MREROIErodePx = 2;
+    app.AppData.MREROIDrawing = false;
+    app.setCurrentMRETargetAxis(app.inferCurrentMRETargetAxis());
+    app.setMREROIButtonsEnabled(false);
+    app.updateMREPlaybackButtonEnabled();
+    app.showMREROIHotkeyHelp();
+    refreshMRE(app);
+    setStatus(app, sprintf('%s ROI armed on slice %d. Click any MRE panel, then press F for freehand or D for seed + auto on Magnitude.', app.getMREROIOrganLabel(roiName), app.AppData.MREROISlice));
+end
+
+function tf = isMREROIWorkflowActive(app)
+    tf = false;
+    try
+        tf = isvalid(app) && ~isempty(app.UIFigure) && isvalid(app.UIFigure) && ...
+            isfield(app.AppData,'MREROIActive') && logical(app.AppData.MREROIActive) && ...
+            ~isempty(app.AppData.MREROIName);
+    catch
+        tf = false;
+    end
+end
+
+function organLabel = getMREROIOrganLabel(app, roiName)
+    if nargin < 2 || isempty(roiName)
+        roiName = app.AppData.MREROIName;
+    end
+    if contains(roiName, 'Liver')
+        organLabel = 'Liver';
+    elseif contains(roiName, 'Spleen')
+        organLabel = 'Spleen';
+    elseif contains(roiName, 'Muscle')
+        organLabel = 'Muscle';
+    elseif contains(roiName, 'Fat')
+        organLabel = 'Fat';
+    else
+        organLabel = 'ROI';
+    end
+end
+
+function thresh = getMREROIConfThresh(app, roiName)
+    if nargin < 2 || isempty(roiName)
+        roiName = app.AppData.MREROIName;
+    end
+    thresh = 0.50;
+    try
+        if isfield(app.AppData,'MREObjectConf') && isstruct(app.AppData.MREObjectConf) && isfield(app.AppData.MREObjectConf, roiName)
+            thresh = double(app.AppData.MREObjectConf.(roiName));
+        end
+    catch
+    end
+    thresh = min(1, max(0, thresh));
+end
+
+function onMREObjectConfChange(app, roiName, src)
+    val = min(1, max(0, double(src.Value)));
+    if src.Value ~= val
+        src.Value = val;
+    end
+    if ~isfield(app.AppData,'MREObjectConf') || ~isstruct(app.AppData.MREObjectConf)
+        app.AppData.MREObjectConf = struct('LiverMRE',0.90,'SpleenMRE',0.75,'MuscleMRE',0.50,'FatMRE',0.90);
+    end
+    app.AppData.MREObjectConf.(roiName) = val;
+    if app.isMREROIWorkflowActive() && strcmp(app.AppData.MREROIName, roiName) && ~isempty(app.AppData.MREROIOuterMask)
+        app.recomputeCurrentMREROI(true);
+    elseif ~isempty(app.AppData.MRE)
+        app.updateMREAggregateStats(roiName);
+        refreshMRE(app);
+    end
+end
+
+function setCurrentMRETargetAxis(app, axisKey)
+    if nargin < 2 || isempty(axisKey)
+        axisKey = 'mag';
+    end
+    validKeys = {'mag','raw','proc','stiff'};
+    if ~any(strcmp(axisKey, validKeys))
+        axisKey = 'mag';
+    end
+    app.AppData.MRETargetAxis = axisKey;
+end
+
+function axisKey = inferCurrentMRETargetAxis(app)
+    axisKey = 'mag';
+    try
+        if isfield(app.AppData,'MRETargetAxis') && ~isempty(app.AppData.MRETargetAxis)
+            axisKey = app.AppData.MRETargetAxis;
+        end
+    catch
+    end
+    try
+        obj = app.UIFigure.CurrentObject;
+        while ~isempty(obj)
+            if isequal(obj, app.AxMREMag)
+                axisKey = 'mag'; break
+            elseif isequal(obj, app.AxMRERawWave)
+                axisKey = 'raw'; break
+            elseif isequal(obj, app.AxMREWave)
+                axisKey = 'proc'; break
+            elseif isequal(obj, app.AxMREStiff)
+                axisKey = 'stiff'; break
+            end
+            try
+                obj = obj.Parent;
+            catch
+                break
+            end
+        end
+    catch
+    end
+end
+
+function ax = getMREAxisByKey(app, axisKey)
+    switch lower(axisKey)
+        case 'raw'
+            ax = app.AxMRERawWave;
+        case 'proc'
+            ax = app.AxMREWave;
+        case 'stiff'
+            ax = app.AxMREStiff;
+        otherwise
+            ax = app.AxMREMag;
+    end
+end
+
+function label = getMREAxisLabel(app, axisKey)
+    switch lower(axisKey)
+        case 'raw'
+            label = 'Raw wave';
+        case 'proc'
+            label = 'Processed wave';
+        case 'stiff'
+            label = 'Elastogram';
+        otherwise
+            label = 'Magnitude';
+    end
+end
+
+function setMREROIButtonsEnabled(app, tf)
+    state = 'off';
+    if tf, state = 'on'; end
+    try, app.BtnROI_LiverMRE.Enable = state; catch, end
+    try, app.BtnROI_SpleenMRE.Enable = state; catch, end
+    try, app.BtnROI_MuscleMRE.Enable = state; catch, end
+    try, app.BtnROI_FatMRE.Enable = state; catch, end
+    try, app.BtnClearMREROIs.Enable = state; catch, end
+    app.updateMREPlaybackButtonEnabled();
+end
+
+function showMREROIHotkeyHelp(app)
+    app.LblMREInfo.Text = sprintf(['MRE ROI workflow hotkeys:' char(10) ...
+        'Click a panel first. F = freehand on that panel, D = seed + auto on Magnitude' char(10) ...
+        'E = exclude, I = include, +/- = erosion (%d px)' char(10) ...
+        'A or Enter = accept ROI, Esc = cancel' char(10) ...
+        'Current panel: %s. ROI confidence LapC >= %.2f applies automatically.'], ...
+        app.AppData.MREROIErodePx, app.getMREAxisLabel(app.AppData.MRETargetAxis), app.getMREROIConfThresh(app.AppData.MREROIName));
+end
+
+function resetMREROIHotkeyHelp(app)
+    app.LblMREInfo.Text = sprintf(['MRE ROI workflow:' char(10) ...
+        'Choose Liver, Spleen, Muscle, or Fat stiffness, then click a panel:' char(10) ...
+        'F = freehand on panel, D = seed + auto on Magnitude' char(10) ...
+        'E = exclude, I = include, +/- = erosion' char(10) ...
+        'A or Enter = accept, Esc = cancel' char(10) ...
+        'Use the Conf. fields under each organ button for ROI-specific LapC thresholds.']);
+end
+
+function handled = handleMREROIHotkey(app, event)
+    handled = false;
+    if ~app.isMREROIWorkflowActive()
+        return
+    end
+    handled = true;
+    key = lower(event.Key);
+    ch = '';
+    try
+        ch = lower(event.Character);
+    catch
+    end
+    if strcmp(ch, '+'), key = 'add'; end
+    if strcmp(ch, '-'), key = 'subtract'; end
+    switch key
+        case 'escape'
+            app.cancelMREROIWorkflow(true);
+            setStatus(app, 'MRE ROI workflow cancelled.');
+        case {'return','enter','a'}
+            app.acceptCurrentMREROI();
+        case 'f'
+            app.setCurrentMRETargetAxis(app.inferCurrentMRETargetAxis());
+            app.captureManualOuterMREROI();
+        case 'd'
+            app.setCurrentMRETargetAxis('mag');
+            app.captureSeedAutoMREROI();
+        case {'e','x'}
+            app.setCurrentMRETargetAxis(app.inferCurrentMRETargetAxis());
+            app.excludeFromCurrentMREROI();
+        case 'i'
+            app.setCurrentMRETargetAxis(app.inferCurrentMRETargetAxis());
+            app.includeIntoCurrentMREROI();
+        case 'add'
+            app.adjustCurrentMREROIErosion(+1);
+        case 'subtract'
+            app.adjustCurrentMREROIErosion(-1);
+        otherwise
+            handled = false;
+    end
+end
+
+function captureManualOuterMREROI(app)
+    if ~app.isMREROIWorkflowActive(), return; end
+    nR = size(app.AppData.MRE.M, 1);
+    nC = size(app.AppData.MRE.M, 2);
+    roiColor = mreROIColor(app.AppData.MREROIName);
+    axisKey = app.inferCurrentMRETargetAxis();
+    app.setCurrentMRETargetAxis(axisKey);
+    ax = app.getMREAxisByKey(axisKey);
+    setStatus(app, sprintf('Draw a freehand outer %s contour on %s. Double-click to finish.', lower(app.getMREROIOrganLabel()), app.getMREAxisLabel(axisKey)));
+    app.AppData.MREROIDrawing = true;
+    app.updateMREPlaybackButtonEnabled();
+    drawCleanup = onCleanup(@()app.finishMREROIDrawing());
+    mask = captureFreehandMask(app, ax, nR, nC, roiColor);
+    clear drawCleanup;
+    if ~any(mask(:))
+        refreshMRE(app);
+        app.showMREROIHotkeyHelp();
+        setStatus(app, 'Freehand contour was empty. Press F to try again or Esc to cancel.');
+        return
+    end
+    app.AppData.MREROIOuterMask = cleanOuterMask(app, mask);
+    app.recomputeCurrentMREROI(true);
+end
+
+function captureSeedAutoMREROI(app)
+    if ~app.isMREROIWorkflowActive(), return; end
+    sl = app.AppData.MREROISlice;
+    nR = size(app.AppData.MRE.M, 1);
+    nC = size(app.AppData.MRE.M, 2);
+    roiColor = mreROIColor(app.AppData.MREROIName);
+    app.setCurrentMRETargetAxis('mag');
+    Iseg = getMREMagnitudeForROI(app, sl);
+    if isempty(Iseg)
+        setStatus(app, 'Could not prepare the magnitude image for seed-based ROI.');
+        return
+    end
+    setStatus(app, sprintf('Draw a seed circle inside the %s on Magnitude. Double-click to finish.', lower(app.getMREROIOrganLabel())));
+    app.AppData.MREROIDrawing = true;
+    app.updateMREPlaybackButtonEnabled();
+    drawCleanup = onCleanup(@()app.finishMREROIDrawing());
+    seedMask = captureSeedMask(app, app.AxMREMag, nR, nC, roiColor);
+    clear drawCleanup;
+    if ~any(seedMask(:))
+        refreshMRE(app);
+        app.showMREROIHotkeyHelp();
+        setStatus(app, 'Seed circle was empty. Press D to try again or F for freehand.');
+        return
+    end
+    outerMask = autoMaskFromSeedCircleApp(app, Iseg, seedMask);
+    outerMask = cleanOuterMask(app, outerMask);
+    if ~any(outerMask(:))
+        refreshMRE(app);
+        app.showMREROIHotkeyHelp();
+        setStatus(app, 'Automatic contour failed. Press D to retry or F for freehand.');
+        return
+    end
+    app.AppData.MREROIOuterMask = outerMask;
+    app.recomputeCurrentMREROI(true);
+end
+
+function adjustCurrentMREROIErosion(app, deltaPx)
+    if ~app.isMREROIWorkflowActive() || isempty(app.AppData.MREROIOuterMask)
+        setStatus(app, 'Press F or D first to create an outer contour before changing erosion.');
+        return
+    end
+    app.AppData.MREROIErodePx = max(0, round(app.AppData.MREROIErodePx + deltaPx));
+    app.recomputeCurrentMREROI(true);
+end
+
+function recomputeCurrentMREROI(app, doPreview)
+    if nargin < 2, doPreview = true; end
+    if ~app.isMREROIWorkflowActive(), return; end
+    outerMask = logical(app.AppData.MREROIOuterMask);
+    if isempty(outerMask) || ~any(outerMask(:))
+        refreshMRE(app);
+        app.showMREROIHotkeyHelp();
+        return
+    end
+    sl = app.AppData.MREROISlice;
+    confMask = getMREConfidenceMask(app, sl, [size(outerMask,1) size(outerMask,2)], app.AppData.MREROIName);
+    baseInner = erodeMaskInward(app, outerMask, app.AppData.MREROIErodePx);
+    finalMask = cleanMeasurementMask(app, baseInner & confMask);
+    app.AppData.MREROIBaseInnerMask = baseInner;
+    app.AppData.MREROIConfMask = confMask;
+    app.AppData.MREROIFinalMask = finalMask;
+    app.showMREROIHotkeyHelp();
+    if doPreview
+        refreshMRE(app);
+    end
+    if any(finalMask(:))
+        setStatus(app, sprintf('%s ROI preview ready on slice %d. E/I refine, +/- erosion=%d px, Enter to accept.', app.getMREROIOrganLabel(), sl, app.AppData.MREROIErodePx));
+    else
+        setStatus(app, sprintf('ROI became empty after %d px erosion and confidence %.2f. Press - to reduce erosion, lower the threshold, redraw with F/D, or press Enter/A to accept this slice as technical failure.', app.AppData.MREROIErodePx, app.getMREROIConfThresh(app.AppData.MREROIName)));
+    end
+end
+
+function excludeFromCurrentMREROI(app)
+    if ~app.isMREROIWorkflowActive() || isempty(app.AppData.MREROIFinalMask) || ~any(app.AppData.MREROIFinalMask(:))
+        setStatus(app, 'There is no measurement ROI to edit yet. Press F or D first.');
+        return
+    end
+    nR = size(app.AppData.MREROIFinalMask,1);
+    nC = size(app.AppData.MREROIFinalMask,2);
+    axisKey = app.inferCurrentMRETargetAxis();
+    app.setCurrentMRETargetAxis(axisKey);
+    ax = app.getMREAxisByKey(axisKey);
+    setStatus(app, sprintf('Draw a freehand region on %s to exclude from the measurement ROI.', app.getMREAxisLabel(axisKey)));
+    app.AppData.MREROIDrawing = true;
+    app.updateMREPlaybackButtonEnabled();
+    drawCleanup = onCleanup(@()app.finishMREROIDrawing());
+    delta = captureFreehandMask(app, ax, nR, nC, [1 0 1]);
+    clear drawCleanup;
+    if ~any(delta(:))
+        refreshMRE(app);
+        app.showMREROIHotkeyHelp();
+        return
+    end
+    newMask = cleanMeasurementMask(app, app.AppData.MREROIFinalMask & ~delta);
+    if ~any(newMask(:))
+        refreshMRE(app);
+        setStatus(app, 'That exclusion removed the entire ROI. The previous ROI was kept.');
+        return
+    end
+    app.AppData.MREROIFinalMask = newMask;
+    refreshMRE(app);
+    app.showMREROIHotkeyHelp();
+    setStatus(app, 'Region excluded from the measurement ROI.');
+end
+
+function includeIntoCurrentMREROI(app)
+    if ~app.isMREROIWorkflowActive() || isempty(app.AppData.MREROIOuterMask) || ~any(app.AppData.MREROIOuterMask(:))
+        setStatus(app, 'There is no outer contour yet. Press F or D first.');
+        return
+    end
+    nR = size(app.AppData.MREROIOuterMask,1);
+    nC = size(app.AppData.MREROIOuterMask,2);
+    axisKey = app.inferCurrentMRETargetAxis();
+    app.setCurrentMRETargetAxis(axisKey);
+    ax = app.getMREAxisByKey(axisKey);
+    setStatus(app, sprintf('Draw a freehand region on %s to add into the measurement ROI (disconnected islands allowed if confidence passes).', app.getMREAxisLabel(axisKey)));
+    app.AppData.MREROIDrawing = true;
+    app.updateMREPlaybackButtonEnabled();
+    drawCleanup = onCleanup(@()app.finishMREROIDrawing());
+    delta = captureFreehandMask(app, ax, nR, nC, mreROIColor(app.AppData.MREROIName));
+    clear drawCleanup;
+    if ~any(delta(:))
+        if ~isempty(app.AppData.MREROIFinalMask) && any(app.AppData.MREROIFinalMask(:))
+            refreshMRE(app);
+        end
+        app.showMREROIHotkeyHelp();
+        return
+    end
+    allowed = true(nR,nC);
+    if ~isempty(app.AppData.MREROIConfMask)
+        allowed = logical(app.AppData.MREROIConfMask);
+    end
+    baseMask = false(nR,nC);
+    if ~isempty(app.AppData.MREROIFinalMask)
+        baseMask = logical(app.AppData.MREROIFinalMask);
+    end
+    newMask = cleanMeasurementMask(app, baseMask | (delta & allowed));
+    if ~any(newMask(:))
+        setStatus(app, 'The added region did not produce a valid ROI inside the confidence mask.');
+        return
+    end
+    app.AppData.MREROIFinalMask = newMask;
+    refreshMRE(app);
+    app.showMREROIHotkeyHelp();
+    setStatus(app, 'Region added to the measurement ROI.');
+end
+
+function acceptCurrentMREROI(app)
+    if ~app.isMREROIWorkflowActive()
+        return
+    end
+    if isfield(app.AppData,'MREROIBusy') && app.AppData.MREROIBusy
+        return
+    end
+    try
+        app.AppData.MREPlaybackWasOnBeforeROI = app.AppData.MREPlaying || ...
+            (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer));
+    catch
+        app.AppData.MREPlaybackWasOnBeforeROI = false;
+    end
+    app.pauseMREPlaybackForROI();
+    app.AppData.MREROIBusy = true;
+    app.updateMREPlaybackButtonEnabled();
+    busyCleanup = onCleanup(@()app.clearMREROIBusy());
+
+    roiName = app.AppData.MREROIName;
+    sl = app.AppData.MREROISlice;
+    finalMask = app.AppData.MREROIFinalMask;
+
+    hasOuter = ~isempty(app.AppData.MREROIOuterMask) && any(app.AppData.MREROIOuterMask(:));
+    hasBaseInner = ~isempty(app.AppData.MREROIBaseInnerMask) && any(app.AppData.MREROIBaseInnerMask(:));
+    hasValid = ~isempty(finalMask) && any(finalMask(:));
+    hasAttempt = hasOuter || hasBaseInner || hasValid;
+
+    if ~hasValid
+        if ~hasAttempt
+            setStatus(app, 'There is no ROI attempt yet. Press F or D first, then Enter to accept.');
+            return
+        end
+        nR = 0; nC = 0;
+        try
+            if ~isempty(app.AppData.MREROIOuterMask)
+                [nR, nC] = size(app.AppData.MREROIOuterMask);
+            elseif ~isempty(app.AppData.MREROIBaseInnerMask)
+                [nR, nC] = size(app.AppData.MREROIBaseInnerMask);
+            end
+        catch
+            nR = 0; nC = 0;
+        end
+        if nR <= 0 || nC <= 0
+            try
+                nR = size(app.AppData.MRE.M, 1);
+                nC = size(app.AppData.MRE.M, 2);
+            catch
+                nR = 256; nC = 256;
+            end
+        end
+        app.storeEmptyMREROISlice(roiName, sl, nR, nC);
+        app.cancelMREROIWorkflow(false);
+        try
+            app.updateMREAggregateStats(roiName);
+        catch ME
+            refreshMRE(app);
+            setStatus(app, sprintf('%s finalized on slice %d with no valid pixels, but the stats update failed: %s', app.getMREROIOrganLabel(roiName), sl, strtrim(ME.message)));
+            return
+        end
+        refreshMRE(app);
+        setStatus(app, sprintf('%s finalized on slice %d with no valid pixels after confidence masking (technical failure recorded; no ROI output stored).', app.getMREROIOrganLabel(roiName), sl));
+        return
+    end
+
+    nR = size(finalMask,1);
+    nC = size(finalMask,2);
+    storeROI(app, roiName, sl, finalMask, nR, nC);
+    app.cancelMREROIWorkflow(false);
+    try
+        computeMREROIStats(app, roiName, finalMask, sl);
+    catch ME
+        refreshMRE(app);
+        setStatus(app, sprintf('%s ROI saved on slice %d, but the stats update failed: %s', app.getMREROIOrganLabel(roiName), sl, strtrim(ME.message)));
+        return
+    end
+    refreshMRE(app);
+    setStatus(app, sprintf('%s ROI saved on slice %d.', app.getMREROIOrganLabel(roiName), sl));
+end
+
+function cancelMREROIWorkflow(app, doRefresh)
+    if nargin < 2, doRefresh = true; end
+    if ~isfield(app.AppData,'MREROIActive')
+        return
+    end
+    app.clearMREROIPreviewOverlay();
+    app.AppData.MREROIActive = false;
+    app.AppData.MREROIName = '';
+    app.AppData.MREROISlice = NaN;
+    app.AppData.MREROIOuterMask = [];
+    app.AppData.MREROIBaseInnerMask = [];
+    app.AppData.MREROIConfMask = [];
+    app.AppData.MREROIFinalMask = [];
+    app.AppData.MREROIErodePx = 2;
+    app.AppData.MREROIDrawing = false;
+    app.AppData.MREROIBusy = false;
+    app.setMREROIButtonsEnabled(true);
+    app.updateMREPlaybackButtonEnabled();
+    app.resetMREROIHotkeyHelp();
+    if doRefresh && ~isempty(app.AppData.MRE)
+        refreshMRE(app);
+    end
+end
+
+function I = getMREMagnitudeForROI(app, sl)
+
+            I = [];
+            try
+                mre = app.AppData.MRE;
+                nZ = size(mre.M, 3);
+                sl = max(1, min(sl, nZ));
+                if ndims(mre.M) >= 4
+                    I = mean(double(mre.M(:,:,sl,:)), 4, 'omitnan');
+                else
+                    I = double(mre.M(:,:,sl));
+                end
+            catch
+                I = [];
+            end
+        end
+
+        function seedMask = captureSeedMask(app, ax, nR, nC, seedColor)
+            seedMask = false(nR, nC);
+            hSeed = [];
+            try
+                hSeed = drawcircle(ax, 'LineWidth', 1.6, 'Color', seedColor);
+            catch
+                try
+                    hSeed = drawellipse(ax, 'LineWidth', 1.6, 'Color', seedColor);
+                catch
+                    uialert(app.UIFigure, 'drawcircle/drawellipse is not available in this MATLAB installation.', 'Seed Tool');
+                    return
+                end
+            end
+            if isempty(hSeed) || ~isvalid(hSeed), return; end
+            try
+                if isprop(hSeed,'Center') && isprop(hSeed,'Radius')
+                    cx = hSeed.Center(1);
+                    cy = hSeed.Center(2);
+                    rr = hSeed.Radius;
+                    seedMask = circleMaskFromGeom(cx, cy, rr, nR, nC);
+                elseif isprop(hSeed,'Center') && isprop(hSeed,'SemiAxes')
+                    cx = hSeed.Center(1);
+                    cy = hSeed.Center(2);
+                    rr = mean(hSeed.SemiAxes);
+                    seedMask = circleMaskFromGeom(cx, cy, rr, nR, nC);
+                else
+                    seedMask = createMask(hSeed);
+                end
+            catch
+                try
+                    seedMask = createMask(hSeed);
+                catch
+                end
+            end
+            try, delete(hSeed); catch, end
+            seedMask = logical(seedMask);
+        end
+
+        function mask = captureFreehandMask(app, ax, nR, nC, roiColor)
+            mask = false(nR, nC);
+            try
+                if exist('drawfreehand','file') == 2
+                    h = drawfreehand(ax, 'Color', roiColor, 'LineWidth', 1.8, 'FaceAlpha', 0.08);
+                else
+                    h = drawpolygon(ax, 'Color', roiColor, 'LineWidth', 1.8, 'FaceAlpha', 0.08);
+                end
+            catch
                 return
             end
-            mre = app.AppData.MRE;
-            sl  = app.AppData.MRESlice;
-            nR  = size(mre.M, 1);
-            nC  = size(mre.M, 2);
-            roiColor = mreROIColor(roiName);
-
-            % ── Stage 1: outer organ contour on Magnitude ──────────────
-            setStatus(app, sprintf('Stage 1: Draw outer %s boundary on Magnitude. Double-click to confirm.', roiName));
+            if isempty(h) || ~isvalid(h), return; end
             try
-                h1 = drawpolygon(app.AxMREMag, ...
-                    'Color', roiColor, 'LineWidth', 2, 'FaceAlpha', 0.15);
-                wait(h1);
-                if ~isvalid(h1) || isempty(h1.Position)
-                    setStatus(app, 'ROI cancelled.'); return
-                end
-                outerPts = h1.Position;
-                delete(h1);
+                pos = h.Position;
             catch
-                setStatus(app, 'ROI cancelled.'); return
+                pos = [];
             end
-            if size(outerPts, 1) < 3
-                setStatus(app, 'Too few points — cancelled.'); return
-            end
+            try, delete(h); catch, end
+            if isempty(pos) || size(pos,1) < 3, return; end
+            x = min(max(pos(:,1), 1), nC);
+            y = min(max(pos(:,2), 1), nR);
+            mask = poly2mask(x, y, nR, nC);
+            mask = logical(mask);
+        end
 
-            % Create outer mask
-            outerMask = poly2mask(outerPts(:,1)', outerPts(:,2)', nR, nC);
-            if ~any(outerMask(:))
-                setStatus(app, 'Empty outer ROI — cancelled.'); return
-            end
-
-            % ── Stage 2: erode to inner stiffness ROI ──────────────────
-            erodePx = 3;
-            se = strel('disk', erodePx);
-            innerMask = imerode(outerMask, se);
-            if ~any(innerMask(:)), innerMask = outerMask; end
-
-            % Overlay eroded ROI on Stiffness panel for editing
-            refreshMRE(app);
-            setStatus(app, sprintf('Stage 2: Adjust inner stiffness ROI on Stiffness panel. Double-click to confirm.'));
+        function choice = askROIChoice(app, msg, options, defaultOption, cancelOption)
+            choice = cancelOption;
             try
-                innerPts = mreROIMaskToPolygon(innerMask);
-                h2 = drawpolygon(app.AxMREStiff, ...
-                    'Position', innerPts, ...
-                    'Color', roiColor, 'LineWidth', 2, 'FaceAlpha', 0.15);
-                wait(h2);
-                if isvalid(h2) && ~isempty(h2.Position)
-                    p2 = h2.Position;
-                    innerMask = poly2mask(p2(:,1)', p2(:,2)', nR, nC);
+                choice = uiconfirm(app.UIFigure, msg, 'MRE ROI Workflow', ...
+                    'Options', options, 'DefaultOption', defaultOption, ...
+                    'CancelOption', cancelOption, 'Icon', 'question');
+            catch
+                if ~isempty(defaultOption)
+                    choice = defaultOption;
                 end
-                if isvalid(h2), delete(h2); end
-            catch ME
-                warning('MRE:innerROI', '%s', ME.message);
+            end
+        end
+
+        function previewTempMREROI(app, mask, roiName, sl)
+            if isempty(app), return; end
+            try
+                if ~isvalid(app), return; end
+            catch
+                return
+            end
+            app.clearMREROIPreviewOverlay();
+            if ~any(mask(:)), return; end
+            freezeKey = '';
+            if isfield(app.AppData,'MREROIDrawing') && app.AppData.MREROIDrawing
+                freezeKey = app.AppData.MRETargetAxis;
+            end
+            B = bwboundaries(mask);
+            holeMask = getMaskHoleMask(mask);
+            axesList = {'mag', app.AxMREMag; 'raw', app.AxMRERawWave; 'proc', app.AxMREWave; 'stiff', app.AxMREStiff};
+            for ii = 1:size(axesList,1)
+                if strcmp(freezeKey, axesList{ii,1}), continue; end
+                ax = axesList{ii,2};
+                hold(ax, 'on');
+                for b = 1:numel(B)
+                    pts = B{b};
+                    hp = plot(ax, pts(:,2), pts(:,1), '-', 'Color', mreROIColor(roiName), 'LineWidth', 2.0);
+                    try; hp.Tag = 'MREROIPreview'; hp.HitTest='off'; hp.PickableParts='none'; catch; end
+                end
+                if any(holeMask(:))
+                    hh = overlayCheckerMask(ax, holeMask, 0.34);
+                    try; hh.Tag = 'MREROIPreview'; hh.HitTest='off'; hh.PickableParts='none'; catch; end
+                end
+                hold(ax, 'off');
+            end
+            try
+                drawnow limitrate nocallbacks;
+            catch
+                drawnow limitrate;
+            end
+        end
+
+        function clearMREROIPreviewOverlay(app, skipAxisKey)
+            if nargin < 2, skipAxisKey = ''; end
+            axesToClear = {'mag', app.AxMREMag; 'raw', app.AxMRERawWave; 'proc', app.AxMREWave; 'stiff', app.AxMREStiff};
+            for ii = 1:size(axesToClear,1)
+                if strcmp(skipAxisKey, axesToClear{ii,1}), continue; end
+                ax = axesToClear{ii,2};
+                try
+                    if isempty(ax) || ~isvalid(ax), continue; end
+                    hPrev = findobj(ax.Children, 'flat', 'Tag', 'MREROIPreview');
+                    if ~isempty(hPrev)
+                        delete(hPrev);
+                    end
+                catch
+                end
+            end
+        end
+
+        function clearMRERefreshOverlay(app, skipAxisKey)
+            if nargin < 2, skipAxisKey = ''; end
+            axesToClear = {'mag', app.AxMREMag; 'raw', app.AxMRERawWave; 'proc', app.AxMREWave; 'stiff', app.AxMREStiff};
+            for ii = 1:size(axesToClear,1)
+                if strcmp(skipAxisKey, axesToClear{ii,1}), continue; end
+                ax = axesToClear{ii,2};
+                try
+                    if isempty(ax) || ~isvalid(ax), continue; end
+                    hPrev = findobj(ax.Children, 'flat', 'Tag', 'MRERefreshOverlay');
+                    if ~isempty(hPrev)
+                        delete(hPrev);
+                    end
+                catch
+                end
+            end
+        end
+
+        function goodMask = getMREConfidenceMask(app, sl, outSize, roiName)
+            if nargin < 4 || isempty(outSize)
+                outSize = [size(app.AppData.MRE.M,1), size(app.AppData.MRE.M,2)];
+            end
+            if nargin < 5
+                roiName = '';
+            end
+            goodMask = true(outSize);
+            thr = app.getMREROIConfThresh(roiName);
+            try
+                mre = app.AppData.MRE;
+                if isfield(mre,'LapC') && ~isempty(mre.LapC)
+                    sl = max(1, min(sl, size(mre.LapC, 3)));
+                    LapC = double(squeeze(mre.LapC(:,:,sl)));
+                    if ~isequal(size(LapC), outSize)
+                        LapC = imresize(LapC, outSize, 'nearest');
+                    end
+                    goodMask = LapC >= thr;
+                end
+            catch
+            end
+            goodMask = logical(goodMask);
+        end
+
+        function mask = erodeMaskInward(app, maskIn, erodePx)
+            mask = logical(maskIn);
+            if nargin < 3 || isempty(erodePx), erodePx = 2; end
+            if ~any(mask(:)), return; end
+            try
+                se = strel('disk', erodePx, 0);
+            catch
+                se = strel('disk', erodePx);
+            end
+            m2 = imerode(mask, se);
+            if any(m2(:))
+                mask = m2;
+            end
+        end
+
+        function mask = cleanOuterMask(app, maskIn)
+            mask = logical(maskIn);
+            if ~any(mask(:)), return; end
+            try
+                mask = imfill(mask, 'holes');
+            catch
+            end
+            try
+                mask = bwareaopen(mask, 100);
+            catch
+            end
+            try
+                if any(mask(:)), mask = bwareafilt(mask, 1); end
+            catch
+            end
+        end
+
+        function mask = cleanMeasurementMask(app, maskIn)
+            mask = logical(maskIn);
+            if ~any(mask(:)), return; end
+            try
+                mask = bwareaopen(mask, 12);
+            catch
+            end
+        end
+
+        function mask = autoMaskFromSeedCircleApp(app, I, seedMask)
+            mask = false(size(I));
+            if isempty(I) || ~any(seedMask(:)), return; end
+            I = double(I);
+            I(~isfinite(I)) = 0;
+            loI = prctile(I(:), 1);
+            hiI = prctile(I(:), 99);
+            if ~isfinite(loI) || ~isfinite(hiI) || hiI <= loI
+                I = mat2gray(I);
+            else
+                I = (I - loI) ./ max(eps, (hiI - loI));
+                I = min(max(I, 0), 1);
             end
 
-            % ── Store and compute stats ─────────────────────────────────
-            storeROI(app, roiName, sl, outerMask, nR, nC);
-            computeMREROIStats(app, roiName, innerMask, sl);
-            refreshMRE(app);
-            setStatus(app, sprintf('%s ROI placed on slice %d.', roiName, sl));
+            seedVals = I(seedMask);
+            seedVals = seedVals(isfinite(seedVals));
+            if numel(seedVals) < 20
+                return;
+            end
+
+            lo0 = prctile(seedVals, 10);
+            hi0 = prctile(seedVals, 90);
+            w0  = hi0 - lo0;
+            if ~isfinite(w0) || w0 <= 0
+                w0 = 0.05;
+            end
+
+            minA = 200;
+            maxA = 0.60 * numel(I);
+            best = false(size(I));
+            bestScore = -inf;
+            expandList = [0.20 0.35 0.50 0.75 1.00];
+
+            for ex = expandList
+                lo = max(0, lo0 - ex*w0 - 0.02);
+                hi = min(1, hi0 + ex*w0 + 0.02);
+                cand = (I >= lo) & (I <= hi);
+                try, cand = imfill(cand, 'holes'); catch, end
+                try, cand = bwareaopen(cand, 100); catch, end
+                try
+                    cand = imclose(cand, strel('disk', 2, 0));
+                catch
+                    try, cand = imclose(cand, strel('disk', 2)); catch, end
+                end
+
+                CC = bwconncomp(cand, 8);
+                if CC.NumObjects < 1
+                    continue;
+                end
+
+                ov = zeros(CC.NumObjects, 1);
+                sz = zeros(CC.NumObjects, 1);
+                for iCC = 1:CC.NumObjects
+                    pix = CC.PixelIdxList{iCC};
+                    ov(iCC) = nnz(seedMask(pix));
+                    sz(iCC) = numel(pix);
+                end
+
+                [ovBest, idx] = max(ov);
+                if ovBest == 0
+                    [~, idx] = max(sz);
+                    ovBest = 0;
+                end
+
+                m = false(size(I));
+                m(CC.PixelIdxList{idx}) = true;
+                try, m = imfill(m, 'holes'); catch, end
+                a = nnz(m);
+                if a < minA || a > maxA
+                    score = ovBest - 1e6;
+                else
+                    score = ovBest - 0.001*a;
+                end
+
+                if score > bestScore
+                    bestScore = score;
+                    best = m;
+                end
+
+                if ovBest > 0 && a >= minA && a <= maxA
+                    mask = m;
+                    return
+                end
+            end
+
+            mask = best;
+            try
+                if any(mask(:)), mask = bwareafilt(mask, 1); end
+            catch
+            end
         end
 
         function clearMRESlice(app)
             sl = app.AppData.MRESlice;
+            if isfield(app.AppData,'MREPlaying') && app.AppData.MREPlaying
+                app.stopMREPlayback();
+            end
             app.AppData.ROIs.LiverMRE.Slices  = removeSlice(app.AppData.ROIs.LiverMRE.Slices,  sl);
             app.AppData.ROIs.SpleenMRE.Slices = removeSlice(app.AppData.ROIs.SpleenMRE.Slices, sl);
+            app.AppData.ROIs.MuscleMRE.Slices = removeSlice(app.AppData.ROIs.MuscleMRE.Slices, sl);
+            app.AppData.ROIs.FatMRE.Slices    = removeSlice(app.AppData.ROIs.FatMRE.Slices, sl);
+            app.updateAllMREStats();
             refreshMRE(app);
             setStatus(app,sprintf('MRE ROIs cleared for slice %d.',sl));
         end
@@ -1279,7 +2308,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             end
         end
 
-        function setStiffScale(app, newClim)
+        
+function onConfThreshChange(app, src)
+    app.AppData.ConfThresh = min(1, max(0, src.Value));
+    if src.Value ~= app.AppData.ConfThresh
+        src.Value = app.AppData.ConfThresh;
+    end
+    if ~isempty(app.AppData.MRE)
+        refreshMRE(app);
+    end
+end
+
+function setStiffScale(app, newClim)
             app.AppData.StiffCLim = newClim;
             setStatus(app,sprintf('Stiffness scale: %.0f–%.0f kPa', newClim(1), newClim(2)));
             if ~isempty(app.AppData.MRE)
@@ -1323,7 +2363,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
         function showAbout(~)
             msgbox(sprintf(['HepatosplenicMRE Platform  v2.0\n\n' ...
-                'Mayo Clinic R01 Collaboration\nPI: Meng Yin, PhD']), ...
+                'Mayo Clinic\nPI: Meng Yin, PhD']), ...
                 'About','help');
         end
         function onStudySelect(app,event)
@@ -1331,7 +2371,24 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             if ~isempty(n), setStatus(app,sprintf('Selected: %s',n.Text)); end
         end
         function onTabChange(app,~)
-            % Tab changed — could trigger data load if needed
+            try
+                activeTab = app.ImageTabGroup.SelectedTab;
+            catch
+                return
+            end
+            if isequal(activeTab, app.MRETab)
+                if ~isempty(app.AppData.MRE)
+                    refreshMRE(app);
+                end
+            else
+                try
+                    if app.AppData.MREPlaying || (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer))
+                        app.stopMREPlayback();
+                    end
+                catch
+                    app.stopMREPlayback();
+                end
+            end
         end
         function activateTab(app, which)
             tabs = struct('loc',app.LocTab,'dixon',app.DixonTab, ...
@@ -1340,15 +2397,117 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 app.ImageTabGroup.SelectedTab = tabs.(which);
             end
         end
-        function onClose(app)
-            % Stop any running timer
-            if ~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer)
-                stop(app.AppData.MRETimer);
-                delete(app.AppData.MRETimer);
+
+        
+function onKeyPress(app, event)
+    if isempty(app)
+        return
+    end
+    try
+        if ~isvalid(app)
+            return
+        end
+    catch
+        return
+    end
+    if app.handleMREROIHotkey(event)
+        return
+    end
+    if app.shouldBypassGlobalHotkeys()
+        return
+    end
+
+    key = lower(event.Key);
+    delta = 0;
+    switch key
+        case {'uparrow','rightarrow','pagedown'}
+            delta = 1;
+        case {'downarrow','leftarrow','pageup'}
+            delta = -1;
+        otherwise
+            return
+    end
+
+    try
+        activeTab = app.ImageTabGroup.SelectedTab;
+    catch
+        return
+    end
+
+    if isequal(activeTab, app.MRETab) && ~isempty(app.AppData.MRE)
+        app.nudgeMRESlice(delta);
+    elseif isequal(activeTab, app.DixonTab) && ~isempty(app.AppData.Dixon)
+        app.nudgeDixonSlice(delta);
+    end
+end
+
+function tf = shouldBypassGlobalHotkeys(app)
+            tf = false;
+            try
+                obj = app.UIFigure.CurrentObject;
+                tf = isa(obj,'matlab.ui.control.NumericEditField') || ...
+                     isa(obj,'matlab.ui.control.EditField') || ...
+                     isa(obj,'matlab.ui.control.TextArea') || ...
+                     isa(obj,'matlab.ui.control.DropDown');
+            catch
+                tf = false;
             end
-            sel = uiconfirm(app.UIFigure,'Close HepatosplenicMRE?','Exit', ...
-                'Options',{'Close','Cancel'},'DefaultOption','Cancel','CancelOption','Cancel');
-            if strcmp(sel,'Close'), delete(app.UIFigure); end
+        end
+
+        function nudgeMRESlice(app, delta)
+            if app.isMREROIWorkflowActive()
+                setStatus(app, 'Finish the active MRE ROI with A/Enter or cancel with Esc before changing slices.');
+                return
+            end
+            if isempty(app.AppData.MRE) || delta == 0
+                return
+            end
+            nZ = [];
+            if isfield(app.AppData.MRE,'S') && ~isempty(app.AppData.MRE.S)
+                nZ = size(app.AppData.MRE.S,3);
+            elseif isfield(app.AppData.MRE,'W') && ~isempty(app.AppData.MRE.W)
+                nZ = size(app.AppData.MRE.W,3);
+            elseif isfield(app.AppData.MRE,'M') && ~isempty(app.AppData.MRE.M)
+                nZ = size(app.AppData.MRE.M,3);
+            end
+            if isempty(nZ) || nZ < 1
+                return
+            end
+            sl = max(1, min(nZ, round(app.AppData.MRESlice + delta)));
+            app.AppData.MRESlice = sl;
+            try, app.SldrMRE.Value = sl; catch, end
+            app.LblMRESlice.Text = sprintf('%d/%d', sl, nZ);
+            refreshMRE(app);
+        end
+
+        function nudgeDixonSlice(app, delta)
+            if isempty(app.AppData.Dixon) || delta == 0
+                return
+            end
+            nZ = max(1, app.AppData.Dixon.nSlices);
+            sl = max(1, min(nZ, round(app.AppData.DixonSlice + delta)));
+            app.AppData.DixonSlice = sl;
+            try, app.SldrDixon.Value = sl; catch, end
+            app.LblDixonSlice.Text = sprintf('%d/%d', sl, nZ);
+            refreshDixon(app);
+        end
+
+        function onClose(app)
+            % Close directly to avoid modal-confirm hangs in some MATLAB versions.
+            try
+                if ~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer)
+                    stop(app.AppData.MRETimer);
+                    delete(app.AppData.MRETimer);
+                    app.AppData.MRETimer = [];
+                end
+            catch
+            end
+            try
+                if ~isempty(app.UIFigure) && isvalid(app.UIFigure)
+                    delete(app.UIFigure);
+                end
+            catch
+            end
         end
     end
 
@@ -1356,6 +2515,59 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
     %  PRIVATE DISPLAY HELPERS
     % =====================================================================
     methods (Access = private)
+
+        function mre = normalizeMREStruct(app, mre) %#ok<INUSD>
+            if isempty(mre) || ~isstruct(mre)
+                return
+            end
+            expSlices = [];
+            if isfield(mre,'M') && ~isempty(mre.M) && ndims(mre.M) >= 3
+                expSlices(end+1) = size(mre.M,3); %#ok<AGROW>
+            end
+            if isfield(mre,'S') && ~isempty(mre.S) && ndims(mre.S) >= 3
+                expSlices(end+1) = size(mre.S,3); %#ok<AGROW>
+            end
+            if isfield(mre,'LapC') && ~isempty(mre.LapC) && ndims(mre.LapC) >= 3
+                expSlices(end+1) = size(mre.LapC,3); %#ok<AGROW>
+            end
+            if isempty(expSlices)
+                expSlice = [];
+            else
+                expSlice = max(expSlices);
+            end
+            if isfield(mre,'W_raw') && ~isempty(mre.W_raw) && ndims(mre.W_raw) == 4
+                sz = size(mre.W_raw);
+                doSwap = false;
+                if ~isempty(expSlice)
+                    if sz(3) ~= expSlice && sz(4) == expSlice
+                        doSwap = true;
+                    end
+                else
+                    if sz(3) <= 8 && sz(4) > 8
+                        doSwap = true;
+                    end
+                end
+                if doSwap
+                    mre.W_raw = permute(mre.W_raw, [1 2 4 3]);
+                end
+            end
+            if isfield(mre,'M_raw') && ~isempty(mre.M_raw) && ndims(mre.M_raw) == 4
+                sz = size(mre.M_raw);
+                doSwap = false;
+                if ~isempty(expSlice)
+                    if sz(3) ~= expSlice && sz(4) == expSlice
+                        doSwap = true;
+                    end
+                else
+                    if sz(3) <= 8 && sz(4) > 8
+                        doSwap = true;
+                    end
+                end
+                if doSwap
+                    mre.M_raw = permute(mre.M_raw, [1 2 4 3]);
+                end
+            end
+        end
 
         function populateLocalizerTab(app)
             loc = app.AppData.Localizer;
@@ -1395,7 +2607,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             nC = size(img,2);
             if ~isnan(app.AppData.L1_CorRow)
                 z1 = corRowToZmm(app, app.AppData.L1_CorRow);
-                lbl1 = ['L1 ' siCoordStr(z1)];
+                lbl1 = ['T12 ' siCoordStr(z1)];
                 hl = plot(app.AxLocCoronal,[1 nC],[app.AppData.L1_CorRow app.AppData.L1_CorRow], ...
                     '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
                 ht = text(app.AxLocCoronal, nC-2, app.AppData.L1_CorRow-3, lbl1, ...
@@ -1405,7 +2617,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             end
             if ~isnan(app.AppData.L2_CorRow)
                 z2 = corRowToZmm(app, app.AppData.L2_CorRow);
-                lbl2 = ['L2 ' siCoordStr(z2)];
+                lbl2 = ['L3 ' siCoordStr(z2)];
                 hl = plot(app.AxLocCoronal,[1 nC],[app.AppData.L2_CorRow app.AppData.L2_CorRow], ...
                     '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
                 ht = text(app.AxLocCoronal, nC-2, app.AppData.L2_CorRow-3, lbl2, ...
@@ -1431,7 +2643,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             l2_sagRow = corRowToSagRow(app, app.AppData.L2_CorRow, sl);
             if ~isnan(l1_sagRow)
                 z1 = corRowToZmm(app, app.AppData.L1_CorRow);
-                lbl1 = ['L1 ' siCoordStr(z1)];
+                lbl1 = ['T12 ' siCoordStr(z1)];
                 hl = plot(app.AxLocSagittal,[1 nC],[l1_sagRow l1_sagRow], ...
                     '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
                 ht = text(app.AxLocSagittal, nC-2, l1_sagRow-3, lbl1, ...
@@ -1441,7 +2653,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             end
             if ~isnan(l2_sagRow)
                 z2 = corRowToZmm(app, app.AppData.L2_CorRow);
-                lbl2 = ['L2 ' siCoordStr(z2)];
+                lbl2 = ['L3 ' siCoordStr(z2)];
                 hl = plot(app.AxLocSagittal,[1 nC],[l2_sagRow l2_sagRow], ...
                     '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
                 ht = text(app.AxLocSagittal, nC-2, l2_sagRow-3, lbl2, ...
@@ -1467,30 +2679,15 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblDixonSlice.Text = sprintf('%d/%d', dixMid, nZ);
             app.LblDixonInfo.Text  = sprintf('Pixel: %.2fmm  Slice: %.1fmm', ...
                 dix.PixelSpacing_mm(1), dix.SliceThickness_mm);
-            % Auto-select best available contrast (PDFF preferred)
-            if ~isempty(dix.PDFF)
+            try
                 app.DdlDixonContrast.Value = 'PDFF';
-            elseif ~isempty(dix.Water)
-                app.DdlDixonContrast.Value = 'Water';
-            elseif ~isempty(dix.Fat)
-                app.DdlDixonContrast.Value = 'Fat';
+                app.DdlDixonContrast.Visible = 'off';
+            catch
             end
-            app.AppData.DixonContrast = app.DdlDixonContrast.Value;
-            % Reset scale controls to defaults for this contrast
-            switch app.AppData.DixonContrast
-                case 'PDFF'
-                    app.DdlDixonCmap.Value = 'hot';
-                    app.EdtDixonMin.Value  = 0;
-                    app.EdtDixonMax.Value  = 100;
-                case 'T2star'
-                    app.DdlDixonCmap.Value = 'turbo';
-                    app.EdtDixonMin.Value  = 0;
-                    app.EdtDixonMax.Value  = 50;
-                otherwise
-                    app.DdlDixonCmap.Value = 'gray';
-                    app.EdtDixonMin.Value  = 0;
-                    app.EdtDixonMax.Value  = 0;   % 0,0 → auto in refreshDixon
-            end
+            app.AppData.DixonContrast = 'PDFF';
+            app.DdlDixonCmap.Value = 'hot';
+            app.EdtDixonMin.Value  = 0;
+            app.EdtDixonMax.Value  = 100;
             app.AppData.DixonCmap    = app.DdlDixonCmap.Value;
             app.AppData.DixonClimMin = app.EdtDixonMin.Value;
             app.AppData.DixonClimMax = app.EdtDixonMax.Value;
@@ -1498,25 +2695,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function onDixonContrastChange(app)
-            app.AppData.DixonContrast = app.DdlDixonContrast.Value;
-            % Reset colormap + scale to sensible defaults for this contrast
-            switch app.AppData.DixonContrast
-                case 'PDFF'
-                    app.DdlDixonCmap.Value = 'hot';
-                    app.EdtDixonMin.Value  = 0;
-                    app.EdtDixonMax.Value  = 100;
-                case 'T2star'
-                    app.DdlDixonCmap.Value = 'turbo';
-                    app.EdtDixonMin.Value  = 0;
-                    app.EdtDixonMax.Value  = 50;
-                otherwise
-                    app.DdlDixonCmap.Value = 'gray';
-                    app.EdtDixonMin.Value  = 0;
-                    app.EdtDixonMax.Value  = 0;   % 0→0 triggers auto-range in refreshDixon
-            end
-            app.AppData.DixonCmap    = app.DdlDixonCmap.Value;
-            app.AppData.DixonClimMin = app.EdtDixonMin.Value;
-            app.AppData.DixonClimMax = app.EdtDixonMax.Value;
+            % Three-panel Dixon view is fixed to PDFF / In-phase / Out-of-phase.
+            app.AppData.DixonContrast = 'PDFF';
+            try, app.DdlDixonContrast.Value = 'PDFF'; catch, end
             refreshDixon(app);
         end
 
@@ -1528,12 +2709,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function onDixonAutoScale(app)
-            % Set min/max to the actual data range of current slice
+            % Auto-scale applies to the PDFF panel only.
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
             sl  = app.AppData.DixonSlice;
-            contrast = app.AppData.DixonContrast;
-            vol = dixonVolume(dix, contrast);
+            vol = dixonPreferredDisplayVolume(dix, 'PDFF');
             if isempty(vol), return; end
             img = double(vol(:,:, min(sl, size(vol,3))));
             lo = min(img(:)); hi = max(img(:));
@@ -1553,151 +2733,237 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             sl  = max(1, min(nZ, sl));
             app.LblDixonSlice.Text = sprintf('%d/%d', sl, nZ);
 
-            % Select image volume based on chosen contrast
-            contrast = app.AppData.DixonContrast;
-            vol = dixonVolume(dix, contrast);
+            pdffVol = dixonPreferredDisplayVolume(dix, 'PDFF');
+            ipVol   = dixonPreferredDisplayVolume(dix, 'InPhase');
+            opVol   = dixonPreferredDisplayVolume(dix, 'OutPhase');
 
-            ax = app.AxDixon;
-            if isempty(vol)
-                title(ax, sprintf('%s — not available', contrast), ...
-                    'FontSize',12,'Color',[0.7 0.4 0.2],'FontWeight','normal');
-                return
-            end
-
-            img = double(vol(:,:, min(sl, size(vol,3))));
-            app.AppData.DispDixon = img;
-            imagesc(ax, img);
-
-            % Apply colormap (support reversed variants like hot_r, gray_r)
-            cmapName = app.AppData.DixonCmap;
-            if endsWith(cmapName, '_r')
-                baseName = cmapName(1:end-2);
-                try, cmapData = flip(feval(baseName, 256), 1); catch, cmapData = flip(gray(256),1); end
-                colormap(ax, cmapData);
+            if ~isempty(pdffVol)
+                app.AppData.DispDixon = double(pdffVol(:,:, min(sl, size(pdffVol,3))));
+            elseif ~isempty(ipVol)
+                app.AppData.DispDixon = double(ipVol(:,:, min(sl, size(ipVol,3))));
+            elseif ~isempty(opVol)
+                app.AppData.DispDixon = double(opVol(:,:, min(sl, size(opVol,3))));
             else
-                try, colormap(ax, cmapName); catch, colormap(ax, 'gray'); end
+                app.AppData.DispDixon = [];
             end
 
-            % Apply display range: user-set min/max, or auto if both are 0
-            lo = app.AppData.DixonClimMin;
-            hi = app.AppData.DixonClimMax;
-            if lo == 0 && hi == 0
-                % Auto-range from image data
-                lo = min(img(:)); hi = max(img(:));
-            end
-            if hi > lo
-                clim(ax, [lo hi]);
-            end
-            axis(ax,'image');
-            ax.XTick=[]; ax.YTick=[];
-            title(ax, sprintf('%s   sl %d/%d', contrast, sl, nZ), ...
-                'FontSize',13,'Color',[0.78 0.78 0.78],'FontWeight','normal');
-
-            % Overlay L1/L2 slice markers
-            l12d = app.AppData.L12_Dixon;
-            if ~isempty(l12d) && isfield(l12d,'L1_sliceIdx') && ~isnan(l12d.L1_sliceIdx)
-                nC = size(img, 2);
-                hold(ax,'on');
-                if sl == round(l12d.L1_sliceIdx)
-                    plot(ax,[1 nC],[4 4],'--','Color',[0.95 0.60 0.10],'LineWidth',2);
-                    text(ax,4,12,'L1','Color',[0.95 0.60 0.10],'FontSize',13,'FontWeight','bold');
-                end
-                if sl == round(l12d.L2_sliceIdx)
-                    plot(ax,[1 nC],[4 4],'--','Color',[0.38 0.62 0.92],'LineWidth',2);
-                    text(ax,4,12,'L2','Color',[0.38 0.62 0.92],'FontSize',13,'FontWeight','bold');
-                end
-                hold(ax,'off');
-            end
+            renderDixonPanelAxes(app, app.AxDixonPDFF, pdffVol, sl, nZ, 'PDFF (%)', true);
+            renderDixonPanelAxes(app, app.AxDixonIP,   ipVol,   sl, nZ, 'In-phase', false);
+            renderDixonPanelAxes(app, app.AxDixonWater,opVol,   sl, nZ, 'Out-of-phase', false);
         end
 
         function populateMRETab(app)
             mre = app.AppData.MRE;
             if isempty(mre), return; end
-            % Use the consistent slice count across M, W, S
             nZM = size(mre.M, 3);
             nZW = size(mre.W, 3);
+            nZR = nZW;
+            if isfield(mre,'W_raw') && ~isempty(mre.W_raw)
+                nZR = size(mre.W_raw, 3);
+            end
             nZS = 1;
             if isfield(mre,'S') && ~isempty(mre.S), nZS = size(mre.S,3); end
-            nZ = max(1, max([nZM nZW nZS]));
+            nZ = max(1, max([nZM nZW nZR nZS]));
             mreMid = max(1, round(nZ/2));
-            app.SldrMRE.Limits = [1 max(nZ,2)];
-            app.SldrMRE.Value  = mreMid;
+            try
+                app.SldrMRE.Limits = [1 max(nZ,2)];
+                app.SldrMRE.Value  = mreMid;
+            catch
+            end
             app.AppData.MRESlice = mreMid;
             app.LblMRESlice.Text = sprintf('%d/%d', mreMid, nZ);
             refreshMRE(app);
         end
 
         function refreshMRE(app)
+            if isempty(app), return; end
+            try
+                if ~isvalid(app) || isempty(app.UIFigure) || ~isvalid(app.UIFigure)
+                    return
+                end
+            catch
+                return
+            end
+            if isfield(app.AppData,'MRERefreshBusy') && app.AppData.MRERefreshBusy
+                return
+            end
+            app.AppData.MRERefreshBusy = true;
+            refreshCleanup = onCleanup(@()app.clearMRERefreshBusy()); %#ok<NASGU>
+
+            freezeKey = '';
+            if app.isMREROIWorkflowActive() && isfield(app.AppData,'MREROIDrawing') && app.AppData.MREROIDrawing
+                freezeKey = app.AppData.MRETargetAxis;
+            end
+            app.clearMRERefreshOverlay(freezeKey);
+            app.clearMREROIPreviewOverlay(freezeKey);
+
             mre = app.AppData.MRE;
             if isempty(mre) || ~isfield(mre,'M'), return; end
 
-            % Determine valid slice index against each volume independently
-            nZM = size(mre.M,3); nZW = size(mre.W,3);
-            nZS = 1; if isfield(mre,'S')&&~isempty(mre.S), nZS=size(mre.S,3); end
-            nZL = 1; if isfield(mre,'LapC')&&~isempty(mre.LapC), nZL=size(mre.LapC,3); end
-            sl  = max(1, app.AppData.MRESlice);
-            ph  = max(1, min(size(mre.W,4), app.AppData.MREPhase));
-            nPh = size(mre.W, 4);
+            nZM = size(mre.M,3);
+            nZW = size(mre.W,3);
+            nZS = 1; if isfield(mre,'S') && ~isempty(mre.S), nZS = size(mre.S,3); end
+            nZL = 1; if isfield(mre,'LapC') && ~isempty(mre.LapC), nZL = size(mre.LapC,3); end
+            nZR = nZW;
+            if isfield(mre,'W_raw') && ~isempty(mre.W_raw), nZR = size(mre.W_raw,3); end
 
-            % Magnitude (squeeze to 2D — M may be [nR nC nZ] or [nR nC nZ 1])
-            Msl = double(squeeze(mre.M(:,:, min(sl,nZM), 1)));
-            showImg(app.AxMREMag, Msl, sprintf('Magnitude  sl %d/%d',sl,nZM));
+            sl = max(1, app.AppData.MRESlice);
+            slM = min(sl, max(1,nZM));
+            slW = min(sl, max(1,nZW));
+            slR = min(sl, max(1,nZR));
+            slS = min(sl, max(1,nZS));
+            slL = min(sl, max(1,nZL));
 
-            % Wave — symmetric awave colormap centred on 0
-            Wsl = double(mre.W(:,:, min(sl,nZW), ph));
-            imagesc(app.AxMREWave, Wsl);
-            colormap(app.AxMREWave, mreWaveCmap());
-            wMax = app.AppData.WaveMax;
-            if wMax <= 0, wMax = max(abs(Wsl(:))); end  % 0 = auto
-            if wMax > 0, clim(app.AxMREWave, [-wMax wMax]); end
-            axis(app.AxMREWave,'image');
-            app.AxMREWave.XTick=[]; app.AxMREWave.YTick=[];
-            title(app.AxMREWave,sprintf('Wave  sl %d  ph %d/%d',sl,ph,nPh), ...
-                'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+            nPhProc = max(1, size(mre.W,4));
+            phProc  = max(1, min(nPhProc, app.AppData.MREPhase));
 
-            % Stiffness with optional LapC mask
+            if isfield(mre,'W_raw') && ~isempty(mre.W_raw)
+                nPhRaw = max(1, size(mre.W_raw,4));
+                phRaw  = mapPhaseIndex(phProc, nPhProc, nPhRaw);
+                Wraw = double(squeeze(mre.W_raw(:,:,slR,phRaw)));
+            else
+                nPhRaw = nPhProc;
+                phRaw  = phProc;
+                Wraw   = double(squeeze(mre.W(:,:,slW,phProc)));
+            end
+
+            if isfield(mre,'M_raw') && ~isempty(mre.M_raw) && ndims(mre.M_raw) == 4
+                nZMr = size(mre.M_raw,3);
+                nPhMag = max(1, size(mre.M_raw,4));
+                phMag = mapPhaseIndex(phProc, nPhProc, nPhMag);
+                slMr = min(sl, max(1,nZMr));
+                Msl = double(squeeze(mre.M_raw(:,:,slMr,phMag)));
+                magTitle = sprintf('Magnitude  sl %d/%d  ph %d/%d', slMr, nZMr, phMag, nPhMag);
+            else
+                Msl = double(squeeze(mre.M(:,:,slM,1)));
+                magTitle = sprintf('Magnitude  sl %d/%d', slM, nZM);
+            end
+            if ~strcmp(freezeKey,'mag')
+                showNativeGray(app.AxMREMag, Msl, magTitle, 1, 99, 'MREBaseMag');
+            end
+
+            if ~strcmp(freezeKey,'raw')
+                showNativeWave(app.AxMRERawWave, Wraw, ...
+                    sprintf('Raw wave  sl %d/%d  ph %d/%d', slR, nZR, phRaw, nPhRaw), 0, 'gray', 'MREBaseRaw');
+            end
+
+            Wproc = double(squeeze(mre.W(:,:,slW,phProc)));
+            if ~strcmp(freezeKey,'proc')
+                waveMap = mreWaveCmap();
+                [waveLo, waveHi] = showNativeWave(app.AxMREWave, Wproc, ...
+                    sprintf('Processed wave  sl %d/%d  ph %d/%d', slW, nZW, phProc, nPhProc), ...
+                    app.AppData.WaveMax, waveMap, 'MREBaseWave');
+                try; colormap(app.AxMREWave, waveMap); catch; end
+                renderColorStrip(app.AxMREWaveBar, waveMap, [waveLo waveHi], [waveLo 0 waveHi]);
+                try; colormap(app.AxMREWaveBar, waveMap); catch; end
+            end
+
             if isfield(mre,'S') && ~isempty(mre.S)
-                S = double(mre.S(:,:, min(sl,nZS)));
-                if app.AppData.ShowConfMask && isfield(mre,'LapC') && ~isempty(mre.LapC)
-                    LapC = double(mre.LapC(:,:, min(sl,nZL)));
-                    S(LapC < 0.95) = 0;
-                end
+                S = double(squeeze(mre.S(:,:,slS)));
             else
                 S = zeros(size(Msl));
             end
-            imagesc(app.AxMREStiff, S);
-            clim(app.AxMREStiff, app.AppData.StiffCLim);
-            colormap(app.AxMREStiff, mreStiffCmap());
-            axis(app.AxMREStiff,'image');
-            app.AxMREStiff.XTick=[]; app.AxMREStiff.YTick=[];
-            title(app.AxMREStiff,sprintf('Stiffness (kPa)  sl %d/%d',sl,nZS), ...
-                'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+            if ~strcmp(freezeKey,'stiff')
+                stiffMap = mreStiffCmap();
+                safeMREAxesImage(app.AxMREStiff, S, app.AppData.StiffCLim, stiffMap, 'MREBaseStiff');
+                try; colormap(app.AxMREStiff, stiffMap); catch; end
+                title(app.AxMREStiff, sprintf('Stiffness (kPa)  sl %d/%d', slS, nZS), ...
+                    'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+                renderColorStrip(app.AxMREStiffBar, stiffMap, app.AppData.StiffCLim, []);
+                try; colormap(app.AxMREStiffBar, stiffMap); catch; end
+                if app.AppData.ShowConfMask && isfield(mre,'LapC') && ~isempty(mre.LapC)
+                    lowConf = double(squeeze(mre.LapC(:,:,slL))) < app.AppData.ConfThresh;
+                    hh = overlayCheckerMask(app.AxMREStiff, lowConf, 0.42);
+                    try; hh.Tag = 'MRERefreshOverlay'; hh.HitTest='off'; hh.PickableParts='none'; catch; end
+                end
+            end
 
-            % Cache for cursor readout
-            app.AppData.DispWave  = Wsl;
-            app.AppData.DispStiff = S;
+            app.AppData.DispWave    = Wproc;
+            app.AppData.DispWaveRaw = Wraw;
+            app.AppData.DispStiff   = S;
 
-            % Overlay existing ROI boundaries
+            previewMask = [];
+            if app.isMREROIWorkflowActive() && app.AppData.MREROISlice == sl
+                if ~isempty(app.AppData.MREROIFinalMask) && any(app.AppData.MREROIFinalMask(:))
+                    previewMask = app.AppData.MREROIFinalMask;
+                elseif ~isempty(app.AppData.MREROIOuterMask) && any(app.AppData.MREROIOuterMask(:))
+                    previewMask = app.AppData.MREROIOuterMask;
+                end
+            end
+            showHoleMasks = ~(isfield(app.AppData,'MREPlaying') && app.AppData.MREPlaying);
+            if ~isempty(previewMask) && any(previewMask(:))
+                holeMask = false(size(previewMask));
+                if showHoleMasks
+                    holeMask = getMaskHoleMask(previewMask);
+                end
+                Btmp = bwboundaries(previewMask);
+                axesList = {'mag', app.AxMREMag; 'raw', app.AxMRERawWave; 'proc', app.AxMREWave; 'stiff', app.AxMREStiff};
+                for ii = 1:size(axesList,1)
+                    if strcmp(freezeKey, axesList{ii,1}), continue; end
+                    ax = axesList{ii,2};
+                    hold(ax, 'on');
+                    for b = 1:numel(Btmp)
+                        pts = Btmp{b};
+                        hp = plot(ax, pts(:,2), pts(:,1), '-', 'Color', mreROIColor(app.AppData.MREROIName), 'LineWidth', 2.0);
+                        try; hp.Tag = 'MREROIPreview'; hp.HitTest = 'off'; hp.PickableParts = 'none'; catch; end
+                    end
+                    hold(ax, 'off');
+                    if showHoleMasks && any(holeMask(:))
+                        hh = overlayCheckerMask(ax, holeMask, 0.34);
+                        try; hh.Tag = 'MREROIPreview'; hh.HitTest = 'off'; hh.PickableParts = 'none'; catch; end
+                    end
+                end
+            end
+
             mreOverlayROI(app, sl);
         end
 
         function mreOverlayROI(app, sl)
-            % Draw stored ROI boundaries on all 3 MRE panels.
+            % Draw stored ROI boundaries on all MRE panels.
             key = sprintf('sl%d', sl);
-            for panel = {app.AxMREMag, app.AxMREWave, app.AxMREStiff}
-                ax = panel{1};
+            freezeKey = '';
+            if isfield(app.AppData,'MREROIDrawing') && app.AppData.MREROIDrawing
+                freezeKey = app.AppData.MRETargetAxis;
+            end
+            showHoleMasks = ~(isfield(app.AppData,'MREPlaying') && app.AppData.MREPlaying);
+            overlayData = cell(0,1);
+            for rName = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'}
+                rn = rName{1};
+                slices = app.AppData.ROIs.(rn).Slices;
+                if isfield(slices, key)
+                    mask = logical(slices.(key));
+                    if ~any(mask(:))
+                        continue
+                    end
+                    item = struct();
+                    item.Name = rn;
+                    item.B = bwboundaries(mask);
+                    item.HoleMask = false(size(mask));
+                    if showHoleMasks
+                        item.HoleMask = getMaskHoleMask(mask);
+                    end
+                    overlayData{end+1,1} = item; %#ok<AGROW>
+                end
+            end
+            if isempty(overlayData)
+                return
+            end
+            axesList = {'mag', app.AxMREMag; 'raw', app.AxMRERawWave; 'proc', app.AxMREWave; 'stiff', app.AxMREStiff};
+            for ii = 1:size(axesList,1)
+                if strcmp(freezeKey, axesList{ii,1}), continue; end
+                ax = axesList{ii,2};
                 hold(ax, 'on');
-                for rName = {'LiverMRE','SpleenMRE'}
-                    rn = rName{1};
-                    slices = app.AppData.ROIs.(rn).Slices;
-                    if isfield(slices, key)
-                        mask = slices.(key);
-                        B = bwboundaries(mask, 'noholes');
-                        for b = 1:numel(B)
-                            pts = B{b};   % [row col]
-                            plot(ax, pts(:,2), pts(:,1), '-', ...
-                                'Color', mreROIColor(rn), 'LineWidth', 1.5);
-                        end
+                for jj = 1:numel(overlayData)
+                    item = overlayData{jj};
+                    for b = 1:numel(item.B)
+                        pts = item.B{b};   % [row col]
+                        hp = plot(ax, pts(:,2), pts(:,1), '-', ...
+                            'Color', mreROIColor(item.Name), 'LineWidth', 1.5);
+                        try; hp.Tag = 'MRERefreshOverlay'; hp.HitTest = 'off'; hp.PickableParts = 'none'; catch; end
+                    end
+                    if showHoleMasks && any(item.HoleMask(:))
+                        hh = overlayCheckerMask(ax, item.HoleMask, 0.30);
+                        try; hh.Tag = 'MRERefreshOverlay'; hh.HitTest='off'; hh.PickableParts='none'; catch; end
                     end
                 end
                 hold(ax, 'off');
@@ -1717,7 +2983,20 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 case 'SATL2',       app.AppData.ROIs.SATL2    = mask;
                 case 'LiverMRE',    app.AppData.ROIs.LiverMRE.Slices.(key)  = mask;
                 case 'SpleenMRE',   app.AppData.ROIs.SpleenMRE.Slices.(key) = mask;
+                case 'MuscleMRE',   app.AppData.ROIs.MuscleMRE.Slices.(key) = mask;
+                case 'FatMRE',      app.AppData.ROIs.FatMRE.Slices.(key)    = mask;
             end
+        end
+
+        function storeEmptyMREROISlice(app, roiName, sl, nR, nC)
+            if nargin < 4 || isempty(nR) || nR <= 0
+                nR = size(app.AppData.MRE.M, 1);
+            end
+            if nargin < 5 || isempty(nC) || nC <= 0
+                nC = size(app.AppData.MRE.M, 2);
+            end
+            emptyMask = false(nR, nC);
+            storeROI(app, roiName, sl, emptyMask, nR, nC);
         end
 
         function computeDixonROIStats(app, roiName, mask, sl)
@@ -1756,31 +3035,181 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function computeMREROIStats(app, roiName, mask, sl)
-            mre = app.AppData.MRE;
-            if isempty(mre) || ~isfield(mre,'S'), return; end
-            nZ = size(mre.S, 3);
-            S = double(mre.S(:,:, max(1, min(sl, nZ))));
-            % Apply LapC confidence mask (always, if available)
-            if isfield(mre,'LapC') && ~isempty(mre.LapC)
-                LapC = double(mre.LapC(:,:, max(1, min(sl, size(mre.LapC,3)))));
-                S(LapC < 0.95) = NaN;
+            %#ok<INUSD>
+            app.updateMREAggregateStats(roiName);
+        end
+
+        function updateAllMREStats(app)
+            for roiName = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'}
+                app.updateMREAggregateStats(roiName{1});
             end
-            % Resize mask to match S if needed
-            if ~isequal(size(mask), [size(S,1) size(S,2)])
-                mask = imresize(logical(mask), [size(S,1) size(S,2)], 'nearest');
+        end
+
+        function updateMREAggregateStats(app, roiName)
+            [validPx, totalN, totalVolMm3, nStored] = app.collectMREValidPixels(roiName);
+
+            if totalN > 0
+                validPx = validPx(isfinite(validPx));
+                meanStiff = mean(validPx(:));
+                app.setMREMeasurementLabels(roiName, ...
+                    sprintf('%.2f kPa (mean)', meanStiff), ...
+                    sprintf('%d / %.0f mm^3', totalN, totalVolMm3));
+                if isfield(app.AppData,'MRETechFailure') && isstruct(app.AppData.MRETechFailure) && isfield(app.AppData.MRETechFailure, roiName)
+                    app.AppData.MRETechFailure.(roiName) = false;
+                end
+            elseif nStored > 0
+                app.setMREMeasurementLabels(roiName, 'Technical failure', '0 / 0 mm^3');
+                if isfield(app.AppData,'MRETechFailure') && isstruct(app.AppData.MRETechFailure) && isfield(app.AppData.MRETechFailure, roiName)
+                    app.AppData.MRETechFailure.(roiName) = false;
+                end
+            else
+                app.setMREMeasurementLabels(roiName, '—', '—');
+                if isfield(app.AppData,'MRETechFailure') && isstruct(app.AppData.MRETechFailure) && isfield(app.AppData.MRETechFailure, roiName)
+                    app.AppData.MRETechFailure.(roiName) = false;
+                end
             end
-            validPx = S(mask(:) & isfinite(S(:)));
-            if isempty(validPx), return; end
-            stiff  = median(validPx);
-            iqr_   = iqr(validPx);
-            nPx    = numel(validPx);
+        end
+
+        function [validPx, totalN, totalVolMm3, nStored] = collectMREValidPixels(app, roiName)
+            validPx = [];
+            totalN = 0;
+            totalVolMm3 = 0;
+            nStored = 0;
+            if isempty(app.AppData.MRE) || ~isfield(app.AppData.MRE,'S') || isempty(app.AppData.MRE.S)
+                return
+            end
+            try
+                slices = app.AppData.ROIs.(roiName).Slices;
+            catch
+                return
+            end
+            if isempty(slices)
+                return
+            end
+            keys = fieldnames(slices);
+            nStored = numel(keys);
+            if nStored == 0
+                return
+            end
+            voxelVolMm3 = app.getMREVoxelVolumeMm3();
+            roiConfThr = app.getMREROIConfThresh(roiName);
+            for k = 1:numel(keys)
+                key = keys{k};
+                mask = slices.(key);
+                sl = sscanf(key, 'sl%d');
+                if isempty(sl), continue; end
+                sl = max(1, min(size(app.AppData.MRE.S,3), sl));
+                S = double(app.AppData.MRE.S(:,:,sl));
+                if isfield(app.AppData.MRE,'LapC') && ~isempty(app.AppData.MRE.LapC)
+                    slL = max(1, min(size(app.AppData.MRE.LapC,3), sl));
+                    LapC = double(app.AppData.MRE.LapC(:,:,slL));
+                    S(LapC < roiConfThr) = NaN;
+                end
+                if ~isequal(size(mask), [size(S,1) size(S,2)])
+                    mask = imresize(logical(mask), [size(S,1) size(S,2)], 'nearest');
+                end
+                validMask = logical(mask) & isfinite(S);
+                vals = S(validMask);
+                if isempty(vals)
+                    continue
+                end
+                validPx = [validPx; vals(:)]; %#ok<AGROW>
+                totalN = totalN + numel(vals);
+            end
+            totalVolMm3 = totalN * voxelVolMm3;
+        end
+
+        function voxelVolMm3 = getMREVoxelVolumeMm3(app)
+            voxelVolMm3 = 1.0;
+            dx = NaN; dy = NaN; dz = NaN;
+            try
+                H = app.AppData.MRE.H;
+            catch
+                H = [];
+            end
+            try
+                if isstruct(H) && isfield(H,'PixelSpacing') && numel(H.PixelSpacing) >= 2
+                    dx = double(H.PixelSpacing(1));
+                    dy = double(H.PixelSpacing(2));
+                end
+            catch
+            end
+            try
+                if isstruct(H) && isfield(H,'SpacingBetweenSlices') && ~isempty(H.SpacingBetweenSlices)
+                    dz = double(H.SpacingBetweenSlices);
+                elseif isstruct(H) && isfield(H,'SliceThickness') && ~isempty(H.SliceThickness)
+                    dz = double(H.SliceThickness);
+                end
+            catch
+            end
+            try
+                if (~isfinite(dx) || ~isfinite(dy)) && isstruct(H) && isfield(H,'DisplayFieldOfView') && isfield(H,'Rows') && isfield(H,'Columns')
+                    fov = double(H.DisplayFieldOfView);
+                    if isfinite(fov) && fov > 0
+                        dx = fov / double(H.Rows);
+                        dy = fov / double(H.Columns);
+                    end
+                end
+            catch
+            end
+            if ~isfinite(dx) || dx <= 0, dx = 1; end
+            if ~isfinite(dy) || dy <= 0, dy = dx; end
+            if ~isfinite(dz) || dz <= 0, dz = 1; end
+            % Voxel volume is reported in mm^3 and is based on the
+            % currently loaded MRE header metadata (preferred source: H).
+            voxelVolMm3 = dx * dy * dz;
+        end
+
+        function setMREMeasurementLabels(app, roiName, stiffTxt, nVolTxt)
+            % NOTE FOR MAINTAINERS:
+            % nVolTxt is written into legacy UI properties whose names
+            % still include the suffix *IQR. Those properties now display
+            % the combined text "N / volume" rather than interquartile
+            % range. The separate *Vol properties are retained only for
+            % backward compatibility and are no longer shown in the active
+            % UI layout.
             switch roiName
                 case 'LiverMRE'
-                    app.ValLiverStiff.Text   = sprintf('%.2f kPa (med)',stiff);
-                    app.ValLiverStiffIQR.Text = sprintf('%.2f kPa IQR  n=%d',iqr_,nPx);
+                    app.ValLiverStiff.Text = stiffTxt;
+                    app.ValLiverStiffIQR.Text = nVolTxt;
+                    if ~isempty(app.ValLiverStiffVol), app.ValLiverStiffVol.Text = ''; end
                 case 'SpleenMRE'
-                    app.ValSpleenStiff.Text   = sprintf('%.2f kPa (med)',stiff);
-                    app.ValSpleenStiffIQR.Text = sprintf('%.2f kPa IQR  n=%d',iqr_,nPx);
+                    app.ValSpleenStiff.Text = stiffTxt;
+                    app.ValSpleenStiffIQR.Text = nVolTxt;
+                    if ~isempty(app.ValSpleenStiffVol), app.ValSpleenStiffVol.Text = ''; end
+                case 'MuscleMRE'
+                    app.ValMuscleMREStiff.Text = stiffTxt;
+                    app.ValMuscleMREStiffIQR.Text = nVolTxt;
+                    if ~isempty(app.ValMuscleMREStiffVol), app.ValMuscleMREStiffVol.Text = ''; end
+                case 'FatMRE'
+                    app.ValFatMREStiff.Text = stiffTxt;
+                    app.ValFatMREStiffIQR.Text = nVolTxt;
+                    if ~isempty(app.ValFatMREStiffVol), app.ValFatMREStiffVol.Text = ''; end
+            end
+        end
+
+        function clearStoredMREROISlice(app, roiName, sl)
+            switch roiName
+                case 'LiverMRE'
+                    app.AppData.ROIs.LiverMRE.Slices  = removeSlice(app.AppData.ROIs.LiverMRE.Slices, sl);
+                case 'SpleenMRE'
+                    app.AppData.ROIs.SpleenMRE.Slices = removeSlice(app.AppData.ROIs.SpleenMRE.Slices, sl);
+                case 'MuscleMRE'
+                    app.AppData.ROIs.MuscleMRE.Slices = removeSlice(app.AppData.ROIs.MuscleMRE.Slices, sl);
+                case 'FatMRE'
+                    app.AppData.ROIs.FatMRE.Slices    = removeSlice(app.AppData.ROIs.FatMRE.Slices, sl);
+            end
+        end
+
+        function setMRETechnicalFailure(app, roiName)
+            if nargin < 2 || isempty(roiName)
+                roiName = app.AppData.MREROIName;
+            end
+            if ~isfield(app.AppData,'MRETechFailure') || ~isstruct(app.AppData.MRETechFailure)
+                app.AppData.MRETechFailure = struct('LiverMRE',false,'SpleenMRE',false,'MuscleMRE',false,'FatMRE',false);
+            end
+            if isfield(app.AppData.MRETechFailure, roiName)
+                app.AppData.MRETechFailure.(roiName) = true;
             end
         end
 
@@ -1801,12 +3230,16 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function overlayROIOnDixon(app, roiName, mask)
             bnd = bwboundaries(mask);
             clr = dixonROIColor(roiName);
-            ax  = app.AxDixon;
-            hold(ax,'on');
-            for b = 1:numel(bnd)
-                plot(ax, bnd{b}(:,2), bnd{b}(:,1), '-','Color',clr,'LineWidth',2);
+            axesList = {app.AxDixonPDFF, app.AxDixonIP, app.AxDixonWater};
+            for ii = 1:numel(axesList)
+                ax = axesList{ii};
+                if isempty(ax) || ~isvalid(ax), continue; end
+                hold(ax,'on');
+                for b = 1:numel(bnd)
+                    plot(ax, bnd{b}(:,2), bnd{b}(:,1), '-','Color',clr,'LineWidth',2);
+                end
+                hold(ax,'off');
             end
-            hold(ax,'off');
         end
 
         function updateStudyBrowser(app, exam, selection)
@@ -1846,11 +3279,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             rows = {};
             if isfield(results,'L12') && isfield(results.L12,'L1')
                 L1 = results.L12.L1; L2 = results.L12.L2;
-                rows{end+1} = {'Muscle area L1',  sprintf('%.1f',L1.MuscleArea_cm2), 'cm²',  ''};
-                rows{end+1} = {'Muscle PDFF L1',  sprintf('%.1f',L1.MusclePDFF_pct), '%',    ''};
-                rows{end+1} = {'SAT area L1',      sprintf('%.1f',L1.SATArea_cm2),   'cm²',  ''};
-                rows{end+1} = {'SAT PDFF L1',      sprintf('%.1f',L1.SAT_PDFF_pct),  '%',    ''};
-                rows{end+1} = {'Muscle area L2',  sprintf('%.1f',L2.MuscleArea_cm2), 'cm²',  ''};
+                rows{end+1} = {'Muscle area T12',  sprintf('%.1f',L1.MuscleArea_cm2), 'cm²',  ''};
+                rows{end+1} = {'Muscle PDFF T12',  sprintf('%.1f',L1.MusclePDFF_pct), '%',    ''};
+                rows{end+1} = {'SAT area T12',      sprintf('%.1f',L1.SATArea_cm2),   'cm²',  ''};
+                rows{end+1} = {'SAT PDFF T12',      sprintf('%.1f',L1.SAT_PDFF_pct),  '%',    ''};
+                rows{end+1} = {'Muscle area L3',  sprintf('%.1f',L2.MuscleArea_cm2), 'cm²',  ''};
                 rows{end+1} = {'Muscle:SAT ratio', sprintf('%.3f',L1.MuscleSATRatio),'',     ''};
             end
             if ~isempty(rows)
@@ -1861,7 +3294,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function setStatus(app, msg)
             ts = datestr(now,'HH:MM:SS');
             app.LblStatusMsg.Text = sprintf('[%s]  %s', ts, msg);
-            drawnow limitrate;
+            try
+                drawnow limitrate nocallbacks;
+            catch
+                drawnow limitrate;
+            end
         end
 
         function L12 = rowsToL12mm(app, sinfo)
@@ -1910,6 +3347,13 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function onMouseMove(app)
+            try
+                if (isfield(app.AppData,'MREROIDrawing') && app.AppData.MREROIDrawing) || ...
+                        (isfield(app.AppData,'MREROIBusy') && app.AppData.MREROIBusy)
+                    return
+                end
+            catch
+            end
             % ── 1. Cursor value readout for quantitative image axes ──────
             quantAxes  = {app.AxMREWave, app.AxMREStiff, app.AxDixon};
             quantData  = {app.AppData.DispWave, app.AppData.DispStiff, app.AppData.DispDixon};
@@ -2115,11 +3559,29 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
     end
 
+    methods (Access = private)
+        function ensureRepoPath(app) %#ok<MANU>
+            repoRoot = fileparts(mfilename('fullpath'));
+            addList = {repoRoot, ...
+                fullfile(repoRoot,'functions','io'), ...
+                fullfile(repoRoot,'functions','registration'), ...
+                fullfile(repoRoot,'functions','segmentation'), ...
+                fullfile(repoRoot,'functions','harmonization')};
+            for kk = 1:numel(addList)
+                if isfolder(addList{kk})
+                    addpath(addList{kk});
+                end
+            end
+            rehash;
+        end
+    end
+
     % =====================================================================
     %  CONSTRUCTOR / DESTRUCTOR
     % =====================================================================
     methods (Access = public)
         function app = HepatosplenicMRE_App()
+            ensureRepoPath(app);
             createComponents(app);
             registerApp(app, app.UIFigure);
             runStartupFcn(app, @startupFcn);
@@ -2127,10 +3589,19 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             if nargout == 0, clear app; end
         end
         function delete(app)
-            if ~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer)
-                stop(app.AppData.MRETimer); delete(app.AppData.MRETimer);
+            try
+                if ~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer)
+                    stop(app.AppData.MRETimer);
+                    delete(app.AppData.MRETimer);
+                end
+            catch
             end
-            delete(app.UIFigure);
+            try
+                if ~isempty(app.UIFigure) && isvalid(app.UIFigure)
+                    delete(app.UIFigure);
+                end
+            catch
+            end
         end
     end
 
@@ -2176,6 +3647,123 @@ function vol = dixonVolume(dix, contrast)
             if isfield(dix,'Water'),    vol = dix.Water;    end
     end
 end
+function vol = dixonPreferredDisplayVolume(dix, which)
+% Return the preferred volume for the fixed three-panel Dixon view.
+    vol = [];
+    switch which
+        case 'PDFF'
+            vol = dixonVolume(dix, 'PDFF');
+        case 'InPhase'
+            vol = dixonVolume(dix, 'InPhase');
+            if isempty(vol), vol = dixonVolume(dix, 'Water'); end
+        case 'OutPhase'
+            vol = dixonVolume(dix, 'OutPhase');
+            if isempty(vol), vol = dixonVolume(dix, 'Fat'); end
+    end
+end
+
+function renderDixonPanelAxes(app, ax, vol, sl, nZ, labelTxt, isPdff)
+    if isempty(ax) || ~isvalid(ax)
+        return
+    end
+    cla(ax);
+    if isempty(vol)
+        title(ax, sprintf('%s — not available', labelTxt), ...
+            'FontSize',12,'Color',[0.7 0.4 0.2],'FontWeight','normal');
+        ax.XTick=[]; ax.YTick=[];
+        return
+    end
+    img = double(vol(:,:, min(sl, size(vol,3))));
+    imagesc(ax, img);
+    if isPdff
+        cmapName = app.AppData.DixonCmap;
+        if endsWith(cmapName, '_r')
+            baseName = cmapName(1:end-2);
+            try, cmapData = flip(feval(baseName, 256), 1); catch, cmapData = flip(gray(256),1); end
+            colormap(ax, cmapData);
+        else
+            try, colormap(ax, cmapName); catch, colormap(ax, 'hot'); end
+        end
+        lo = app.AppData.DixonClimMin;
+        hi = app.AppData.DixonClimMax;
+        if lo == 0 && hi == 0
+            lo = min(img(:)); hi = max(img(:));
+        end
+        if hi > lo, clim(ax, [lo hi]); end
+    else
+        colormap(ax, 'gray');
+        [lo, hi] = robustCLim(img, 1, 99, false);
+        if hi > lo, clim(ax, [lo hi]); end
+    end
+    axis(ax,'image');
+    ax.XTick=[]; ax.YTick=[];
+    title(ax, sprintf('%s   sl %d/%d', labelTxt, sl, nZ), ...
+        'FontSize',13,'Color',[0.78 0.78 0.78],'FontWeight','normal');
+    overlayDixonLevelMarkers(app, ax, img, sl);
+    overlayStoredDixonROIs(app, ax, sl);
+end
+
+function overlayDixonLevelMarkers(app, ax, img, sl)
+    l12d = app.AppData.L12_Dixon;
+    if isempty(l12d) || ~isfield(l12d,'L1_sliceIdx') || isnan(l12d.L1_sliceIdx)
+        return
+    end
+    nC = size(img, 2);
+    hold(ax,'on');
+    if sl == round(l12d.L1_sliceIdx)
+        plot(ax,[1 nC],[4 4],'--','Color',[0.95 0.60 0.10],'LineWidth',2);
+        text(ax,4,12,'T12','Color',[0.95 0.60 0.10],'FontSize',13,'FontWeight','bold');
+    end
+    if isfield(l12d,'L2_sliceIdx') && ~isnan(l12d.L2_sliceIdx) && sl == round(l12d.L2_sliceIdx)
+        plot(ax,[1 nC],[4 4],'--','Color',[0.38 0.62 0.92],'LineWidth',2);
+        text(ax,4,12,'L3','Color',[0.38 0.62 0.92],'FontSize',13,'FontWeight','bold');
+    end
+    hold(ax,'off');
+end
+
+function overlayStoredDixonROIs(app, ax, sl)
+    key = sprintf('sl%d', sl);
+    items = {};
+    try
+        if isfield(app.AppData.ROIs.LiverDixon.Slices, key)
+            items(end+1,:) = {'LiverDixon', app.AppData.ROIs.LiverDixon.Slices.(key)}; %#ok<AGROW>
+        end
+    catch
+    end
+    try
+        if isfield(app.AppData.ROIs.SpleenDixon.Slices, key)
+            items(end+1,:) = {'SpleenDixon', app.AppData.ROIs.SpleenDixon.Slices.(key)}; %#ok<AGROW>
+        end
+    catch
+    end
+    try
+        l12d = app.AppData.L12_Dixon;
+        if ~isempty(l12d)
+            if isfield(l12d,'L1_sliceIdx') && ~isnan(l12d.L1_sliceIdx) && sl == round(l12d.L1_sliceIdx)
+                if ~isempty(app.AppData.ROIs.MuscleL1), items(end+1,:) = {'MuscleL1', app.AppData.ROIs.MuscleL1}; end %#ok<AGROW>
+                if ~isempty(app.AppData.ROIs.SATL1),    items(end+1,:) = {'SATL1',    app.AppData.ROIs.SATL1};    end %#ok<AGROW>
+            end
+            if isfield(l12d,'L2_sliceIdx') && ~isnan(l12d.L2_sliceIdx) && sl == round(l12d.L2_sliceIdx)
+                if ~isempty(app.AppData.ROIs.MuscleL2), items(end+1,:) = {'MuscleL2', app.AppData.ROIs.MuscleL2}; end %#ok<AGROW>
+                if ~isempty(app.AppData.ROIs.SATL2),    items(end+1,:) = {'SATL2',    app.AppData.ROIs.SATL2};    end %#ok<AGROW>
+            end
+        end
+    catch
+    end
+    if isempty(items), return; end
+    hold(ax,'on');
+    for ii = 1:size(items,1)
+        roiName = items{ii,1};
+        mask = logical(items{ii,2});
+        if ~any(mask(:)), continue; end
+        bnd = bwboundaries(mask);
+        clr = dixonROIColor(roiName);
+        for b = 1:numel(bnd)
+            plot(ax, bnd{b}(:,2), bnd{b}(:,1), '-', 'Color', clr, 'LineWidth', 2);
+        end
+    end
+    hold(ax,'off');
+end
 
 function tf = endsWith(str, suffix)
     tf = numel(str) >= numel(suffix) && strcmp(str(end-numel(suffix)+1:end), suffix);
@@ -2184,14 +3772,18 @@ end
 function lbl = mreRoleLabel(role)
 % Map internal Role string to friendly display name for study browser.
     map = struct( ...
-        'GRE_WaveMag',   'WaveMag_Raw', ...
-        'GRE_ProcWave',  'ProcessedWave', ...
-        'GRE_Stiffness', 'Stiffness', ...
-        'GRE_ConfMap',   'ConfMap', ...
-        'EPI_WaveMag',   'WaveMag_Raw', ...
-        'EPI_ProcWave',  'ProcessedWave', ...
-        'EPI_Stiffness', 'Stiffness', ...
-        'EPI_ConfMap',   'ConfMap');
+        'GRE_WaveMag_Raw',  'WaveMag_Raw', ...
+        'GRE_WaveMag',      'WaveMag_Raw', ...
+        'GRE_WaveMag_Proc', 'ProcessedWave', ...
+        'GRE_ProcWave',     'ProcessedWave', ...
+        'GRE_Stiffness',    'Stiffness', ...
+        'GRE_ConfMap',      'ConfMap', ...
+        'EPI_WaveMag_Raw',  'WaveMag_Raw', ...
+        'EPI_WaveMag',      'WaveMag_Raw', ...
+        'EPI_WaveMag_Proc', 'ProcessedWave', ...
+        'EPI_ProcWave',     'ProcessedWave', ...
+        'EPI_Stiffness',    'Stiffness', ...
+        'EPI_ConfMap',      'ConfMap');
     if isfield(map, role)
         lbl = map.(role);
     else
@@ -2199,11 +3791,189 @@ function lbl = mreRoleLabel(role)
     end
 end
 
+function idxOut = mapPhaseIndex(idxIn, nIn, nOut)
+% Map a phase index from one phase count to another while keeping the cycle aligned.
+    if nOut <= 1 || nIn <= 1
+        idxOut = 1;
+        return
+    end
+    frac = (idxIn - 1) / max(1, nIn - 1);
+    idxOut = 1 + round(frac * (nOut - 1));
+    idxOut = max(1, min(nOut, idxOut));
+end
+
+function holeMask = getMaskHoleMask(mask)
+% Return enclosed holes inside a binary ROI mask so exclusions remain visible.
+    holeMask = false(size(mask));
+    try
+        mask = logical(mask);
+        if ~any(mask(:)), return; end
+        filled = imfill(mask, 'holes');
+        holeMask = filled & ~mask;
+    catch
+    end
+end
+
+function h = overlayCheckerMask(ax, mask, alphaScale)
+% Overlay a darker, finer checker pattern on low-confidence pixels.
+    h = gobjects(0);
+    if nargin < 3, alphaScale = 0.38; end
+    if isempty(mask) || ~any(mask(:)), return; end
+    [nR, nC] = size(mask);
+    tileSize = 2;
+    [rr, cc] = ndgrid(1:nR, 1:nC);
+    tile = mod(floor((rr-1)/tileSize) + floor((cc-1)/tileSize), 2) == 0;
+    rgb = 0.08 * ones(nR, nC, 3);
+    hold(ax,'on');
+    h = image(ax, rgb, 'AlphaData', alphaScale * double(mask) .* double(tile));
+    try; h.HitTest='off'; h.PickableParts='none'; catch; end
+    hold(ax,'off');
+end
+
+function safeMREAxesImage(ax, img, climVals, cmapIn, baseTag)
+    if nargin < 5 || isempty(baseTag)
+        baseTag = 'MREBaseImage';
+    end
+    if isempty(ax)
+        return
+    end
+    try
+        if ~isvalid(ax)
+            return
+        end
+    catch
+        return
+    end
+    nR = size(img,1);
+    nC = size(img,2);
+
+    hBase = [];
+    try
+        ud = ax.UserData;
+    catch
+        ud = [];
+    end
+    try
+        if isstruct(ud) && isfield(ud, 'MREBaseHandle') && isfield(ud, 'MREBaseTag') && ...
+                strcmp(ud.MREBaseTag, baseTag) && ~isempty(ud.MREBaseHandle) && isvalid(ud.MREBaseHandle)
+            hBase = ud.MREBaseHandle;
+        end
+    catch
+        hBase = [];
+    end
+    if isempty(hBase)
+        try
+            hMatch = findobj(ax.Children, 'flat', 'Type', 'image', 'Tag', baseTag);
+            if ~isempty(hMatch)
+                hBase = hMatch(1);
+            end
+        catch
+            hBase = [];
+        end
+    end
+
+    if isempty(hBase) || ~isvalid(hBase)
+        holdState = false;
+        try, holdState = ishold(ax); catch, end
+        try, hold(ax, 'on'); catch, end
+        try
+            hBase = image(ax, 'CData', img, 'CDataMapping', 'scaled', 'Tag', baseTag);
+        catch
+            hBase = image(ax, img, 'CDataMapping', 'scaled', 'Tag', baseTag);
+        end
+        if ~holdState
+            try, hold(ax, 'off'); catch, end
+        end
+    else
+        try, hBase.CData = img; catch, end
+        try, hBase.CDataMapping = 'scaled'; catch, end
+        try, hBase.Visible = 'on'; catch, end
+        try, hBase.Tag = baseTag; catch, end
+    end
+
+    try
+        hImgs = findobj(ax.Children, 'flat', 'Type', 'image');
+    catch
+        hImgs = gobjects(0);
+    end
+    for ii = 1:numel(hImgs)
+        hThis = hImgs(ii);
+        try
+            if isequal(hThis, hBase)
+                continue;
+            end
+        catch
+        end
+        try
+            delete(hThis);
+        catch
+        end
+    end
+
+    try, hBase.XData = [1 nC]; hBase.YData = [1 nR]; catch, end
+    try; hBase.AlphaData = 1; catch; end
+    try; hBase.Visible = 'on'; catch; end
+    try; hBase.Tag = baseTag; catch; end
+    try; hBase.HitTest='off'; hBase.PickableParts='none'; catch; end
+    try; colormap(ax, cmapIn); catch; end
+    try; clim(ax, climVals); catch; try; caxis(ax, climVals); catch; end; end
+    try; ax.SortMethod = 'childorder'; catch; end
+    try; ax.XLim = [0.5 nC + 0.5]; ax.YLim = [0.5 nR + 0.5]; catch; end
+    try; axis(ax, 'image'); catch; end
+    try; ax.YDir = 'reverse'; catch; end
+    try; uistack(hBase, 'bottom'); catch; end
+    try; ax.XTick = []; ax.YTick = []; catch; end
+    try
+        ud = ax.UserData;
+        if ~isstruct(ud), ud = struct(); end
+        ud.MREBaseHandle = hBase;
+        ud.MREBaseTag = baseTag;
+        ax.UserData = ud;
+    catch
+    end
+end
+
+function safeAxesImage(ax, img, climVals, cmapIn)
+    if isempty(ax)
+        return
+    end
+    try
+        if ~isvalid(ax)
+            return
+        end
+    catch
+        return
+    end
+    try
+        cla(ax);
+    catch
+    end
+    try
+        h = image(ax, 'CData', img, 'CDataMapping', 'scaled');
+    catch
+        % Fallback for older syntaxes
+        h = image(ax, img, 'CDataMapping', 'scaled');
+    end
+    try; colormap(ax, cmapIn); catch; end
+    try; clim(ax, climVals); catch; try; caxis(ax, climVals); catch; end; end
+    try; axis(ax, 'image'); catch; end
+    try; ax.YDir = 'reverse'; catch; end
+    try; h.HitTest='off'; h.PickableParts='none'; catch; end
+    try; ax.XTick = []; ax.YTick = []; catch; end
+end
+
 function setupDarkAxes(ax, titleStr)
     ax.XTick=[]; ax.YTick=[]; ax.Box='on';
     ax.Color=[0.06 0.06 0.06];
     ax.XColor=[0.28 0.28 0.28]; ax.YColor=[0.28 0.28 0.28];
     ax.BackgroundColor=[0.06 0.06 0.06];
+    % Keep image-display axes passive. Allowing MATLAB to auto-create
+    % axes toolbars/interactions on uiaxes can trigger internal GridLayout
+    % child-add errors during ROI drawing/finalization and leave the MRE
+    % panels looking frozen (black background with only the ROI outline).
+    try; ax.Toolbar.Visible = 'off'; catch; end
+    try; ax.Interactions = []; catch; end
+    try; disableDefaultInteractivity(ax); catch; end
     colormap(ax,'gray');
     title(ax,titleStr,'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
 end
@@ -2211,11 +3981,133 @@ end
 function showImg(ax, img, titleStr)
     lo=min(img(:)); hi=max(img(:));
     if hi>lo, img=(img-lo)./(hi-lo); end
-    h = imagesc(ax,img); colormap(ax,'gray'); axis(ax,'image');
-    % Make image non-intercepting so ButtonDownFcn on axes fires on click
-    try; h.HitTest='off'; h.PickableParts='none'; catch; end
+    safeAxesImage(ax, img, [0 1], 'gray');
     ax.XTick=[]; ax.YTick=[];
     title(ax,titleStr,'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
+end
+
+
+function showNativeGray(ax, img, titleStr, pctLo, pctHi, baseTag)
+    if nargin < 4, pctLo = 1; end
+    if nargin < 5, pctHi = 99; end
+    if nargin < 6, baseTag = 'MREBaseImage'; end
+    [lo, hi] = robustCLim(img, pctLo, pctHi, false);
+    safeMREAxesImage(ax, img, [lo hi], 'gray', baseTag);
+    ax.XTick = []; ax.YTick = [];
+    title(ax, sprintf('%s\n[display %.0f to %.0f]', titleStr, lo, hi), ...
+        'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
+end
+
+function [lo, hi] = showNativeWave(ax, img, titleStr, manualMax, cmapIn, baseTag)
+    if nargin < 4, manualMax = 0; end
+    if nargin < 5 || isempty(cmapIn), cmapIn = 'gray'; end
+    if nargin < 6, baseTag = 'MREBaseImage'; end
+    if manualMax > 0
+        lo = -manualMax;
+        hi = manualMax;
+    else
+        [lo, hi] = robustCLim(img, 0, 99.5, true);
+    end
+    safeMREAxesImage(ax, img, [lo hi], cmapIn, baseTag);
+    ax.XTick = []; ax.YTick = [];
+    title(ax, sprintf('%s\n[display %.0f to %.0f]', titleStr, lo, hi), ...
+        'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
+end
+
+function setupColorStripAxes(ax)
+    ax.Box = 'on';
+    ax.Color = [0.06 0.06 0.06];
+    ax.BackgroundColor = [0.06 0.06 0.06];
+    ax.XColor = [0.72 0.72 0.72];
+    ax.YColor = [0.28 0.28 0.28];
+    ax.YTick = [];
+    ax.FontSize = 9;
+    try; ax.Toolbar.Visible = 'off'; catch; end
+    try; ax.Interactions = []; catch; end
+end
+
+function renderColorStrip(ax, cmapIn, climVals, tickVals)
+    if isempty(ax) || ~isvalid(ax)
+        return
+    end
+    lo = climVals(1);
+    hi = climVals(2);
+    if ~isfinite(lo) || ~isfinite(hi) || hi <= lo
+        lo = 0; hi = 1;
+    end
+    x = linspace(lo, hi, 256);
+    img = repmat(x, [10 1]);
+    try
+        cla(ax);
+    catch
+    end
+    try
+        h = image(ax, 'XData', [lo hi], 'YData', [0 1], 'CData', img, 'CDataMapping', 'scaled');
+    catch
+        h = image(ax, img, 'CDataMapping', 'scaled');
+    end
+    try; colormap(ax, cmapIn); catch; end
+    try; clim(ax, [lo hi]); catch; try; caxis(ax, [lo hi]); catch; end; end
+    try; axis(ax, 'normal'); catch; end
+    try; ax.YDir = 'normal'; catch; end
+    try; ax.XLim = [lo hi]; ax.YLim = [0 1]; catch; end
+    try; h.HitTest='off'; h.PickableParts='none'; catch; end
+    ax.YTick = [];
+    if nargin < 4 || isempty(tickVals)
+        tickVals = [lo, (lo + hi)/2, hi];
+    end
+    tickVals = tickVals(isfinite(tickVals));
+    tickVals = unique(tickVals);
+    ax.XTick = tickVals;
+    ax.Box = 'on';
+end
+
+function [lo, hi] = robustCLim(img, pctLo, pctHi, symmetric)
+    vals = double(img(isfinite(img)));
+    if isempty(vals)
+        lo = 0; hi = 1; return
+    end
+    if nargin < 4, symmetric = false; end
+    if symmetric
+        avals = sort(abs(vals(:)));
+        hi = percentileFromSorted(avals, pctHi);
+        if ~isfinite(hi) || hi <= 0
+            hi = max(abs(vals(:)));
+        end
+        if ~isfinite(hi) || hi <= 0
+            hi = 1;
+        end
+        lo = -hi;
+    else
+        svals = sort(vals(:));
+        lo = percentileFromSorted(svals, pctLo);
+        hi = percentileFromSorted(svals, pctHi);
+        if ~isfinite(lo), lo = svals(1); end
+        if ~isfinite(hi), hi = svals(end); end
+        if hi <= lo
+            lo = min(vals(:));
+            hi = max(vals(:));
+            if hi <= lo, hi = lo + 1; end
+        end
+    end
+end
+
+function v = percentileFromSorted(sortedVals, pct)
+    if isempty(sortedVals)
+        v = NaN; return
+    end
+    pct = max(0, min(100, pct));
+    idx = 1 + (numel(sortedVals)-1) * pct / 100;
+    loIdx = floor(idx);
+    hiIdx = ceil(idx);
+    frac = idx - loIdx;
+    loIdx = max(1, min(numel(sortedVals), loIdx));
+    hiIdx = max(1, min(numel(sortedVals), hiIdx));
+    if loIdx == hiIdx
+        v = sortedVals(loIdx);
+    else
+        v = (1-frac) * sortedVals(loIdx) + frac * sortedVals(hiIdx);
+    end
 end
 
 function btn = mkBtn(parent, col, txt, bg, fg, fs)
@@ -2246,8 +4138,16 @@ function clr = dixonROIColor(name)
 end
 
 function clr = mreROIColor(name)
-    if contains(name,'Liver'),  clr=[0.15 0.85 0.15];
-    else,                       clr=[0.15 0.65 0.95];
+    if contains(name,'Liver')
+        clr = [0.15 0.85 0.15];
+    elseif contains(name,'Spleen')
+        clr = [0.15 0.65 0.95];
+    elseif contains(name,'Muscle')
+        clr = [0.95 0.55 0.15];
+    elseif contains(name,'Fat')
+        clr = [0.85 0.30 0.85];
+    else
+        clr = [1 1 0];
     end
 end
 
@@ -2431,6 +4331,12 @@ function [x,y] = ginputAxes(ax)
     catch
     end
     ax.ButtonDownFcn = '';
+end
+
+
+function mask = circleMaskFromGeom(cx, cy, r, nRow, nCol)
+    [X, Y] = meshgrid(1:nCol, 1:nRow);
+    mask = ((X - cx).^2 + (Y - cy).^2) <= (r.^2);
 end
 
 function slices = removeSlice(slices, sl)
