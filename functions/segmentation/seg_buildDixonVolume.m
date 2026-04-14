@@ -97,6 +97,22 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
         end
     end
 
+    % Derive Water/Fat from InPhase/OutPhase when direct maps are unavailable.
+    % Water ≈ IP + OP  and  Fat ≈ IP − OP  (unnormalised; constant cancels in
+    % PDFF = Fat/(Water+Fat)).  Clamp Fat to ≥ 0 to avoid negative values.
+    if (isempty(dixon.Water) || isempty(dixon.Fat)) && ...
+       ~isempty(dixon.InPhase) && ~isempty(dixon.OutPhase)
+        vprint(opts, 'Deriving Water/Fat from InPhase/OutPhase...');
+        IP = double(dixon.InPhase);
+        OP = double(dixon.OutPhase);
+        if isempty(dixon.Water)
+            dixon.Water = IP + OP;
+        end
+        if isempty(dixon.Fat)
+            dixon.Fat = max(0, IP - OP);
+        end
+    end
+
     % For this platform's three-panel UI, WATER feeds the in-phase panel and
     % FAT feeds the out-of-phase panel when explicit InPhase/OutPhase images
     % are not available in the selected Dixon family.

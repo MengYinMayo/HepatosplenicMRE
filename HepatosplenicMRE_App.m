@@ -525,11 +525,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.DixonGrid.Padding      = [4 4 4 4];
             app.DixonGrid.ColumnSpacing = 6;
 
-            % Image area: header row + PDFF controls + three fixed panels + slice slider.
+            % Image area: header row + PDFF controls + image panels (no bottom bar needed).
             imgArea = uipanel(app.DixonGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
-            imgG = uigridlayout(imgArea,[4 1]);
-            imgG.RowHeight   = {28,30,'1x',32};
+            imgG = uigridlayout(imgArea,[3 1]);
+            imgG.RowHeight   = {28,30,'1x'};
             imgG.ColumnWidth = {'1x'};
             imgG.Padding     = [0 0 0 0];
             imgG.RowSpacing  = 3;
@@ -583,7 +583,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             btnAuto.FontSize=11;
             btnAuto.ButtonPushedFcn = @(~,~)app.onDixonAutoScale();
 
-            % Row 3: two-column display — left=PDFF, right=Water/IP (top) + Fat/OP (bottom).
+            % Row 3: two-column display — left=PDFF, right=Water/IP + nav + Fat/OP.
             panelGrid = uigridlayout(imgG,[1 2]);
             panelGrid.Layout.Row=3;
             panelGrid.ColumnWidth={'1x','1x'};
@@ -594,53 +594,53 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             setupDarkAxes(app.AxDixonPDFF,'PDFF (%)');
             app.AxDixonPDFF.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('pdff');
 
-            % Right column: stacked panel with Water/IP on top, Fat/OP on bottom.
+            % Right column: Water/IP (top) — Prev/slice/Next (middle) — Fat/OP (bottom).
             rightPnl = uipanel(panelGrid,'BorderType','none');
             rightPnl.Layout.Column = 2;
-            rightG = uigridlayout(rightPnl,[2 1]);
-            rightG.RowHeight   = {'1x','1x'};
+            rightG = uigridlayout(rightPnl,[3 1]);
+            rightG.RowHeight   = {'1x',34,'1x'};
             rightG.ColumnWidth = {'1x'};
             rightG.Padding     = [0 0 0 0];
-            rightG.RowSpacing  = 4;
+            rightG.RowSpacing  = 2;
 
             app.AxDixonIP = uiaxes(rightG);
             app.AxDixonIP.Layout.Row = 1;
             setupDarkAxes(app.AxDixonIP,'Water or In-phase');
             app.AxDixonIP.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('water');
 
-            app.AxDixonWater = uiaxes(rightG);
-            app.AxDixonWater.Layout.Row = 2;
-            setupDarkAxes(app.AxDixonWater,'Fat or Out-of-Phase');
-            app.AxDixonWater.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('fat');
+            % Middle row: Prev / slice label / Next
+            navG = uigridlayout(rightG,[1 3]);
+            navG.Layout.Row = 2;
+            navG.ColumnWidth = {64,'1x',64};
+            navG.Padding = [4 4 4 4]; navG.ColumnSpacing=10;
 
-            % Keep the legacy ROI drawing path anchored to the PDFF panel.
-            app.AxDixon = app.AxDixonPDFF;
-
-            % Row 4: slice slider.
-            slCtrl = uigridlayout(imgG,[1 3]);
-            slCtrl.Layout.Row=4;
-            slCtrl.ColumnWidth={64,'1x',64}; slCtrl.Padding=[4 6 4 6];
-            slCtrl.ColumnSpacing=10;
-
-            prevBtnDix = uibutton(slCtrl,'push');
+            prevBtnDix = uibutton(navG,'push');
             prevBtnDix.Layout.Column=1;
             prevBtnDix.Text='Prev'; prevBtnDix.FontSize=12; prevBtnDix.FontWeight='bold';
             prevBtnDix.BackgroundColor=[1.00 0.93 0.25]; prevBtnDix.FontColor=[0.75 0.10 0.10];
             prevBtnDix.Tooltip='Previous slice';
             prevBtnDix.ButtonPushedFcn = @(~,~)app.nudgeDixonSlice(-1);
 
-            app.LblDixonSlice = uilabel(slCtrl);
+            app.LblDixonSlice = uilabel(navG);
             app.LblDixonSlice.Layout.Column=2;
             app.LblDixonSlice.Text='1/1';
             app.LblDixonSlice.FontSize=12; app.LblDixonSlice.FontWeight='bold';
             app.LblDixonSlice.HorizontalAlignment='center';
 
-            nextBtnDix = uibutton(slCtrl,'push');
+            nextBtnDix = uibutton(navG,'push');
             nextBtnDix.Layout.Column=3;
             nextBtnDix.Text='Next'; nextBtnDix.FontSize=12; nextBtnDix.FontWeight='bold';
             nextBtnDix.BackgroundColor=[1.00 0.93 0.25]; nextBtnDix.FontColor=[0.75 0.10 0.10];
             nextBtnDix.Tooltip='Next slice';
             nextBtnDix.ButtonPushedFcn = @(~,~)app.nudgeDixonSlice(+1);
+
+            app.AxDixonWater = uiaxes(rightG);
+            app.AxDixonWater.Layout.Row = 3;
+            setupDarkAxes(app.AxDixonWater,'Fat or Out-of-Phase');
+            app.AxDixonWater.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('fat');
+
+            % Keep the legacy ROI drawing path anchored to the PDFF panel.
+            app.AxDixon = app.AxDixonPDFF;
 
             % ROI panel (right column) — Liver / Spleen / Muscle / Fat workflow
             roiPnl = uipanel(app.DixonGrid,'Title','Dixon ROI Tools', ...

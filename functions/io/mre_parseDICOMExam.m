@@ -278,16 +278,23 @@ function entry = classifySeries(entry)
     end
 
     % ── IDEAL-IQ ─────────────────────────────────────────────────────
+    % Outer trigger: GE private seq tag, description keywords, or folder name.
+    % 'water:' broadened to 'water' (catches standalone Water series).
+    % Standalone 'fat' and 'r2' descriptions use exact-match to avoid false
+    % positives from fat-suppression or unrelated series names.
     if hit(seq,  {'ideal3darc','ideal3d','idealarc','ideal'}) || ...
        hit(desc, {'ideal','idealiq','ideal-iq','fat frac','fatfrac', ...
-                  'pdff','water:','t2*:'}) || ...
-       hit(fnam, {'ideal','idealiq','dixon','pdff'})
+                  'pdff','water','t2*:','r2star','r2*','r2 map','r2map'}) || ...
+       strcmp(desc,'r2') || strcmp(desc,'fat') || ...
+       hit(fnam, {'ideal','idealiq','dixon','pdff','water'})
         if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
            hit(fnam,{'pdff','fatfrac'})
             entry.Role = 'IDEALIQ_PDFF';
-        elseif hit(desc,{'t2*','t2star','t2_star'})
+        elseif hit(desc,{'t2*','t2star','t2_star','r2star','r2*','r2 map','r2map'}) || ...
+               strcmp(desc,'r2')
             entry.Role = 'IDEALIQ_T2s';
-        elseif contains(desc,'water') && entry.nImages < 50
+        elseif contains(desc,'water') || strcmp(desc,'fat')
+            % Water or standalone Fat image — no slice-count restriction.
             entry.Role = 'IDEALIQ_Raw';
         else
             entry.Role = 'IDEALIQ_Multi';
