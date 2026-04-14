@@ -82,7 +82,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         DdlDixonCmap        matlab.ui.control.DropDown   % colormap for PDFF/current
         EdtDixonMin         matlab.ui.control.NumericEditField  % display min
         EdtDixonMax         matlab.ui.control.NumericEditField  % display max
-        SldrDixon           matlab.ui.control.Slider
         LblDixonSlice       matlab.ui.control.Label
         LblDixonInfo        matlab.ui.control.Label
         % Dixon ROI buttons
@@ -535,10 +534,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             imgG.Padding     = [0 0 0 0];
             imgG.RowSpacing  = 3;
 
-            % Row 1: static panel labels + slice/info.
-            contRow = uigridlayout(imgG,[1 4]);
+            % Row 1: static panel labels + info.
+            contRow = uigridlayout(imgG,[1 3]);
             contRow.Layout.Row=1;
-            contRow.ColumnWidth = {180,'1x',55,140};
+            contRow.ColumnWidth = {180,'1x',140};
             contRow.Padding=[0 2 0 2]; contRow.ColumnSpacing=6;
             lcon = uilabel(contRow); lcon.Layout.Column=1;
             lcon.Text='PDFF | Water/IP | Fat/OP'; lcon.FontSize=13; lcon.FontWeight='bold';
@@ -549,10 +548,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.DdlDixonContrast.Value     = 'PDFF';
             app.DdlDixonContrast.Visible   = 'off';
             app.DdlDixonContrast.ValueChangedFcn = @(~,~)app.onDixonContrastChange();
-            app.LblDixonSlice = uilabel(contRow); app.LblDixonSlice.Layout.Column=3;
-            app.LblDixonSlice.Text='1/1'; app.LblDixonSlice.FontSize=12;
-            app.LblDixonSlice.HorizontalAlignment='center';
-            app.LblDixonInfo = uilabel(contRow); app.LblDixonInfo.Layout.Column=4;
+            app.LblDixonInfo = uilabel(contRow); app.LblDixonInfo.Layout.Column=3;
             app.LblDixonInfo.Text='';
             app.LblDixonInfo.FontSize=10; app.LblDixonInfo.FontColor=[0.5 0.5 0.5];
 
@@ -623,16 +619,28 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Row 4: slice slider.
             slCtrl = uigridlayout(imgG,[1 3]);
             slCtrl.Layout.Row=4;
-            slCtrl.ColumnWidth={60,'1x',50}; slCtrl.Padding=[0 2 0 2];
-            lsd = uilabel(slCtrl); lsd.Layout.Column=1;
-            lsd.Text='Slice:'; lsd.FontSize=13; lsd.FontWeight='bold';
-            app.SldrDixon = uislider(slCtrl);
-            app.SldrDixon.Layout.Column=2; app.SldrDixon.Limits=[1 28];
-            app.SldrDixon.Value=14; app.SldrDixon.MajorTicks=[];
-            app.SldrDixon.MinorTicks=[];
-            app.SldrDixon.ValueChangedFcn = @(src,~)app.onDixonSlide(src);
-            lsn2 = uilabel(slCtrl); lsn2.Layout.Column=3;
-            lsn2.Text=''; lsn2.FontSize=11;  % spacer
+            slCtrl.ColumnWidth={64,'1x',64}; slCtrl.Padding=[4 6 4 6];
+            slCtrl.ColumnSpacing=10;
+
+            prevBtnDix = uibutton(slCtrl,'push');
+            prevBtnDix.Layout.Column=1;
+            prevBtnDix.Text='Prev'; prevBtnDix.FontSize=12; prevBtnDix.FontWeight='bold';
+            prevBtnDix.BackgroundColor=[1.00 0.93 0.25]; prevBtnDix.FontColor=[0.75 0.10 0.10];
+            prevBtnDix.Tooltip='Previous slice';
+            prevBtnDix.ButtonPushedFcn = @(~,~)app.nudgeDixonSlice(-1);
+
+            app.LblDixonSlice = uilabel(slCtrl);
+            app.LblDixonSlice.Layout.Column=2;
+            app.LblDixonSlice.Text='1/1';
+            app.LblDixonSlice.FontSize=12; app.LblDixonSlice.FontWeight='bold';
+            app.LblDixonSlice.HorizontalAlignment='center';
+
+            nextBtnDix = uibutton(slCtrl,'push');
+            nextBtnDix.Layout.Column=3;
+            nextBtnDix.Text='Next'; nextBtnDix.FontSize=12; nextBtnDix.FontWeight='bold';
+            nextBtnDix.BackgroundColor=[1.00 0.93 0.25]; nextBtnDix.FontColor=[0.75 0.10 0.10];
+            nextBtnDix.Tooltip='Next slice';
+            nextBtnDix.ButtonPushedFcn = @(~,~)app.nudgeDixonSlice(+1);
 
             % ROI panel (right column) — Liver / Spleen / Muscle / Fat workflow
             roiPnl = uipanel(app.DixonGrid,'Title','Dixon ROI Tools', ...
@@ -1249,11 +1257,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     app.AppData.L12_Dixon.L1_sliceIdx, app.AppData.L12_Dixon.L2_sliceIdx));
             end
 
-            % Update Dixon slider to L1 level
+            % Jump Dixon to L1 level
             if ~isempty(app.AppData.L12_Dixon) && ~isnan(app.AppData.L12_Dixon.L1_sliceIdx)
                 sl = max(1, min(app.AppData.Dixon.nSlices, ...
                     round(app.AppData.L12_Dixon.L1_sliceIdx)));
-                app.SldrDixon.Value = sl;
                 app.AppData.DixonSlice = sl;
                 refreshDixon(app);
             end
@@ -1263,22 +1270,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         % ── DIXON ─────────────────────────────────────────────────────────
-        function onDixonSlide(app, src)
-            if app.isDixonROIWorkflowActive()
-                keepSl = app.AppData.DixonROISlice;
-                if isnan(keepSl), keepSl = app.AppData.DixonSlice; end
-                src.Value = keepSl;
-                app.AppData.DixonSlice = keepSl;
-                setStatus(app,'Finish the active Dixon ROI with Enter or cancel with Esc before changing slices.');
-                return
-            end
-            sl = round(src.Value);
-            app.AppData.DixonSlice = sl;
-            nZ = max(1, app.AppData.Dixon.nSlices);
-            app.LblDixonSlice.Text = sprintf('%d/%d', sl, nZ);
-            refreshDixon(app);
-        end
-
         function drawDixonROI(app, roiName)
             if isempty(app.AppData.Dixon)
                 uialert(app.UIFigure,'No Dixon data loaded.','No Data');
@@ -2817,7 +2808,6 @@ function tf = shouldBypassGlobalHotkeys(app)
             nZ = max(1, app.AppData.Dixon.nSlices);
             sl = max(1, min(nZ, round(app.AppData.DixonSlice + delta)));
             app.AppData.DixonSlice = sl;
-            try, app.SldrDixon.Value = sl; catch, end
             app.LblDixonSlice.Text = sprintf('%d/%d', sl, nZ);
             refreshDixon(app);
         end
@@ -3003,8 +2993,6 @@ function tf = shouldBypassGlobalHotkeys(app)
             end
             nZ = dix.nSlices;
             dixMid = max(1, round(nZ/2));
-            app.SldrDixon.Limits = [1 max(nZ,2)];
-            app.SldrDixon.Value  = dixMid;
             app.AppData.DixonSlice = dixMid;
             app.LblDixonSlice.Text = sprintf('%d/%d', dixMid, nZ);
             app.LblDixonInfo.Text  = sprintf('Pixel: %.2fmm  Slice: %.1fmm', ...
