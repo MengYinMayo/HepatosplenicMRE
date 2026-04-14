@@ -526,7 +526,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             contRow.ColumnWidth = {180,'1x',55,140};
             contRow.Padding=[0 2 0 2]; contRow.ColumnSpacing=6;
             lcon = uilabel(contRow); lcon.Layout.Column=1;
-            lcon.Text='Panels: PDFF | In | Out'; lcon.FontSize=13; lcon.FontWeight='bold';
+            lcon.Text='PDFF | Water/IP | Fat/OP'; lcon.FontSize=13; lcon.FontWeight='bold';
             app.DdlDixonContrast = uidropdown(contRow);
             app.DdlDixonContrast.Layout.Column=2;
             app.DdlDixonContrast.Items     = {'PDFF'};
@@ -544,14 +544,14 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Row 2: PDFF colormap + display range controls.
             scaleRow = uigridlayout(imgG,[1 7]);
             scaleRow.Layout.Row=2;
-            scaleRow.ColumnWidth = {60,'1x',40,50,10,50,50};
+            scaleRow.ColumnWidth = {65,90,40,50,10,50,50};
             scaleRow.Padding=[0 1 0 1]; scaleRow.ColumnSpacing=4;
             lcm = uilabel(scaleRow); lcm.Layout.Column=1;
             lcm.Text='PDFF map:'; lcm.FontSize=11; lcm.FontWeight='bold';
             app.DdlDixonCmap = uidropdown(scaleRow);
             app.DdlDixonCmap.Layout.Column=2;
-            app.DdlDixonCmap.Items     = {'Hot','Gray','Parula','Jet','Turbo','Hot (rev)','Gray (rev)'};
-            app.DdlDixonCmap.ItemsData = {'hot','gray','parula','jet','turbo','hot_r','gray_r'};
+            app.DdlDixonCmap.Items     = {'Hot','Jet','Turbo'};
+            app.DdlDixonCmap.ItemsData = {'hot','jet','turbo'};
             app.DdlDixonCmap.Value     = 'hot';
             app.DdlDixonCmap.FontSize  = 11;
             app.DdlDixonCmap.ValueChangedFcn = @(~,~)app.onDixonScaleChange();
@@ -572,23 +572,32 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             btnAuto.FontSize=11;
             btnAuto.ButtonPushedFcn = @(~,~)app.onDixonAutoScale();
 
-            % Row 3: three fixed display panels.
-            panelGrid = uigridlayout(imgG,[1 3]);
+            % Row 3: two-column display — left=PDFF, right=Water/IP (top) + Fat/OP (bottom).
+            panelGrid = uigridlayout(imgG,[1 2]);
             panelGrid.Layout.Row=3;
-            panelGrid.ColumnWidth={'1x','1x','1x'};
+            panelGrid.ColumnWidth={'1x','1x'};
             panelGrid.Padding=[0 0 0 0]; panelGrid.ColumnSpacing=6;
 
             app.AxDixonPDFF = uiaxes(panelGrid);
             app.AxDixonPDFF.Layout.Column = 1;
             setupDarkAxes(app.AxDixonPDFF,'PDFF (%)');
 
-            app.AxDixonIP = uiaxes(panelGrid);
-            app.AxDixonIP.Layout.Column = 2;
-            setupDarkAxes(app.AxDixonIP,'In-phase');
+            % Right column: stacked panel with Water/IP on top, Fat/OP on bottom.
+            rightPnl = uipanel(panelGrid,'BorderType','none');
+            rightPnl.Layout.Column = 2;
+            rightG = uigridlayout(rightPnl,[2 1]);
+            rightG.RowHeight   = {'1x','1x'};
+            rightG.ColumnWidth = {'1x'};
+            rightG.Padding     = [0 0 0 0];
+            rightG.RowSpacing  = 4;
 
-            app.AxDixonWater = uiaxes(panelGrid);
-            app.AxDixonWater.Layout.Column = 3;
-            setupDarkAxes(app.AxDixonWater,'Out-of-phase');
+            app.AxDixonIP = uiaxes(rightG);
+            app.AxDixonIP.Layout.Row = 1;
+            setupDarkAxes(app.AxDixonIP,'Water or In-phase');
+
+            app.AxDixonWater = uiaxes(rightG);
+            app.AxDixonWater.Layout.Row = 2;
+            setupDarkAxes(app.AxDixonWater,'Fat or Out-of-Phase');
 
             % Keep the legacy ROI drawing path anchored to the PDFF panel.
             app.AxDixon = app.AxDixonPDFF;
@@ -2748,8 +2757,8 @@ function tf = shouldBypassGlobalHotkeys(app)
             end
 
             renderDixonPanelAxes(app, app.AxDixonPDFF, pdffVol, sl, nZ, 'PDFF (%)', true);
-            renderDixonPanelAxes(app, app.AxDixonIP,   ipVol,   sl, nZ, 'In-phase', false);
-            renderDixonPanelAxes(app, app.AxDixonWater,opVol,   sl, nZ, 'Out-of-phase', false);
+            renderDixonPanelAxes(app, app.AxDixonIP,   ipVol,   sl, nZ, 'Water or In-phase', false);
+            renderDixonPanelAxes(app, app.AxDixonWater,opVol,   sl, nZ, 'Fat or Out-of-Phase', false);
         end
 
         function populateMRETab(app)
