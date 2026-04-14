@@ -671,7 +671,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblDixonROIInfo.Text = sprintf(['F = freehand on panel' char(10) ...
                 'D = seed+auto on panel' char(10) ...
                 'E/I = exclude/include' char(10) ...
-                '+/- = adjust erosion' char(10) ...
                 'Enter/A = accept    Esc = cancel']);
             app.LblDixonROIInfo.FontSize=10; app.LblDixonROIInfo.WordWrap='on';
             app.LblDixonROIInfo.FontColor=[0.40 0.40 0.40];
@@ -915,8 +914,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'FontSize',13,'FontWeight','bold');
             app.RightPanel.Layout.Column = 3;
 
-            app.RightGrid = uigridlayout(app.RightPanel,[4 1]);
-            app.RightGrid.RowHeight   = {110,110,90,'1x'};
+            app.RightGrid = uigridlayout(app.RightPanel,[3 1]);
+            app.RightGrid.RowHeight   = {110,110,'1x'};
             app.RightGrid.ColumnWidth = {'1x'};
             app.RightGrid.Padding     = [2 2 2 2];
             app.RightGrid.RowSpacing  = 2;
@@ -2015,10 +2014,9 @@ function I = getMREMagnitudeForROI(app, sl)
                 app.LblDixonROIInfo.Text = sprintf(['%s ROI armed — slice %d' char(10) ...
                     'Click PDFF/Water/Fat panel, then:' char(10) ...
                     'F = freehand   D = seed+auto' char(10) ...
-                    'E/I = exclude/include   +/- = erosion (%d px)' char(10) ...
+                    'E/I = exclude/include region' char(10) ...
                     'Enter/A = accept   Esc = cancel'], ...
-                    app.getDixonOrganLabel(), app.AppData.DixonROISlice, ...
-                    app.AppData.DixonROIErodePx);
+                    app.getDixonOrganLabel(), app.AppData.DixonROISlice);
             catch
             end
         end
@@ -2028,7 +2026,6 @@ function I = getMREMagnitudeForROI(app, sl)
                 app.LblDixonROIInfo.Text = sprintf(['F = freehand on panel' char(10) ...
                     'D = seed+auto on panel' char(10) ...
                     'E/I = exclude/include' char(10) ...
-                    '+/- = adjust erosion' char(10) ...
                     'Enter/A = accept    Esc = cancel']);
             catch
             end
@@ -2120,16 +2117,16 @@ function I = getMREMagnitudeForROI(app, sl)
                 app.showDixonROIHotkeyHelp();
                 return
             end
-            finalMask = cleanMeasurementMask(app, erodeMaskInward(app, outerMask, app.AppData.DixonROIErodePx));
+            % No automatic erosion for Dixon — use outer mask directly.
+            finalMask = cleanMeasurementMask(app, outerMask);
             app.AppData.DixonROIFinalMask = finalMask;
             app.showDixonROIHotkeyHelp();
             if doPreview, refreshDixon(app); end
             if any(finalMask(:))
-                setStatus(app, sprintf('%s ROI preview on slice %d. +/- erosion=%d px. Enter to accept.', ...
-                    app.getDixonOrganLabel(), app.AppData.DixonROISlice, app.AppData.DixonROIErodePx));
+                setStatus(app, sprintf('%s ROI preview on slice %d. E/I to refine, Enter to accept.', ...
+                    app.getDixonOrganLabel(), app.AppData.DixonROISlice));
             else
-                setStatus(app, sprintf('ROI empty after %d px erosion. Press - to reduce or redraw with F/D.', ...
-                    app.AppData.DixonROIErodePx));
+                setStatus(app, 'ROI is empty — redraw with F or D, or press Esc to cancel.');
             end
         end
 
@@ -2281,10 +2278,6 @@ function I = getMREMagnitudeForROI(app, sl)
             if ~app.isDixonROIWorkflowActive(), return; end
             handled = true;
             key = lower(event.Key);
-            ch = '';
-            try, ch = lower(event.Character); catch, end
-            if strcmp(ch,'+'), key = 'add'; end
-            if strcmp(ch,'-'), key = 'subtract'; end
             switch key
                 case 'escape'
                     app.cancelDixonROIWorkflow(true);
@@ -2303,10 +2296,6 @@ function I = getMREMagnitudeForROI(app, sl)
                 case 'i'
                     app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
                     app.includeIntoCurrentDixonROI();
-                case 'add'
-                    app.adjustCurrentDixonROIErosion(+1);
-                case 'subtract'
-                    app.adjustCurrentDixonROIErosion(-1);
                 otherwise
                     handled = false;
             end
