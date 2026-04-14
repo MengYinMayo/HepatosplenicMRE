@@ -88,11 +88,15 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         % Dixon ROI buttons
         BtnROI_LiverDixon   matlab.ui.control.Button
         BtnROI_SpleenDixon  matlab.ui.control.Button
+        BtnROI_MuscleDixon  matlab.ui.control.Button
+        BtnROI_FatDixon     matlab.ui.control.Button
+        BtnClearDixonROIs   matlab.ui.control.Button
+        LblDixonROIInfo     matlab.ui.control.Label
+        % Legacy properties kept for code compatibility (no longer wired to UI)
         BtnROI_MuscleL1     matlab.ui.control.Button
         BtnROI_MuscleL2     matlab.ui.control.Button
         BtnROI_SATL1        matlab.ui.control.Button
         BtnROI_SATL2        matlab.ui.control.Button
-        BtnClearDixonROIs   matlab.ui.control.Button
 
         % MRE tab
         MRETab              matlab.ui.container.Tab
@@ -136,6 +140,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         ValLiverDixonPDFF   matlab.ui.control.Label
         ValSpleenDixonVol   matlab.ui.control.Label
         ValSpleenDixonPDFF  matlab.ui.control.Label
+        ValMuscleDixonVol   matlab.ui.control.Label
+        ValMuscleDixonPDFF  matlab.ui.control.Label
+        ValFatDixonVol      matlab.ui.control.Label
+        ValFatDixonPDFF     matlab.ui.control.Label
+        % Legacy label handles (not wired to UI; kept for backward compatibility)
         ValMuscleL1Area     matlab.ui.control.Label
         ValMuscleL1PDFF     matlab.ui.control.Label
         ValMuscleL2Area     matlab.ui.control.Label
@@ -236,17 +245,23 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'MREROIErodePx', 2, ...
             'MRETargetAxis', 'mag', ...
             'MREROIDrawing', false, ...
+            'DixonROIActive',   false, ...
+            'DixonROIName',     '', ...
+            'DixonROISlice',    NaN, ...
+            'DixonROIOuterMask', [], ...
+            'DixonROIFinalMask', [], ...
+            'DixonROIErodePx',  2, ...
+            'DixonROIDrawing',  false, ...
+            'DixonTargetAxis',  'pdff', ...  % 'pdff'|'water'|'fat'
             'ROIs',         struct( ...   % all ROI masks
-                'LiverDixon',  struct('Slices',struct()), ...
-                'SpleenDixon', struct('Slices',struct()), ...
-                'MuscleL1',    [], ...
-                'MuscleL2',    [], ...
-                'SATL1',       [], ...
-                'SATL2',       [], ...
-                'LiverMRE',    struct('Slices',struct()), ...
-                'SpleenMRE',   struct('Slices',struct()), ...
-                'MuscleMRE',   struct('Slices',struct()), ...
-                'FatMRE',      struct('Slices',struct())))
+                'LiverDixon',   struct('Slices',struct()), ...
+                'SpleenDixon',  struct('Slices',struct()), ...
+                'MuscleDixon',  struct('Slices',struct()), ...
+                'FatDixon',     struct('Slices',struct()), ...
+                'LiverMRE',     struct('Slices',struct()), ...
+                'SpleenMRE',    struct('Slices',struct()), ...
+                'MuscleMRE',    struct('Slices',struct()), ...
+                'FatMRE',       struct('Slices',struct())))
     end
 
     % =====================================================================
@@ -581,6 +596,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxDixonPDFF = uiaxes(panelGrid);
             app.AxDixonPDFF.Layout.Column = 1;
             setupDarkAxes(app.AxDixonPDFF,'PDFF (%)');
+            app.AxDixonPDFF.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('pdff');
 
             % Right column: stacked panel with Water/IP on top, Fat/OP on bottom.
             rightPnl = uipanel(panelGrid,'BorderType','none');
@@ -594,10 +610,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxDixonIP = uiaxes(rightG);
             app.AxDixonIP.Layout.Row = 1;
             setupDarkAxes(app.AxDixonIP,'Water or In-phase');
+            app.AxDixonIP.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('water');
 
             app.AxDixonWater = uiaxes(rightG);
             app.AxDixonWater.Layout.Row = 2;
             setupDarkAxes(app.AxDixonWater,'Fat or Out-of-Phase');
+            app.AxDixonWater.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('fat');
 
             % Keep the legacy ROI drawing path anchored to the PDFF panel.
             app.AxDixon = app.AxDixonPDFF;
@@ -616,44 +634,49 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             lsn2 = uilabel(slCtrl); lsn2.Layout.Column=3;
             lsn2.Text=''; lsn2.FontSize=11;  % spacer
 
-            % ROI panel (right column)
-            roiPnl = uipanel(app.DixonGrid,'Title','ROI Tools', ...
+            % ROI panel (right column) — Liver / Spleen / Muscle / Fat workflow
+            roiPnl = uipanel(app.DixonGrid,'Title','Dixon ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[10 1]);
-            rg.RowHeight   = repmat({36},1,10); rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
+            rg = uigridlayout(roiPnl,[8 1]);
+            rg.RowHeight = {20,36,36,36,36,20,'1x',36};
+            rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
-            uilabel(rg,'Text','Organ volumes:','FontSize',11, ...
+            hdr = uilabel(rg,'Text','Click organ, then F/D on image:','FontSize',10, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
+            hdr.Layout.Row = 1;
 
-            app.BtnROI_LiverDixon = roiBtn(rg,2,'Liver (entire)', ...
-                [0.22 0.55 0.22],[1 1 1]);
+            app.BtnROI_LiverDixon = roiBtn(rg,2,'Liver', ...
+                [0.15 0.75 0.15],[1 1 1]);
             app.BtnROI_LiverDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('LiverDixon');
 
-            app.BtnROI_SpleenDixon = roiBtn(rg,3,'Spleen (entire)', ...
-                [0.20 0.50 0.70],[1 1 1]);
+            app.BtnROI_SpleenDixon = roiBtn(rg,3,'Spleen', ...
+                [0.15 0.55 0.90],[1 1 1]);
             app.BtnROI_SpleenDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('SpleenDixon');
 
-            uilabel(rg,'Text','T12-L3 body comp:','FontSize',11, ...
+            app.BtnROI_MuscleDixon = roiBtn(rg,4,'Muscle', ...
+                [0.95 0.55 0.15],[1 1 1]);
+            app.BtnROI_MuscleDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleDixon');
+
+            app.BtnROI_FatDixon = roiBtn(rg,5,'Fat', ...
+                [0.85 0.20 0.85],[1 1 1]);
+            app.BtnROI_FatDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('FatDixon');
+
+            workflowHdr = uilabel(rg,'Text','Hotkeys (after arming organ):','FontSize',9, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
+            workflowHdr.Layout.Row = 6;
 
-            app.BtnROI_MuscleL1 = roiBtn(rg,5,'Muscle @ T12', ...
-                [0.78 0.22 0.12],[1 1 1]);
-            app.BtnROI_MuscleL1.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleL1');
+            app.LblDixonROIInfo = uilabel(rg);
+            app.LblDixonROIInfo.Layout.Row = 7;
+            app.LblDixonROIInfo.Text = sprintf(['F = freehand on panel' char(10) ...
+                'D = seed+auto on panel' char(10) ...
+                'E/I = exclude/include' char(10) ...
+                '+/- = adjust erosion' char(10) ...
+                'Enter/A = accept    Esc = cancel']);
+            app.LblDixonROIInfo.FontSize=10; app.LblDixonROIInfo.WordWrap='on';
+            app.LblDixonROIInfo.FontColor=[0.40 0.40 0.40];
 
-            app.BtnROI_MuscleL2 = roiBtn(rg,6,'Muscle @ L3', ...
-                [0.90 0.40 0.12],[1 1 1]);
-            app.BtnROI_MuscleL2.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleL2');
-
-            app.BtnROI_SATL1 = roiBtn(rg,7,'SAT @ T12', ...
-                [0.14 0.28 0.85],[1 1 1]);
-            app.BtnROI_SATL1.ButtonPushedFcn = @(~,~)app.drawDixonROI('SATL1');
-
-            app.BtnROI_SATL2 = roiBtn(rg,8,'SAT @ L3', ...
-                [0.30 0.44 0.92],[1 1 1]);
-            app.BtnROI_SATL2.ButtonPushedFcn = @(~,~)app.drawDixonROI('SATL2');
-
-            app.BtnClearDixonROIs = roiBtn(rg,10,'Clear this slice', ...
+            app.BtnClearDixonROIs = roiBtn(rg,8,'Clear this slice', ...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearDixonROIs.ButtonPushedFcn = @(~,~)app.clearDixonSlice();
         end
@@ -893,27 +916,21 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.RightPanel.Layout.Column = 3;
 
             app.RightGrid = uigridlayout(app.RightPanel,[4 1]);
-            app.RightGrid.RowHeight   = {110,100,110,'1x'};
+            app.RightGrid.RowHeight   = {110,110,90,'1x'};
             app.RightGrid.ColumnWidth = {'1x'};
             app.RightGrid.Padding     = [2 2 2 2];
             app.RightGrid.RowSpacing  = 2;
 
-            addMeasSection(app,1,'Dixon — Organ size & PDFF', ...
-                {'Liver vol.','Liver PDFF','Spleen vol.','Spleen PDFF'}, ...
+            addMeasSection(app,1,'Dixon — Liver & Spleen', ...
+                {'Liver vol. (mm³)','Liver PDFF','Spleen vol. (mm³)','Spleen PDFF'}, ...
                 {'ValLiverDixonVol','ValLiverDixonPDFF', ...
                  'ValSpleenDixonVol','ValSpleenDixonPDFF'});
 
-            addMeasSection(app,2,'Muscle', ...
-                {'Muscle area T12','Muscle PDFF T12', ...
-                 'Muscle area L3','Muscle PDFF L3'}, ...
-                {'ValMuscleL1Area','ValMuscleL1PDFF', ...
-                 'ValMuscleL2Area','ValMuscleL2PDFF'});
-
-            addMeasSection(app,3,'SAT & ratio', ...
-                {'SAT area T12','SAT PDFF T12', ...
-                 'SAT area L3','SAT PDFF L3','Muscle:SAT ratio'}, ...
-                {'ValSATL1Area','ValSATL1PDFF', ...
-                 'ValSATL2Area','ValSATL2PDFF','ValMuscleSATRatio'});
+            addMeasSection(app,2,'Dixon — Muscle & Fat', ...
+                {'Muscle vol. (mm³)','Muscle PDFF', ...
+                 'Fat vol. (mm³)','Fat PDFF'}, ...
+                {'ValMuscleDixonVol','ValMuscleDixonPDFF', ...
+                 'ValFatDixonVol','ValFatDixonPDFF'});
 
             % NOTE FOR MAINTAINERS:
             % The visible labels below were changed from stiffness + IQR to
@@ -921,7 +938,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % handle names ending in *IQR are intentionally retained to
             % avoid widespread refactoring, but those handles now show
             % "N / volume" rather than interquartile range.
-            addMeasSection(app,4,'MRE — Stiffness', ...
+            addMeasSection(app,3,'MRE — Stiffness', ...
                 {'Liver stiffness','Liver N/vol.', ...
                  'Spleen stiffness','Spleen N/vol.', ...
                  'Muscle stiffness','Muscle N/vol.', ...
@@ -1248,6 +1265,14 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         % ── DIXON ─────────────────────────────────────────────────────────
         function onDixonSlide(app, src)
+            if app.isDixonROIWorkflowActive()
+                keepSl = app.AppData.DixonROISlice;
+                if isnan(keepSl), keepSl = app.AppData.DixonSlice; end
+                src.Value = keepSl;
+                app.AppData.DixonSlice = keepSl;
+                setStatus(app,'Finish the active Dixon ROI with Enter or cancel with Esc before changing slices.');
+                return
+            end
             sl = round(src.Value);
             app.AppData.DixonSlice = sl;
             nZ = max(1, app.AppData.Dixon.nSlices);
@@ -1260,65 +1285,27 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 uialert(app.UIFigure,'No Dixon data loaded.','No Data');
                 return
             end
-            sl = app.AppData.DixonSlice;
-
-            % For L1/L2 ROIs, jump to the correct slice first
-            switch roiName
-                case 'MuscleL1', if ~isnan(app.AppData.L12_Dixon.L1_sliceIdx)
-                    sl = round(app.AppData.L12_Dixon.L1_sliceIdx);
-                    app.AppData.DixonSlice = sl;
-                    app.SldrDixon.Value = sl;
-                    refreshDixon(app);
-                end
-                case 'MuscleL2', if ~isnan(app.AppData.L12_Dixon.L2_sliceIdx)
-                    sl = round(app.AppData.L12_Dixon.L2_sliceIdx);
-                    app.AppData.DixonSlice = sl;
-                    app.SldrDixon.Value = sl;
-                    refreshDixon(app);
-                end
-                case 'SATL1', if ~isnan(app.AppData.L12_Dixon.L1_sliceIdx)
-                    sl = round(app.AppData.L12_Dixon.L1_sliceIdx);
-                    app.AppData.DixonSlice = sl;
-                    app.SldrDixon.Value = sl;
-                    refreshDixon(app);
-                end
-                case 'SATL2', if ~isnan(app.AppData.L12_Dixon.L2_sliceIdx)
-                    sl = round(app.AppData.L12_Dixon.L2_sliceIdx);
-                    app.AppData.DixonSlice = sl;
-                    app.SldrDixon.Value = sl;
-                    refreshDixon(app);
-                end
-            end
-
-            setStatus(app,sprintf('Draw %s ROI on the image (freehand).  Double-click to close.', ...
-                strrep(roiName,'_',' ')));
-            try
-                h = drawfreehand(app.AxDixon,'Color',dixonROIColor(roiName), ...
-                    'LineWidth',2,'FaceAlpha',0.15);
-                wait(h);
-                baseVol = dixonPreferredDisplayVolume(app.AppData.Dixon, 'PDFF');
-                if isempty(baseVol), baseVol = dixonPreferredDisplayVolume(app.AppData.Dixon, 'InPhase'); end
-                if isempty(baseVol), baseVol = dixonPreferredDisplayVolume(app.AppData.Dixon, 'OutPhase'); end
-                nR = size(baseVol,1);
-                nC = size(baseVol,2);
-                mask = logical(h.createMask());
-                storeROI(app, roiName, sl, mask, nR, nC);
-                overlayROIOnDixon(app, roiName, mask);
-                computeDixonROIStats(app, roiName, mask, sl);
-                setStatus(app,sprintf('%s ROI placed on slice %d.', roiName, sl));
-            catch ME
-                setStatus(app,['ROI error: ' ME.message]);
-            end
+            app.cancelDixonROIWorkflow(false);
+            app.AppData.DixonROIActive  = true;
+            app.AppData.DixonROIName    = roiName;
+            app.AppData.DixonROISlice   = app.AppData.DixonSlice;
+            app.AppData.DixonROIOuterMask = [];
+            app.AppData.DixonROIFinalMask = [];
+            app.AppData.DixonROIErodePx = 2;
+            app.AppData.DixonROIDrawing = false;
+            app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
+            app.setDixonROIButtonsEnabled(false);
+            app.showDixonROIHotkeyHelp();
+            setStatus(app, sprintf('%s ROI armed on slice %d. Click a Dixon panel, then F = freehand or D = seed+auto.', ...
+                app.getDixonOrganLabel(roiName), app.AppData.DixonROISlice));
         end
 
         function clearDixonSlice(app)
             sl = app.AppData.DixonSlice;
-            app.AppData.ROIs.LiverDixon.Slices  = removeSlice(app.AppData.ROIs.LiverDixon.Slices,  sl);
-            app.AppData.ROIs.SpleenDixon.Slices = removeSlice(app.AppData.ROIs.SpleenDixon.Slices, sl);
-            app.AppData.ROIs.MuscleL1 = [];
-            app.AppData.ROIs.MuscleL2 = [];
-            app.AppData.ROIs.SATL1    = [];
-            app.AppData.ROIs.SATL2    = [];
+            app.AppData.ROIs.LiverDixon.Slices   = removeSlice(app.AppData.ROIs.LiverDixon.Slices,   sl);
+            app.AppData.ROIs.SpleenDixon.Slices  = removeSlice(app.AppData.ROIs.SpleenDixon.Slices,  sl);
+            app.AppData.ROIs.MuscleDixon.Slices  = removeSlice(app.AppData.ROIs.MuscleDixon.Slices,  sl);
+            app.AppData.ROIs.FatDixon.Slices     = removeSlice(app.AppData.ROIs.FatDixon.Slices,     sl);
             refreshDixon(app);
             setStatus(app,sprintf('ROIs cleared for Dixon slice %d.',sl));
         end
@@ -1991,6 +1978,344 @@ function I = getMREMagnitudeForROI(app, sl)
             end
         end
 
+        % =================================================================
+        %  DIXON ROI WORKFLOW  (parallel to MRE ROI workflow)
+        % =================================================================
+
+        function tf = isDixonROIWorkflowActive(app)
+            tf = false;
+            try
+                tf = isvalid(app) && isfield(app.AppData,'DixonROIActive') && ...
+                    logical(app.AppData.DixonROIActive) && ~isempty(app.AppData.DixonROIName);
+            catch
+            end
+        end
+
+        function organLabel = getDixonOrganLabel(app, roiName)
+            if nargin < 2 || isempty(roiName), roiName = app.AppData.DixonROIName; end
+            if contains(roiName,'Liver'),  organLabel = 'Liver';
+            elseif contains(roiName,'Spleen'), organLabel = 'Spleen';
+            elseif contains(roiName,'Muscle'), organLabel = 'Muscle';
+            elseif contains(roiName,'Fat'),    organLabel = 'Fat';
+            else,                              organLabel = 'ROI';
+            end
+        end
+
+        function setDixonROIButtonsEnabled(app, tf)
+            state = 'off'; if tf, state = 'on'; end
+            try, app.BtnROI_LiverDixon.Enable  = state; catch, end
+            try, app.BtnROI_SpleenDixon.Enable = state; catch, end
+            try, app.BtnROI_MuscleDixon.Enable = state; catch, end
+            try, app.BtnROI_FatDixon.Enable    = state; catch, end
+            try, app.BtnClearDixonROIs.Enable  = state; catch, end
+        end
+
+        function showDixonROIHotkeyHelp(app)
+            try
+                app.LblDixonROIInfo.Text = sprintf(['%s ROI armed — slice %d' char(10) ...
+                    'Click PDFF/Water/Fat panel, then:' char(10) ...
+                    'F = freehand   D = seed+auto' char(10) ...
+                    'E/I = exclude/include   +/- = erosion (%d px)' char(10) ...
+                    'Enter/A = accept   Esc = cancel'], ...
+                    app.getDixonOrganLabel(), app.AppData.DixonROISlice, ...
+                    app.AppData.DixonROIErodePx);
+            catch
+            end
+        end
+
+        function resetDixonROIHotkeyHelp(app)
+            try
+                app.LblDixonROIInfo.Text = sprintf(['F = freehand on panel' char(10) ...
+                    'D = seed+auto on panel' char(10) ...
+                    'E/I = exclude/include' char(10) ...
+                    '+/- = adjust erosion' char(10) ...
+                    'Enter/A = accept    Esc = cancel']);
+            catch
+            end
+        end
+
+        function setCurrentDixonTargetAxis(app, axisKey)
+            validKeys = {'pdff','water','fat'};
+            if nargin < 2 || ~any(strcmp(axisKey, validKeys)), axisKey = 'pdff'; end
+            app.AppData.DixonTargetAxis = axisKey;
+        end
+
+        function axisKey = inferCurrentDixonTargetAxis(app)
+            axisKey = 'pdff';
+            try
+                if isfield(app.AppData,'DixonTargetAxis') && ~isempty(app.AppData.DixonTargetAxis)
+                    axisKey = app.AppData.DixonTargetAxis;
+                end
+                obj = app.UIFigure.CurrentObject;
+                while ~isempty(obj)
+                    if isequal(obj, app.AxDixonPDFF),  axisKey = 'pdff';  break
+                    elseif isequal(obj, app.AxDixonIP), axisKey = 'water'; break
+                    elseif isequal(obj, app.AxDixonWater), axisKey = 'fat'; break
+                    end
+                    try, obj = obj.Parent; catch, break; end
+                end
+            catch
+            end
+        end
+
+        function ax = getDixonAxisByKey(app, axisKey)
+            switch lower(axisKey)
+                case 'water', ax = app.AxDixonIP;
+                case 'fat',   ax = app.AxDixonWater;
+                otherwise,    ax = app.AxDixonPDFF;
+            end
+        end
+
+        function label = getDixonAxisLabel(~, axisKey)
+            switch lower(axisKey)
+                case 'water', label = 'Water/In-phase';
+                case 'fat',   label = 'Fat/Out-of-phase';
+                otherwise,    label = 'PDFF';
+            end
+        end
+
+        function I = getDixonImageForROI(app, sl, axisKey)
+            I = [];
+            try
+                dix = app.AppData.Dixon;
+                switch lower(axisKey)
+                    case 'water'
+                        vol = dixonPreferredDisplayVolume(dix, 'InPhase');
+                    case 'fat'
+                        vol = dixonPreferredDisplayVolume(dix, 'OutPhase');
+                    otherwise
+                        vol = dixonPreferredDisplayVolume(dix, 'PDFF');
+                        if isempty(vol), vol = dixonPreferredDisplayVolume(dix, 'InPhase'); end
+                end
+                if ~isempty(vol)
+                    sl = max(1, min(sl, size(vol,3)));
+                    I = double(vol(:,:,sl));
+                end
+            catch
+            end
+        end
+
+        function cancelDixonROIWorkflow(app, doRefresh)
+            if nargin < 2, doRefresh = true; end
+            app.AppData.DixonROIActive   = false;
+            app.AppData.DixonROIName     = '';
+            app.AppData.DixonROISlice    = NaN;
+            app.AppData.DixonROIOuterMask = [];
+            app.AppData.DixonROIFinalMask = [];
+            app.AppData.DixonROIErodePx  = 2;
+            app.AppData.DixonROIDrawing  = false;
+            app.setDixonROIButtonsEnabled(true);
+            app.resetDixonROIHotkeyHelp();
+            if doRefresh && ~isempty(app.AppData.Dixon)
+                refreshDixon(app);
+            end
+        end
+
+        function recomputeCurrentDixonROI(app, doPreview)
+            if nargin < 2, doPreview = true; end
+            if ~app.isDixonROIWorkflowActive(), return; end
+            outerMask = logical(app.AppData.DixonROIOuterMask);
+            if isempty(outerMask) || ~any(outerMask(:))
+                if doPreview, refreshDixon(app); end
+                app.showDixonROIHotkeyHelp();
+                return
+            end
+            finalMask = cleanMeasurementMask(app, erodeMaskInward(app, outerMask, app.AppData.DixonROIErodePx));
+            app.AppData.DixonROIFinalMask = finalMask;
+            app.showDixonROIHotkeyHelp();
+            if doPreview, refreshDixon(app); end
+            if any(finalMask(:))
+                setStatus(app, sprintf('%s ROI preview on slice %d. +/- erosion=%d px. Enter to accept.', ...
+                    app.getDixonOrganLabel(), app.AppData.DixonROISlice, app.AppData.DixonROIErodePx));
+            else
+                setStatus(app, sprintf('ROI empty after %d px erosion. Press - to reduce or redraw with F/D.', ...
+                    app.AppData.DixonROIErodePx));
+            end
+        end
+
+        function captureManualOuterDixonROI(app)
+            if ~app.isDixonROIWorkflowActive(), return; end
+            axisKey = app.inferCurrentDixonTargetAxis();
+            app.setCurrentDixonTargetAxis(axisKey);
+            ax = app.getDixonAxisByKey(axisKey);
+            sl = app.AppData.DixonROISlice;
+            I = app.getDixonImageForROI(sl, axisKey);
+            if isempty(I), setStatus(app,'No image on selected panel.'); return; end
+            nR = size(I,1); nC = size(I,2);
+            roiColor = dixonROIColor(app.AppData.DixonROIName);
+            setStatus(app, sprintf('Draw freehand %s contour on %s. Double-click to finish.', ...
+                lower(app.getDixonOrganLabel()), app.getDixonAxisLabel(axisKey)));
+            app.AppData.DixonROIDrawing = true;
+            mask = captureFreehandMask(app, ax, nR, nC, roiColor);
+            app.AppData.DixonROIDrawing = false;
+            if ~any(mask(:))
+                refreshDixon(app); app.showDixonROIHotkeyHelp();
+                setStatus(app,'Freehand contour was empty. Press F to retry or Esc to cancel.');
+                return
+            end
+            app.AppData.DixonROIOuterMask = cleanOuterMask(app, mask);
+            app.recomputeCurrentDixonROI(true);
+        end
+
+        function captureSeedAutoDixonROI(app)
+            if ~app.isDixonROIWorkflowActive(), return; end
+            axisKey = app.inferCurrentDixonTargetAxis();
+            app.setCurrentDixonTargetAxis(axisKey);
+            ax = app.getDixonAxisByKey(axisKey);
+            sl = app.AppData.DixonROISlice;
+            I = app.getDixonImageForROI(sl, axisKey);
+            if isempty(I), setStatus(app,'No image on selected panel for seeding.'); return; end
+            nR = size(I,1); nC = size(I,2);
+            roiColor = dixonROIColor(app.AppData.DixonROIName);
+            setStatus(app, sprintf('Draw seed circle inside %s on %s. Double-click to finish.', ...
+                lower(app.getDixonOrganLabel()), app.getDixonAxisLabel(axisKey)));
+            app.AppData.DixonROIDrawing = true;
+            seedMask = captureSeedMask(app, ax, nR, nC, roiColor);
+            app.AppData.DixonROIDrawing = false;
+            if ~any(seedMask(:))
+                refreshDixon(app); app.showDixonROIHotkeyHelp();
+                setStatus(app,'Seed circle was empty. Press D to retry or F for freehand.');
+                return
+            end
+            outerMask = autoMaskFromSeedCircleApp(app, I, seedMask);
+            outerMask = cleanOuterMask(app, outerMask);
+            if ~any(outerMask(:))
+                refreshDixon(app); app.showDixonROIHotkeyHelp();
+                setStatus(app,'Auto contour failed. Press D to retry or F for freehand.');
+                return
+            end
+            app.AppData.DixonROIOuterMask = outerMask;
+            app.recomputeCurrentDixonROI(true);
+        end
+
+        function excludeFromCurrentDixonROI(app)
+            if ~app.isDixonROIWorkflowActive() || isempty(app.AppData.DixonROIFinalMask) || ...
+                    ~any(app.AppData.DixonROIFinalMask(:))
+                setStatus(app,'No ROI to edit yet. Press F or D first.'); return
+            end
+            nR = size(app.AppData.DixonROIFinalMask,1);
+            nC = size(app.AppData.DixonROIFinalMask,2);
+            axisKey = app.inferCurrentDixonTargetAxis();
+            ax = app.getDixonAxisByKey(axisKey);
+            setStatus(app, sprintf('Draw region on %s to EXCLUDE.', app.getDixonAxisLabel(axisKey)));
+            app.AppData.DixonROIDrawing = true;
+            delta = captureFreehandMask(app, ax, nR, nC, [1 0 1]);
+            app.AppData.DixonROIDrawing = false;
+            if ~any(delta(:)), refreshDixon(app); app.showDixonROIHotkeyHelp(); return; end
+            newMask = cleanMeasurementMask(app, app.AppData.DixonROIFinalMask & ~delta);
+            if ~any(newMask(:))
+                refreshDixon(app); setStatus(app,'Exclusion removed entire ROI — kept previous.'); return
+            end
+            app.AppData.DixonROIFinalMask = newMask;
+            refreshDixon(app); app.showDixonROIHotkeyHelp();
+            setStatus(app,'Region excluded.');
+        end
+
+        function includeIntoCurrentDixonROI(app)
+            if ~app.isDixonROIWorkflowActive() || isempty(app.AppData.DixonROIOuterMask) || ...
+                    ~any(app.AppData.DixonROIOuterMask(:))
+                setStatus(app,'No outer contour yet. Press F or D first.'); return
+            end
+            nR = size(app.AppData.DixonROIOuterMask,1);
+            nC = size(app.AppData.DixonROIOuterMask,2);
+            axisKey = app.inferCurrentDixonTargetAxis();
+            ax = app.getDixonAxisByKey(axisKey);
+            setStatus(app, sprintf('Draw region on %s to INCLUDE.', app.getDixonAxisLabel(axisKey)));
+            app.AppData.DixonROIDrawing = true;
+            delta = captureFreehandMask(app, ax, nR, nC, dixonROIColor(app.AppData.DixonROIName));
+            app.AppData.DixonROIDrawing = false;
+            if ~any(delta(:))
+                if ~isempty(app.AppData.DixonROIFinalMask) && any(app.AppData.DixonROIFinalMask(:))
+                    refreshDixon(app);
+                end
+                app.showDixonROIHotkeyHelp(); return
+            end
+            baseMask = false(nR,nC);
+            if ~isempty(app.AppData.DixonROIFinalMask), baseMask = logical(app.AppData.DixonROIFinalMask); end
+            newMask = cleanMeasurementMask(app, baseMask | delta);
+            if ~any(newMask(:)), setStatus(app,'Added region produced empty ROI.'); return; end
+            app.AppData.DixonROIFinalMask = newMask;
+            refreshDixon(app); app.showDixonROIHotkeyHelp();
+            setStatus(app,'Region included.');
+        end
+
+        function adjustCurrentDixonROIErosion(app, deltaPx)
+            if ~app.isDixonROIWorkflowActive() || isempty(app.AppData.DixonROIOuterMask)
+                setStatus(app,'Press F or D first before adjusting erosion.'); return
+            end
+            app.AppData.DixonROIErodePx = max(0, round(app.AppData.DixonROIErodePx + deltaPx));
+            app.recomputeCurrentDixonROI(true);
+        end
+
+        function acceptCurrentDixonROI(app)
+            if ~app.isDixonROIWorkflowActive(), return; end
+            roiName  = app.AppData.DixonROIName;
+            sl       = app.AppData.DixonROISlice;
+            finalMask = app.AppData.DixonROIFinalMask;
+            hasOuter  = ~isempty(app.AppData.DixonROIOuterMask) && any(app.AppData.DixonROIOuterMask(:));
+            hasValid  = ~isempty(finalMask) && any(finalMask(:));
+            if ~hasOuter && ~hasValid
+                app.cancelDixonROIWorkflow(true);
+                setStatus(app,'Nothing to accept — ROI cancelled.'); return
+            end
+            % Get reference size from any available Dixon volume
+            dix = app.AppData.Dixon;
+            baseVol = dixonPreferredDisplayVolume(dix, 'PDFF');
+            if isempty(baseVol), baseVol = dixonPreferredDisplayVolume(dix,'InPhase'); end
+            if isempty(baseVol), baseVol = dixonPreferredDisplayVolume(dix,'OutPhase'); end
+            nR = size(baseVol,1); nC = size(baseVol,2);
+            if ~hasValid
+                finalMask = false(nR,nC);  % technical failure — store empty
+            end
+            storeROI(app, roiName, sl, finalMask, nR, nC);
+            if hasValid
+                computeDixonROIStats(app, roiName, finalMask, sl);
+            end
+            app.cancelDixonROIWorkflow(false);
+            refreshDixon(app);
+            setStatus(app, sprintf('%s ROI accepted on slice %d.', app.getDixonOrganLabel(roiName), sl));
+        end
+
+        function handled = handleDixonROIHotkey(app, event)
+            handled = false;
+            if ~app.isDixonROIWorkflowActive(), return; end
+            handled = true;
+            key = lower(event.Key);
+            ch = '';
+            try, ch = lower(event.Character); catch, end
+            if strcmp(ch,'+'), key = 'add'; end
+            if strcmp(ch,'-'), key = 'subtract'; end
+            switch key
+                case 'escape'
+                    app.cancelDixonROIWorkflow(true);
+                    setStatus(app,'Dixon ROI workflow cancelled.');
+                case {'return','enter','a'}
+                    app.acceptCurrentDixonROI();
+                case 'f'
+                    app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
+                    app.captureManualOuterDixonROI();
+                case 'd'
+                    app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
+                    app.captureSeedAutoDixonROI();
+                case {'e','x'}
+                    app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
+                    app.excludeFromCurrentDixonROI();
+                case 'i'
+                    app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
+                    app.includeIntoCurrentDixonROI();
+                case 'add'
+                    app.adjustCurrentDixonROIErosion(+1);
+                case 'subtract'
+                    app.adjustCurrentDixonROIErosion(-1);
+                otherwise
+                    handled = false;
+            end
+        end
+
+        % =================================================================
+        %  END DIXON ROI WORKFLOW
+        % =================================================================
+
         function seedMask = captureSeedMask(app, ax, nR, nC, seedColor)
             seedMask = false(nR, nC);
             hSeed = [];
@@ -2422,6 +2747,9 @@ function onKeyPress(app, event)
     if app.handleMREROIHotkey(event)
         return
     end
+    if app.handleDixonROIHotkey(event)
+        return
+    end
     if app.shouldBypassGlobalHotkeys()
         return
     end
@@ -2490,6 +2818,10 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         function nudgeDixonSlice(app, delta)
+            if app.isDixonROIWorkflowActive()
+                setStatus(app,'Finish the active Dixon ROI with Enter or cancel with Esc before changing slices.');
+                return
+            end
             if isempty(app.AppData.Dixon) || delta == 0
                 return
             end
@@ -2986,10 +3318,8 @@ function tf = shouldBypassGlobalHotkeys(app)
             switch roiName
                 case 'LiverDixon',  app.AppData.ROIs.LiverDixon.Slices.(key)  = mask;
                 case 'SpleenDixon', app.AppData.ROIs.SpleenDixon.Slices.(key) = mask;
-                case 'MuscleL1',    app.AppData.ROIs.MuscleL1 = mask;
-                case 'MuscleL2',    app.AppData.ROIs.MuscleL2 = mask;
-                case 'SATL1',       app.AppData.ROIs.SATL1    = mask;
-                case 'SATL2',       app.AppData.ROIs.SATL2    = mask;
+                case 'MuscleDixon', app.AppData.ROIs.MuscleDixon.Slices.(key) = mask;
+                case 'FatDixon',    app.AppData.ROIs.FatDixon.Slices.(key)    = mask;
                 case 'LiverMRE',    app.AppData.ROIs.LiverMRE.Slices.(key)  = mask;
                 case 'SpleenMRE',   app.AppData.ROIs.SpleenMRE.Slices.(key) = mask;
                 case 'MuscleMRE',   app.AppData.ROIs.MuscleMRE.Slices.(key) = mask;
@@ -3011,36 +3341,49 @@ function tf = shouldBypassGlobalHotkeys(app)
         function computeDixonROIStats(app, roiName, mask, sl)
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
-            dx = dix.PixelSpacing_mm(1); dy = dix.PixelSpacing_mm(2);
-            pixA = dx*dy/100;   % mm² → cm²
-            area = sum(mask(:)) * pixA;
+            dx = dix.PixelSpacing_mm(1);
+            dy = dix.PixelSpacing_mm(2);
+            % Slice thickness: use SliceThickness_mm if available, else assume 5 mm
+            dz = 5;
+            if isfield(dix,'SliceThickness_mm') && ~isempty(dix.SliceThickness_mm)
+                dz = dix.SliceThickness_mm;
+            end
+            nVox  = sum(mask(:));
+            volMm3 = nVox * dx * dy * dz;
 
             pdff = [];
             if ~isempty(dix.PDFF) && sl <= size(dix.PDFF,3)
                 ff = dix.PDFF(:,:,sl); pdff = nanmean(ff(mask));
             end
 
-            switch roiName
-                case 'LiverDixon'
-                    app.ValLiverDixonVol.Text  = sprintf('%.0f cm²',area);
-                    if ~isempty(pdff), app.ValLiverDixonPDFF.Text = sprintf('%.1f%%',pdff); end
-                case 'SpleenDixon'
-                    app.ValSpleenDixonVol.Text  = sprintf('%.0f cm²',area);
-                    if ~isempty(pdff), app.ValSpleenDixonPDFF.Text = sprintf('%.1f%%',pdff); end
-                case 'MuscleL1'
-                    app.ValMuscleL1Area.Text = sprintf('%.1f cm²',area);
-                    if ~isempty(pdff), app.ValMuscleL1PDFF.Text = sprintf('%.1f%%',pdff); end
-                case 'MuscleL2'
-                    app.ValMuscleL2Area.Text = sprintf('%.1f cm²',area);
-                    if ~isempty(pdff), app.ValMuscleL2PDFF.Text = sprintf('%.1f%%',pdff); end
-                case 'SATL1'
-                    app.ValSATL1Area.Text = sprintf('%.1f cm²',area);
-                    if ~isempty(pdff), app.ValSATL1PDFF.Text = sprintf('%.1f%%',pdff); end
-                case 'SATL2'
-                    app.ValSATL2Area.Text = sprintf('%.1f cm²',area);
-                    if ~isempty(pdff), app.ValSATL2PDFF.Text = sprintf('%.1f%%',pdff); end
+            function updatePair(volHandle, pdffHandle)
+                try, volHandle.Text  = sprintf('%d vox / %.0f mm³', nVox, volMm3); catch, end
+                try, if ~isempty(pdff), pdffHandle.Text = sprintf('%.1f%%',pdff); end; catch, end
             end
-            updateMuscleSATRatio(app);
+
+            switch roiName
+                case 'LiverDixon',  updatePair(app.ValLiverDixonVol,  app.ValLiverDixonPDFF);
+                case 'SpleenDixon', updatePair(app.ValSpleenDixonVol, app.ValSpleenDixonPDFF);
+                case 'MuscleDixon', updatePair(app.ValMuscleDixonVol, app.ValMuscleDixonPDFF);
+                case 'FatDixon',    updatePair(app.ValFatDixonVol,    app.ValFatDixonPDFF);
+            end
+        end
+
+        function updateAllDixonStats(app)
+            dix = app.AppData.Dixon;
+            if isempty(dix), return; end
+            for rn = {'LiverDixon','SpleenDixon','MuscleDixon','FatDixon'}
+                roiName = rn{1};
+                slices = fieldnames(app.AppData.ROIs.(roiName).Slices);
+                for k = 1:numel(slices)
+                    sl = str2double(strrep(slices{k},'sl',''));
+                    mask = app.AppData.ROIs.(roiName).Slices.(slices{k});
+                    if any(mask(:))
+                        computeDixonROIStats(app, roiName, mask, sl);
+                        break   % use first stored slice for display
+                    end
+                end
+            end
         end
 
         function computeMREROIStats(app, roiName, mask, sl)
@@ -3364,9 +3707,9 @@ function tf = shouldBypassGlobalHotkeys(app)
             catch
             end
             % ── 1. Cursor value readout for quantitative image axes ──────
-            quantAxes  = {app.AxMREWave, app.AxMREStiff, app.AxDixon};
-            quantData  = {app.AppData.DispWave, app.AppData.DispStiff, app.AppData.DispDixon};
-            quantLabel = {'Wave', 'Stiffness (kPa)', 'Dixon'};
+            quantAxes  = {app.AxMREWave, app.AxMREStiff, app.AxDixonPDFF, app.AxDixonIP, app.AxDixonWater};
+            quantData  = {app.AppData.DispWave, app.AppData.DispStiff, app.AppData.DispDixon, app.AppData.DispDixon, app.AppData.DispDixon};
+            quantLabel = {'Wave', 'Stiffness (kPa)', 'PDFF', 'Water/IP', 'Fat/OP'};
             hitQuant   = false;
             for k = 1:numel(quantAxes)
                 ax  = quantAxes{k};
@@ -3733,29 +4076,20 @@ end
 function overlayStoredDixonROIs(app, ax, sl)
     key = sprintf('sl%d', sl);
     items = {};
-    try
-        if isfield(app.AppData.ROIs.LiverDixon.Slices, key)
-            items(end+1,:) = {'LiverDixon', app.AppData.ROIs.LiverDixon.Slices.(key)}; %#ok<AGROW>
-        end
-    catch
-    end
-    try
-        if isfield(app.AppData.ROIs.SpleenDixon.Slices, key)
-            items(end+1,:) = {'SpleenDixon', app.AppData.ROIs.SpleenDixon.Slices.(key)}; %#ok<AGROW>
-        end
-    catch
-    end
-    try
-        l12d = app.AppData.L12_Dixon;
-        if ~isempty(l12d)
-            if isfield(l12d,'L1_sliceIdx') && ~isnan(l12d.L1_sliceIdx) && sl == round(l12d.L1_sliceIdx)
-                if ~isempty(app.AppData.ROIs.MuscleL1), items(end+1,:) = {'MuscleL1', app.AppData.ROIs.MuscleL1}; end %#ok<AGROW>
-                if ~isempty(app.AppData.ROIs.SATL1),    items(end+1,:) = {'SATL1',    app.AppData.ROIs.SATL1};    end %#ok<AGROW>
+    for rn = {'LiverDixon','SpleenDixon','MuscleDixon','FatDixon'}
+        roiName = rn{1};
+        try
+            if isfield(app.AppData.ROIs.(roiName).Slices, key)
+                items(end+1,:) = {roiName, app.AppData.ROIs.(roiName).Slices.(key)}; %#ok<AGROW>
             end
-            if isfield(l12d,'L2_sliceIdx') && ~isnan(l12d.L2_sliceIdx) && sl == round(l12d.L2_sliceIdx)
-                if ~isempty(app.AppData.ROIs.MuscleL2), items(end+1,:) = {'MuscleL2', app.AppData.ROIs.MuscleL2}; end %#ok<AGROW>
-                if ~isempty(app.AppData.ROIs.SATL2),    items(end+1,:) = {'SATL2',    app.AppData.ROIs.SATL2};    end %#ok<AGROW>
-            end
+        catch
+        end
+    end
+    % Overlay active-workflow preview mask if on this slice
+    try
+        if app.AppData.DixonROIActive && app.AppData.DixonROISlice == sl && ...
+                ~isempty(app.AppData.DixonROIFinalMask)
+            items(end+1,:) = {app.AppData.DixonROIName, app.AppData.DixonROIFinalMask}; %#ok<AGROW>
         end
     catch
     end
@@ -4134,15 +4468,16 @@ function btn = roiBtn(parent, row, txt, bg, fg)
 end
 
 function clr = dixonROIColor(name)
-    switch name
-        case {'LiverDixon','MuscleL1','MuscleL2'}
-            clr=[0.15 0.75 0.15];
-        case {'SpleenDixon'}
-            clr=[0.15 0.55 0.90];
-        case {'SATL1','SATL2'}
-            clr=[0.95 0.65 0.10];
-        otherwise
-            clr=[1 1 0];
+    if contains(name,'Liver')
+        clr = [0.15 0.75 0.15];   % green
+    elseif contains(name,'Spleen')
+        clr = [0.15 0.55 0.90];   % blue
+    elseif contains(name,'Muscle')
+        clr = [0.95 0.55 0.15];   % orange
+    elseif contains(name,'Fat')
+        clr = [0.85 0.20 0.85];   % magenta
+    else
+        clr = [1 1 0];
     end
 end
 
