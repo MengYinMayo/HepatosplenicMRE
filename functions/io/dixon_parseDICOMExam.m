@@ -141,6 +141,11 @@ function tf = isLikelyIdealMember(s)
 end
 
 function tf = isLikelyIPOPMember(s)
+    % Series explicitly classified as IPOP_Dixon by mre_parseDICOMExam
+    role = ''; try, role = char(s.Role); catch, end
+    if strcmp(role, 'IPOP_Dixon')
+        tf = true; return
+    end
     desc = lower(char(s.SeriesDescription));
     tf = isLikelyIPOPText(desc);
     if tf && (contains(desc,'ideal') || contains(desc,'dixon') || isFatFracDesc(desc) || isWaterDesc(desc) || isFatDesc(desc))

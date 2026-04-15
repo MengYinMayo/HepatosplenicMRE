@@ -19,6 +19,7 @@ function exam = mre_parseDICOMExam(examRootDir, opts)
 %     'IDEALIQ_Multi'      IDEAL-IQ multi-contrast stack
 %     'IDEALIQ_PDFF'       Fat fraction map
 %     'IDEALIQ_T2s'        T2* map
+%     'IPOP_Dixon'         Conventional 2-point Dixon (IP/OP) not part of IDEAL-IQ
 %     'EPI_RawIQ'          EPI-MRE raw I/Q (skip)
 %     'EPI_WaveMag'        EPI-MRE wave + magnitude
 %     'EPI_Stiffness'      EPI-MRE stiffness in Pa
@@ -278,20 +279,42 @@ function entry = classifySeries(entry)
     end
 
     % ── IDEAL-IQ ─────────────────────────────────────────────────────
+    % Outer trigger: GE private seq tag, description keywords, or folder name.
+    % 'water:' broadened to 'water' (catches standalone Water series).
+    % Standalone 'fat' and 'r2' descriptions use exact-match to avoid false
+    % positives from fat-suppression or unrelated series names.
     if hit(seq,  {'ideal3darc','ideal3d','idealarc','ideal'}) || ...
        hit(desc, {'ideal','idealiq','ideal-iq','fat frac','fatfrac', ...
-                  'pdff','water:','t2*:'}) || ...
-       hit(fnam, {'ideal','idealiq','dixon','pdff'})
+                  'pdff','water','t2*:','r2star','r2*','r2 map','r2map'}) || ...
+       strcmp(desc,'r2') || strcmp(desc,'fat') || ...
+       hit(fnam, {'ideal','idealiq','dixon','pdff','water'})
         if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
            hit(fnam,{'pdff','fatfrac'})
             entry.Role = 'IDEALIQ_PDFF';
-        elseif hit(desc,{'t2*','t2star','t2_star'})
+        elseif hit(desc,{'t2*','t2star','t2_star','r2star','r2*','r2 map','r2map'}) || ...
+               strcmp(desc,'r2')
             entry.Role = 'IDEALIQ_T2s';
-        elseif contains(desc,'water') && entry.nImages < 50
+        elseif contains(desc,'water') || strcmp(desc,'fat')
+            % Water or standalone Fat image — no slice-count restriction.
             entry.Role = 'IDEALIQ_Raw';
         else
             entry.Role = 'IDEALIQ_Multi';
         end
+        return
+    end
+
+    % ── Conventional 2-point Dixon (IP/OP) ──────────────────────────
+    % Detect GE in-phase/out-of-phase series that are NOT part of IDEAL-IQ.
+    % Placed before EPI/GRE-MRE so that unclassified IP/OP series never fall
+    % through to Unknown.  Criteria: description or folder hints at IP/OP
+    % phrasing AND no IDEAL-IQ / MRE keywords are present.
+    isIPOPText = hit(desc, {'ip/op','ip_op','ipop','in-phase','inphase', ...
+                             'in phase','out-of-phase','out of phase','outphase'}) || ...
+                 (endsWith(strtrim(desc),' ip') && ~contains(desc,'epi')) || ...
+                  endsWith(strtrim(desc),' op') || ...
+                 hit(fnam, {'ipop','ip_op'});
+    if isIPOPText && ~hit(desc, {'ideal','idealiq','mre','wave','stiff','curl','diverg'})
+        entry.Role = 'IPOP_Dixon';
         return
     end
 

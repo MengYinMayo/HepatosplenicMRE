@@ -280,9 +280,11 @@ function populateTree(tree, seriesList, colType)
             cats = {'Localizer'};
             labels = {'3-Plane Localizer'};
         case 'dixon'
-            cats   = {'IDEALIQ_Family','IPOP_Family','IDEALIQ_PDFF','IDEALIQ_Multi','IDEALIQ_T2s','IDEALIQ_Raw', ...
+            cats   = {'IDEALIQ_Family','IPOP_Family','IPOP_Dixon', ...
+                      'IDEALIQ_PDFF','IDEALIQ_Multi','IDEALIQ_T2s','IDEALIQ_Raw', ...
                       'IPOP_Fallback','Unknown'};
-            labels = {'IDEAL-IQ / mDixon family','Conventional IP/OP family','PDFF Map','Multi-contrast (all)','T2* Map','Water (raw)', ...
+            labels = {'IDEAL-IQ / mDixon family','Conventional IP/OP family','IP/OP Dixon (2-point)', ...
+                      'PDFF Map','Multi-contrast (all)','T2* Map','Water (raw)', ...
                       'IP/OP (PDFF fallback)','Other (manual)'};
         case 'mre'
             cats   = {'EPI_WaveMag_Raw','GRE_WaveMag_Raw', ...
@@ -570,21 +572,28 @@ function group = findRelatedDixon(seriesList, anchor)
         for k = 1:numel(seriesList)
             s = seriesList(k);
             sdesc = lower(char(s.SeriesDescription));
+            sRole = char(s.Role);
 
-            sameCount = double(s.nImages) == targetN;
-            isIdeal   = contains(sdesc,'ideal');
+            % A series is an IDEAL-IQ member if its description contains
+            % 'ideal'/'dixon' OR it already carries an IDEALIQ_* role
+            % (GE standalone Water/Fat recons are often named just "Water"
+            % or "Fat" without the word "ideal" in the description).
+            isIdealRole = startsWith(sRole, 'IDEALIQ_');
+            isIdeal     = contains(sdesc,'ideal') || contains(sdesc,'dixon') || isIdealRole;
 
-            % useful explicit IDEAL-IQ recons only
+            % useful explicit IDEAL-IQ recons (water, fat, pdff)
             isUseful  = contains(sdesc,'fatfrac') || ...
                         contains(sdesc,'water')   || ...
                         contains(sdesc,'fat');
 
-            % exclude raw/multi generic stack names
-            isRawMulti = ~contains(sdesc,'fatfrac') && ...
-                         ~contains(sdesc,'water')   && ...
-                         ~contains(sdesc,'fat');
+            sameCount = double(s.nImages) == targetN;
 
-            if sameCount && isIdeal && isUseful && ~isRawMulti
+            % Include when:
+            %   (1) IDEAL membership established by description or role, AND
+            %   (2) content is useful (water/fat/pdff), AND
+            %   (3) image count matches OR series already has an IDEALIQ_* role
+            %       (PDFF series often have fewer slices than water/fat).
+            if isIdeal && isUseful && (sameCount || isIdealRole)
                 if isempty(group)
                     group = s;
                 else
@@ -602,12 +611,13 @@ function group = findRelatedDixon(seriesList, anchor)
 
     isIPOPAnchor = strcmp(anchor.Role,'IPOP_Family') || ...
                    strcmp(anchor.Role,'IPOP_Fallback') || ...
+                   strcmp(anchor.Role,'IPOP_Dixon') || ...
                    isIPOP(anchor);
 
     if isIPOPAnchor
         for k = 1:numel(seriesList)
             s = seriesList(k);
-            if isIPOP(s)
+            if isIPOP(s) || strcmp(char(s.Role),'IPOP_Dixon')
                 if isempty(group)
                     group = s;
                 else
@@ -642,7 +652,12 @@ end
 
 function tf = isIPOP(s)
 %ISIPOP  True if series looks like GE IP/OP in-phase/out-of-phase.
-    desc = lower(s.SeriesDescription);
+    % Explicitly-tagged IP/OP roles are always accepted.
+    if isfield(s,'Role') && any(strcmp(char(s.Role), ...
+            {'IPOP_Dixon','IPOP_Family','IPOP_Fallback'}))
+        tf = true; return
+    end
+    desc = lower(char(s.SeriesDescription));
     tf = s.IsGrayscale && (s.BitDepth == 16) && ...
          (anyContains(desc, {'ip/op','ip op','in-phase','inphase', ...
                              'out-of-phase','out of phase','ipop', ...

@@ -64,10 +64,26 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
 
     % ── 3.  Fill gaps from individual series ──────────────────────────
     if isempty(dixon.Water) && ~isempty(rawSeries)
-        vprint(opts, 'Reading water from: S%d', rawSeries(1).SeriesNumber);
-        dixon.Water = readSingleContrast(rawSeries(1).Files, opts);
+        % Multiple IDEALIQ_Raw entries can exist when GE creates standalone
+        % Water and Fat recons alongside the main multi-contrast series.
+        % Prefer the one explicitly named 'water'; fall back to first by
+        % SeriesNumber (GE convention: water comes before fat).
+        waterRaw = findBestNamedSeries(rawSeries, {'water'}, {});
+        if isempty(waterRaw), waterRaw = rawSeries(1); end
+        vprint(opts, 'Reading water from: S%d', waterRaw(1).SeriesNumber);
+        dixon.Water = readSingleContrast(waterRaw(1).Files, opts);
         if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
-            dixon = fillSpatialInfo(dixon, rawSeries(1).Files);
+            dixon = fillSpatialInfo(dixon, waterRaw(1).Files);
+        end
+    end
+
+    % If rawSeries contains a standalone fat recon, extract it now.
+    if isempty(dixon.Fat) && numel(rawSeries) > 1
+        fatFromRaw = findBestNamedSeries(rawSeries, {'fat'}, ...
+                         {'water','fatfrac','fat frac','pdff'});
+        if ~isempty(fatFromRaw)
+            vprint(opts, 'Reading fat from rawSeries: S%d', fatFromRaw(1).SeriesNumber);
+            dixon.Fat = readSingleContrast(fatFromRaw(1).Files, opts);
         end
     end
 
@@ -97,19 +113,46 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
         end
     end
 
+    % ── 3b. Conventional IP/OP series (EchoTime-based split) ─────────────
+    % When InPhase and OutPhase are still absent, look for an IP/OP Dixon
+    % series in the group and split it by EchoTime:
+    %   shorter TE → Out-of-Phase (OP),  longer TE → In-Phase (IP).
+    % Water and Fat are then derived from IP and OP in the next block.
+    if isempty(dixon.InPhase) && isempty(dixon.OutPhase)
+        ipopSeries = findIPOPSeries(dixonGroup);
+        if ~isempty(ipopSeries)
+            vprint(opts, 'Reading conventional IP/OP from S%d using EchoTime...', ...
+                   ipopSeries(1).SeriesNumber);
+            [ipVol, opVol] = readIPOPByEchoTime(ipopSeries(1), opts);
+            if ~isempty(ipVol)
+                dixon.InPhase = ipVol;
+                if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
+                    dixon = fillSpatialInfo(dixon, ipopSeries(1).Files);
+                end
+            end
+            if ~isempty(opVol)
+                dixon.OutPhase = opVol;
+            end
+        end
+    end
+
     % Derive Water/Fat from InPhase/OutPhase when direct maps are unavailable.
-    % Water ≈ IP + OP  and  Fat ≈ IP − OP  (unnormalised; constant cancels in
-    % PDFF = Fat/(Water+Fat)).  Clamp Fat to ≥ 0 to avoid negative values.
+    % For a standard GE Dixon acquisition:
+    %   IP = Water + Fat,  OP = Water - Fat  (with same sign convention)
+    % Therefore:  Water = (IP + OP) / 2,  Fat = (IP - OP) / 2.
+    % For IDEAL-IQ or other acquisitions the echo times set the exact sign;
+    % the (IP+OP)/2 formula is correct when OP = W-F (GE convention).
+    % Clamp Fat to ≥ 0 to avoid negative values from noise.
     if (isempty(dixon.Water) || isempty(dixon.Fat)) && ...
        ~isempty(dixon.InPhase) && ~isempty(dixon.OutPhase)
         vprint(opts, 'Deriving Water/Fat from InPhase/OutPhase...');
         IP = double(dixon.InPhase);
         OP = double(dixon.OutPhase);
         if isempty(dixon.Water)
-            dixon.Water = IP + OP;
+            dixon.Water = (IP + OP) / 2;
         end
         if isempty(dixon.Fat)
-            dixon.Fat = max(0, IP - OP);
+            dixon.Fat = max(0, (IP - OP) / 2);
         end
     end
 
@@ -526,5 +569,131 @@ end
 function vprint(opts, fmt, varargin)
     if isfield(opts,'verbose') && opts.verbose
         fprintf(['[seg_buildDixonVolume] ' fmt '\n'], varargin{:});
+    end
+end
+
+
+% ======================================================================
+%  CONVENTIONAL IP/OP (2-POINT DIXON) READER
+% ======================================================================
+
+function s = findIPOPSeries(group)
+%FINDIPOPSERIES  Return any series in the Dixon group that looks like a
+%   conventional IP/OP (2-point Dixon) acquisition.
+    ipopRoles = {'IPOP_Dixon','IPOP_Family','IPOP_Fallback'};
+    s = [];
+    for k = 1:numel(group)
+        role = char(group(k).Role);
+        desc = lower(char(group(k).SeriesDescription));
+        isIPOPRole = any(strcmp(role, ipopRoles));
+        isIPOPDesc = contains(desc,'ip/op')        || contains(desc,'ipop')       || ...
+                     contains(desc,'in-phase')      || contains(desc,'inphase')    || ...
+                     contains(desc,'out-of-phase')  || contains(desc,'in phase')   || ...
+                     contains(desc,'out phase')     || endsWith(strtrim(desc),' ip') || ...
+                     endsWith(strtrim(desc),' op');
+        if isIPOPRole || isIPOPDesc
+            if isempty(s), s = group(k);
+            else,          s(end+1) = group(k); end %#ok<AGROW>
+        end
+    end
+end
+
+function [ipVol, opVol] = readIPOPByEchoTime(series, opts)
+%READIPOPBYECHOTIME  Split a combined IP/OP series into InPhase and OutPhase
+%   volumes using EchoTime read from each DICOM header.
+%
+%   GE convention: OP (out-of-phase) has the SHORTER echo time and IP
+%   (in-phase) has the LONGER echo time.  Files may be stored in any
+%   interleaving order (contrast-first or slice-first).
+
+    ipVol = []; opVol = [];
+    files  = series.Files;
+    nFiles = numel(files);
+    if nFiles < 2, return; end
+
+    vprint(opts, '  Reading %d headers for EchoTime...', nFiles);
+    echoTimes = nan(1, nFiles);
+    sliceLocs = zeros(1, nFiles);
+    for k = 1:nFiles
+        try
+            info = dicominfo(files{k}, 'UseDictionaryVR', true);
+            if isfield(info,'EchoTime') && ~isempty(info.EchoTime)
+                echoTimes(k) = double(info.EchoTime(1));
+            end
+            if isfield(info,'SliceLocation') && ~isempty(info.SliceLocation)
+                sliceLocs(k) = double(info.SliceLocation);
+            elseif isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
+                sliceLocs(k) = double(info.InstanceNumber);
+            end
+        catch
+        end
+    end
+
+    validTE = echoTimes(~isnan(echoTimes));
+    if isempty(validTE)
+        vprint(opts, '  WARNING: No EchoTime in headers; cannot split IP/OP by TE.');
+        return
+    end
+
+    uniqueTE = ipopUniqueTolerant(validTE, 0.05);   % 0.05 ms tolerance
+    if numel(uniqueTE) < 2
+        vprint(opts, '  WARNING: Only 1 unique EchoTime (%.2f ms); cannot split IP/OP.', uniqueTE(1));
+        return
+    end
+    if numel(uniqueTE) > 2
+        vprint(opts, '  Note: %d unique EchoTimes found; using shortest and longest.', numel(uniqueTE));
+        uniqueTE = [min(uniqueTE), max(uniqueTE)];
+    end
+
+    shortTE = uniqueTE(1);
+    longTE  = uniqueTE(end);
+    vprint(opts, '  EchoTime: OP(short)=%.3f ms, IP(long)=%.3f ms', shortTE, longTE);
+
+    teValid = ~isnan(echoTimes);
+    opMask  = teValid & (abs(echoTimes - shortTE) <= abs(echoTimes - longTE));
+    ipMask  = teValid & ~opMask;
+
+    opVol = ipopReadByMask(files, opMask, sliceLocs);
+    ipVol = ipopReadByMask(files, ipMask, sliceLocs);
+
+    vprint(opts, '  InPhase: %s   OutPhase: %s', sizeStr(ipVol), sizeStr(opVol));
+end
+
+function vol = ipopReadByMask(files, mask, locs)
+%IPOPREADBYMASK  Read files selected by logical mask, sorted by SliceLocation.
+    selFiles = files(mask);
+    selLocs  = locs(mask);
+    if isempty(selFiles), vol = []; return; end
+
+    [selLocs, ord] = sort(selLocs);
+    selFiles = selFiles(ord);
+    uniqueLocs = unique(selLocs);
+    nSlices    = numel(uniqueLocs);
+
+    try
+        img1 = double(dicomread(selFiles{1}));
+        nR = size(img1,1); nC = size(img1,2);
+    catch
+        nR = 256; nC = 256;
+    end
+    vol = zeros(nR, nC, nSlices, 'double');
+    for k = 1:numel(selFiles)
+        try
+            img = double(dicomread(selFiles{k}));
+            sl  = find(uniqueLocs == selLocs(k), 1);
+            if ~isempty(sl), vol(:,:,sl) = img; end
+        catch
+        end
+    end
+end
+
+function uq = ipopUniqueTolerant(vals, tol)
+%IPOPUNIQUETOLERANT  Return unique values with tolerance-based clustering.
+    vals = sort(vals(:)');
+    uq   = vals(1);
+    for k = 2:numel(vals)
+        if vals(k) - uq(end) > tol
+            uq(end+1) = vals(k); %#ok<AGROW>
+        end
     end
 end

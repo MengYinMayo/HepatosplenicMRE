@@ -19,6 +19,7 @@ function exam = mre_parseDICOMExam(examRootDir, opts)
 %     'IDEALIQ_Multi'      IDEAL-IQ multi-contrast stack
 %     'IDEALIQ_PDFF'       Fat fraction map
 %     'IDEALIQ_T2s'        T2* map
+%     'IPOP_Dixon'         Conventional 2-point Dixon (IP/OP) not part of IDEAL-IQ
 %     'EPI_RawIQ'          EPI-MRE raw I/Q (skip)
 %     'EPI_WaveMag'        EPI-MRE wave + magnitude
 %     'EPI_Stiffness'      EPI-MRE stiffness in Pa
@@ -299,6 +300,21 @@ function entry = classifySeries(entry)
         else
             entry.Role = 'IDEALIQ_Multi';
         end
+        return
+    end
+
+    % ── Conventional 2-point Dixon (IP/OP) ──────────────────────────
+    % Detect GE in-phase/out-of-phase series that are NOT part of IDEAL-IQ.
+    % Placed before EPI/GRE-MRE so that unclassified IP/OP series never fall
+    % through to Unknown.  Criteria: description or folder hints at IP/OP
+    % phrasing AND no IDEAL-IQ / MRE keywords are present.
+    isIPOPText = hit(desc, {'ip/op','ip_op','ipop','in-phase','inphase', ...
+                             'in phase','out-of-phase','out of phase','outphase'}) || ...
+                 (endsWith(strtrim(desc),' ip') && ~contains(desc,'epi')) || ...
+                  endsWith(strtrim(desc),' op') || ...
+                 hit(fnam, {'ipop','ip_op'});
+    if isIPOPText && ~hit(desc, {'ideal','idealiq','mre','wave','stiff','curl','diverg'})
+        entry.Role = 'IPOP_Dixon';
         return
     end
 
