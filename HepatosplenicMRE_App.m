@@ -229,7 +229,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'DispWave',     [], ...   % current processed-wave slice for cursor readout
             'DispWaveRaw',  [], ...   % current raw-wave slice
             'DispStiff',    [], ...   % current stiffness slice
-            'DispDixon',    [], ...   % current Dixon slice
+            'DispDixon',    [], ...   % current Dixon PDFF slice (PDFF panel)
+            'DispDixonIP',  [], ...   % current Dixon Water/InPhase slice
+            'DispDixonOP',  [], ...   % current Dixon Fat/OutPhase slice
             'ShowConfMask', false, ...
             'ConfThresh',   0.50, ...
             'MREObjectConf', struct('LiverMRE',0.90,'SpleenMRE',0.75,'MuscleMRE',0.50,'FatMRE',0.90), ...
@@ -3065,6 +3067,18 @@ function tf = shouldBypassGlobalHotkeys(app)
                 app.AppData.DispDixon = [];
             end
 
+            % Per-panel cursor buffers for Water/IP and Fat/OP axes
+            if ~isempty(ipVol)
+                app.AppData.DispDixonIP = double(ipVol(:,:, min(sl, size(ipVol,3))));
+            else
+                app.AppData.DispDixonIP = [];
+            end
+            if ~isempty(opVol)
+                app.AppData.DispDixonOP = double(opVol(:,:, min(sl, size(opVol,3))));
+            else
+                app.AppData.DispDixonOP = [];
+            end
+
             renderDixonPanelAxes(app, app.AxDixonPDFF, pdffVol, sl, nZ, 'PDFF (%)', true);
             renderDixonPanelAxes(app, app.AxDixonIP,   ipVol,   sl, nZ, 'Water or In-phase', false);
             renderDixonPanelAxes(app, app.AxDixonWater,opVol,   sl, nZ, 'Fat or Out-of-Phase', false);
@@ -3684,11 +3698,21 @@ function tf = shouldBypassGlobalHotkeys(app)
             catch
             end
             % ── 1. Cursor value readout for quantitative image axes ──────
+            try
+                activeTab  = app.ImageTabGroup.SelectedTab;
+                isDixonTab = isequal(activeTab, app.DixonTab);
+                isMRETab   = isequal(activeTab, app.MRETab);
+            catch
+                isDixonTab = false; isMRETab = false;
+            end
             quantAxes  = {app.AxMREWave, app.AxMREStiff, app.AxDixonPDFF, app.AxDixonIP, app.AxDixonWater};
-            quantData  = {app.AppData.DispWave, app.AppData.DispStiff, app.AppData.DispDixon, app.AppData.DispDixon, app.AppData.DispDixon};
-            quantLabel = {'Wave', 'Stiffness (kPa)', 'PDFF', 'Water/IP', 'Fat/OP'};
+            quantData  = {app.AppData.DispWave, app.AppData.DispStiff, app.AppData.DispDixon, ...
+                          app.AppData.DispDixonIP, app.AppData.DispDixonOP};
+            quantLabel = {'Wave', 'Stiffness (kPa)', 'PDFF (%)', 'Water/IP', 'Fat/OP'};
+            tabMask    = {isMRETab, isMRETab, isDixonTab, isDixonTab, isDixonTab};
             hitQuant   = false;
             for k = 1:numel(quantAxes)
+                if ~tabMask{k}, continue; end   % skip axes that belong to another tab
                 ax  = quantAxes{k};
                 dat = quantData{k};
                 if isempty(dat), continue; end

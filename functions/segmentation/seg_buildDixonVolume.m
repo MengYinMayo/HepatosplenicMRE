@@ -63,14 +63,30 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     end
 
     % ── 3.  Fill gaps from individual series ──────────────────────────
+    % Resolve which rawSeries member is water vs fat for later use.
+    % GE convention: water comes first (lower SeriesNumber) among IDEALIQ_Raw.
+    usedWaterSN = 0;   % SeriesNumber of the raw series used for water
     if isempty(dixon.Water) && ~isempty(rawSeries)
         % Multiple IDEALIQ_Raw entries can exist when GE creates standalone
         % Water and Fat recons alongside the main multi-contrast series.
-        % Prefer the one explicitly named 'water'; fall back to first by
-        % SeriesNumber (GE convention: water comes before fat).
+        % Prefer the one explicitly named 'water'; otherwise infer by excluding
+        % any series whose description looks like fat, then fall back to the
+        % first by SeriesNumber (GE convention: water before fat).
         waterRaw = findBestNamedSeries(rawSeries, {'water'}, {});
-        if isempty(waterRaw), waterRaw = rawSeries(1); end
+        if isempty(waterRaw)
+            fatCandidate = findBestNamedSeries(rawSeries, {'fat'}, ...
+                               {'water','fatfrac','fat frac','pdff'});
+            for kk = 1:numel(rawSeries)
+                if isempty(fatCandidate) || ...
+                   rawSeries(kk).SeriesNumber ~= fatCandidate(1).SeriesNumber
+                    waterRaw = rawSeries(kk);
+                    break
+                end
+            end
+            if isempty(waterRaw), waterRaw = rawSeries(1); end
+        end
         vprint(opts, 'Reading water from: S%d', waterRaw(1).SeriesNumber);
+        usedWaterSN = double(waterRaw(1).SeriesNumber);
         dixon.Water = readSingleContrast(waterRaw(1).Files, opts);
         if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
             dixon = fillSpatialInfo(dixon, waterRaw(1).Files);
@@ -81,6 +97,16 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     if isempty(dixon.Fat) && numel(rawSeries) > 1
         fatFromRaw = findBestNamedSeries(rawSeries, {'fat'}, ...
                          {'water','fatfrac','fat frac','pdff'});
+        if isempty(fatFromRaw)
+            % GE convention: second IDEALIQ_Raw by SeriesNumber is fat.
+            % Use whichever rawSeries member was not used for water.
+            for kk = 1:numel(rawSeries)
+                if double(rawSeries(kk).SeriesNumber) ~= usedWaterSN
+                    fatFromRaw = rawSeries(kk);
+                    break
+                end
+            end
+        end
         if ~isempty(fatFromRaw)
             vprint(opts, 'Reading fat from rawSeries: S%d', fatFromRaw(1).SeriesNumber);
             dixon.Fat = readSingleContrast(fatFromRaw(1).Files, opts);

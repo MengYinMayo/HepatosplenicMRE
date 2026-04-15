@@ -590,10 +590,11 @@ function group = findRelatedDixon(seriesList, anchor)
 
             % Include when:
             %   (1) IDEAL membership established by description or role, AND
-            %   (2) content is useful (water/fat/pdff), AND
+            %   (2) content is useful (water/fat/pdff) OR series has an IDEALIQ_*
+            %       role (standalone Water/Fat recons may have no keyword in desc),
             %   (3) image count matches OR series already has an IDEALIQ_* role
             %       (PDFF series often have fewer slices than water/fat).
-            if isIdeal && isUseful && (sameCount || isIdealRole)
+            if isIdeal && (isUseful || isIdealRole) && (sameCount || isIdealRole)
                 if isempty(group)
                     group = s;
                 else
