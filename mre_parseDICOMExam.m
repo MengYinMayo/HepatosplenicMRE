@@ -294,8 +294,13 @@ function entry = classifySeries(entry)
         elseif hit(desc,{'t2*','t2star','t2_star','r2star','r2*','r2 map','r2map'}) || ...
                strcmp(desc,'r2')
             entry.Role = 'IDEALIQ_T2s';
-        elseif contains(desc,'water') || strcmp(desc,'fat')
+        elseif contains(desc,'water') || ...
+               contains(desc,' fat') || contains(desc,'_fat') || ...
+               startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat')
             % Water or standalone Fat image — no slice-count restriction.
+            % Match 'fat' as a token (space/underscore delimited or at start),
+            % not exact-only, to handle GE naming like 's0202_FAT__Ax_IDEAL_IQ_BH'.
+            % fatfrac/pdff are already caught by the PDFF check above.
             entry.Role = 'IDEALIQ_Raw';
         else
             entry.Role = 'IDEALIQ_Multi';
