@@ -280,29 +280,38 @@ function entry = classifySeries(entry)
 
     % ── IDEAL-IQ ─────────────────────────────────────────────────────
     % Outer trigger: GE private seq tag, description keywords, or folder name.
-    % 'water:' broadened to 'water' (catches standalone Water series).
-    % Standalone 'fat' and 'r2' descriptions use exact-match to avoid false
-    % positives from fat-suppression or unrelated series names.
     if hit(seq,  {'ideal3darc','ideal3d','idealarc','ideal'}) || ...
        hit(desc, {'ideal','idealiq','ideal-iq','fat frac','fatfrac', ...
                   'pdff','water','t2*:','r2star','r2*','r2 map','r2map'}) || ...
        strcmp(desc,'r2') || strcmp(desc,'fat') || ...
        hit(fnam, {'ideal','idealiq','dixon','pdff','water'})
+
+        % Sub-classify within IDEAL-IQ.
         if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
            hit(fnam,{'pdff','fatfrac'})
             entry.Role = 'IDEALIQ_PDFF';
+
         elseif hit(desc,{'t2*','t2star','t2_star','r2star','r2*','r2 map','r2map'}) || ...
-               strcmp(desc,'r2')
+               strcmp(desc,'r2') || contains(desc,'_r2') || ...
+               (contains(desc,' r2') && ~contains(desc,'water') && ~contains(desc,'fat'))
+            % R2*/T2* map — GE names include 's0400_R2__Ax_IDEAL_IQ' and
+            % 's15997_R2_1_s_1.5T_IDEAL-IQ_Abdomen'.
             entry.Role = 'IDEALIQ_T2s';
+
         elseif contains(desc,'water') || ...
                contains(desc,' fat') || contains(desc,'_fat') || ...
-               startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat')
-            % Water or standalone Fat image — no slice-count restriction.
-            % Match 'fat' as a token (space/underscore delimited or at start),
-            % not exact-only, to handle GE naming like 's0202_FAT__Ax_IDEAL_IQ_BH'.
-            % fatfrac/pdff are already caught by the PDFF check above.
+               startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat') || ...
+               contains(desc,'inphase') || contains(desc,'in_phase') || ...
+               contains(desc,'outphase') || contains(desc,'out_phase')
+            % Single-contrast recon: Water, T2*-corrected Water/Fat,
+            % standalone Fat, InPhase, or OutPhase volume.
+            % Fat is matched as a token (prefix/underscore-delimited) to handle
+            % GE names like 's0202_FAT__Ax_IDEAL_IQ_BH' and 's15993_T2_Fat_...'.
+            % fatfrac/pdff were already caught above.
             entry.Role = 'IDEALIQ_Raw';
+
         else
+            % Multi-contrast stack or unclassified IDEAL-IQ product.
             entry.Role = 'IDEALIQ_Multi';
         end
         return

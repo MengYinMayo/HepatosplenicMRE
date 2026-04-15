@@ -284,7 +284,7 @@ function populateTree(tree, seriesList, colType)
                       'IDEALIQ_PDFF','IDEALIQ_Multi','IDEALIQ_T2s','IDEALIQ_Raw', ...
                       'IPOP_Fallback','Unknown'};
             labels = {'IDEAL-IQ / mDixon family','Conventional IP/OP family','IP/OP Dixon (2-point)', ...
-                      'PDFF Map','Multi-contrast (all)','T2* Map','Water (raw)', ...
+                      'PDFF Map','Multi-contrast stack','R2*/T2* Map','Single-contrast recon', ...
                       'IP/OP (PDFF fallback)','Other (manual)'};
         case 'mre'
             cats   = {'EPI_WaveMag_Raw','GRE_WaveMag_Raw', ...
@@ -581,20 +581,27 @@ function group = findRelatedDixon(seriesList, anchor)
             isIdealRole = startsWith(sRole, 'IDEALIQ_');
             isIdeal     = contains(sdesc,'ideal') || contains(sdesc,'dixon') || isIdealRole;
 
-            % useful explicit IDEAL-IQ recons (water, fat, pdff)
-            isUseful  = contains(sdesc,'fatfrac') || ...
-                        contains(sdesc,'water')   || ...
-                        contains(sdesc,'fat');
+            % Useful content: water, fat, pdff, inphase, outphase keyword in desc.
+            isUseful  = contains(sdesc,'fatfrac') || contains(sdesc,'water') || ...
+                        contains(sdesc,'fat') || ...
+                        contains(sdesc,'inphase') || contains(sdesc,'in phase') || ...
+                        contains(sdesc,'outphase') || contains(sdesc,'out phase') || ...
+                        contains(sdesc,'in-phase') || contains(sdesc,'out-of-phase');
 
-            sameCount = double(s.nImages) == targetN;
+            sameCount  = double(s.nImages) == targetN;
 
-            % Include when:
-            %   (1) IDEAL membership established by description or role, AND
-            %   (2) content is useful (water/fat/pdff) OR series has an IDEALIQ_*
-            %       role (standalone Water/Fat recons may have no keyword in desc),
-            %   (3) image count matches OR series already has an IDEALIQ_* role
-            %       (PDFF series often have fewer slices than water/fat).
-            if isIdeal && (isUseful || isIdealRole) && (sameCount || isIdealRole)
+            % isRawRecon: IDEALIQ_Raw series are definitively Water/Fat/IP/OP
+            % standalone products — always include regardless of keywords.
+            isRawRecon = strcmp(sRole, 'IDEALIQ_Raw');
+
+            % countOK: Raw/PDFF/T2s may have different slice counts from the
+            % anchor (PDFF fewer slices, T2s same).  Multi-contrast stacks must
+            % match exactly so that series from other acquisitions aren't mixed in.
+            countOK    = sameCount || (isIdealRole && ~strcmp(sRole,'IDEALIQ_Multi'));
+
+            % Include when IDEAL member AND (useful content OR raw product recon)
+            % AND image count is acceptable for the role.
+            if isIdeal && (isUseful || isRawRecon) && countOK
                 if isempty(group)
                     group = s;
                 else

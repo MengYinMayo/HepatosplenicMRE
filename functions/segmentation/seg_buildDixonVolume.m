@@ -52,8 +52,17 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     rawSeries   = findRole(dixonGroup, 'IDEALIQ_Raw');
     pdffSeries  = findRole(dixonGroup, 'IDEALIQ_PDFF');
     t2sSeries   = findRole(dixonGroup, 'IDEALIQ_T2s');
-    waterSeries = findBestNamedSeries(dixonGroup, {'water'});
-    fatSeries   = findBestNamedSeries(dixonGroup, {'fat'}, {'fatfrac','fat frac','pdff'});
+
+    % Prefer T2*-corrected water/fat (old IDEAL-IQ: 's15992_T2_Water_...',
+    % 's15993_T2_Fat_...') over plain water/fat when both are present.
+    % Fall back gracefully when no T2*-corrected version exists (new IDEAL-IQ).
+    waterSeries = findBestNamedSeries(dixonGroup, {'water','t2'});
+    if isempty(waterSeries), waterSeries = findBestNamedSeries(dixonGroup, {'water','r2'}); end
+    if isempty(waterSeries), waterSeries = findBestNamedSeries(dixonGroup, {'water'}); end
+
+    fatSeries = findBestNamedSeries(dixonGroup, {'fat','t2'}, {'fatfrac','fat frac','pdff'});
+    if isempty(fatSeries), fatSeries = findBestNamedSeries(dixonGroup, {'fat','r2'}, {'fatfrac','fat frac','pdff'}); end
+    if isempty(fatSeries), fatSeries = findBestNamedSeries(dixonGroup, {'fat'}, {'fatfrac','fat frac','pdff'}); end
 
     % ── 2.  Read multi-contrast series ────────────────────────────────
     if ~isempty(multiSeries)
@@ -63,19 +72,18 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     end
 
     % ── 3.  Fill gaps from individual series ──────────────────────────
-    % Resolve which rawSeries member is water vs fat for later use.
-    % GE convention: water comes first (lower SeriesNumber) among IDEALIQ_Raw.
+    % Resolve which rawSeries members hold water, fat, inphase, outphase.
+    % Old IDEAL-IQ produces T2*-corrected versions ('T2_Water', 'T2_Fat') which
+    % are preferred over plain 'Water'/'Fat' if both exist.
     usedWaterSN = 0;   % SeriesNumber of the raw series used for water
     if isempty(dixon.Water) && ~isempty(rawSeries)
-        % Multiple IDEALIQ_Raw entries can exist when GE creates standalone
-        % Water and Fat recons alongside the main multi-contrast series.
-        % Prefer the one explicitly named 'water'; otherwise infer by excluding
-        % any series whose description looks like fat, then fall back to the
-        % first by SeriesNumber (GE convention: water before fat).
-        waterRaw = findBestNamedSeries(rawSeries, {'water'}, {});
+        % Prefer T2*-corrected water (has both 'water' and 't2'/'r2' in desc).
+        waterRaw = findBestNamedSeries(rawSeries, {'water','t2'}, {});
+        if isempty(waterRaw), waterRaw = findBestNamedSeries(rawSeries, {'water','r2'}, {}); end
+        if isempty(waterRaw), waterRaw = findBestNamedSeries(rawSeries, {'water'}, {}); end
         if isempty(waterRaw)
-            fatCandidate = findBestNamedSeries(rawSeries, {'fat'}, ...
-                               {'water','fatfrac','fat frac','pdff'});
+            % No 'water' keyword — infer by excluding fat/inphase/outphase candidates.
+            fatCandidate = findBestNamedSeries(rawSeries, {'fat'}, {'fatfrac','fat frac','pdff'});
             for kk = 1:numel(rawSeries)
                 if isempty(fatCandidate) || ...
                    rawSeries(kk).SeriesNumber ~= fatCandidate(1).SeriesNumber
@@ -94,14 +102,19 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     end
 
     % If rawSeries contains a standalone fat recon, extract it now.
-    if isempty(dixon.Fat) && numel(rawSeries) > 1
-        fatFromRaw = findBestNamedSeries(rawSeries, {'fat'}, ...
-                         {'water','fatfrac','fat frac','pdff'});
-        if isempty(fatFromRaw)
-            % GE convention: second IDEALIQ_Raw by SeriesNumber is fat.
-            % Use whichever rawSeries member was not used for water.
+    % Prefer T2*-corrected fat; fall back to any fat; then infer by exclusion.
+    if isempty(dixon.Fat) && ~isempty(rawSeries)
+        fatFromRaw = findBestNamedSeries(rawSeries, {'fat','t2'}, {'fatfrac','fat frac','pdff'});
+        if isempty(fatFromRaw), fatFromRaw = findBestNamedSeries(rawSeries, {'fat','r2'}, {'fatfrac','fat frac','pdff'}); end
+        if isempty(fatFromRaw), fatFromRaw = findBestNamedSeries(rawSeries, {'fat'}, {'fatfrac','fat frac','pdff'}); end
+        if isempty(fatFromRaw) && numel(rawSeries) > 1
+            % Infer: use whichever rawSeries was not used for water/inphase/outphase.
             for kk = 1:numel(rawSeries)
-                if double(rawSeries(kk).SeriesNumber) ~= usedWaterSN
+                sn = double(rawSeries(kk).SeriesNumber);
+                d  = lower(char(rawSeries(kk).SeriesDescription));
+                if sn ~= usedWaterSN && ...
+                   ~contains(d,'inphase') && ~contains(d,'in_phase') && ...
+                   ~contains(d,'outphase') && ~contains(d,'out_phase')
                     fatFromRaw = rawSeries(kk);
                     break
                 end
@@ -110,6 +123,31 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
         if ~isempty(fatFromRaw)
             vprint(opts, 'Reading fat from rawSeries: S%d', fatFromRaw(1).SeriesNumber);
             dixon.Fat = readSingleContrast(fatFromRaw(1).Files, opts);
+        end
+    end
+
+    % Read standalone InPhase / OutPhase volumes (new IDEAL-IQ scenario:
+    % 's0403_InPhase_Ax_IDEAL_IQ', 's0404_OutPhase_Ax_IDEAL_IQ').
+    if isempty(dixon.InPhase)
+        inphaseRaw = findBestNamedSeries(rawSeries, {'inphase'}, {});
+        if isempty(inphaseRaw), inphaseRaw = findBestNamedSeries(rawSeries, {'in_phase'}, {}); end
+        if ~isempty(inphaseRaw)
+            vprint(opts, 'Reading InPhase standalone from: S%d', inphaseRaw(1).SeriesNumber);
+            dixon.InPhase = readSingleContrast(inphaseRaw(1).Files, opts);
+            if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
+                dixon = fillSpatialInfo(dixon, inphaseRaw(1).Files);
+            end
+        end
+    end
+    if isempty(dixon.OutPhase)
+        outphaseRaw = findBestNamedSeries(rawSeries, {'outphase'}, {});
+        if isempty(outphaseRaw), outphaseRaw = findBestNamedSeries(rawSeries, {'out_phase'}, {}); end
+        if ~isempty(outphaseRaw)
+            vprint(opts, 'Reading OutPhase standalone from: S%d', outphaseRaw(1).SeriesNumber);
+            dixon.OutPhase = readSingleContrast(outphaseRaw(1).Files, opts);
+            if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
+                dixon = fillSpatialInfo(dixon, outphaseRaw(1).Files);
+            end
         end
     end
 
