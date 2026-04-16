@@ -517,15 +517,17 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             setupDarkAxes(app.AxLocSagittal,'Sagittal  (disc level verification)');
 
             % W/L controls (row 2)
-            corWLrow = uigridlayout(app.LocGrid,[1 7]);
+            corWLrow = uigridlayout(app.LocGrid,[1 6]);
             corWLrow.Layout.Row=2; corWLrow.Layout.Column=1;
-            corWLrow.ColumnWidth = {'1x',40,10,40,10,34,34}; corWLrow.Padding=[2 1 2 1]; corWLrow.ColumnSpacing=3;
-            uilabel(corWLrow,'Text','Cor W/L:','FontSize',9,'HorizontalAlignment','right');
+            corWLrow.ColumnWidth = {'1x',40,10,40,34,34}; corWLrow.Padding=[2 1 2 1]; corWLrow.ColumnSpacing=3;
+            lblCorWL = uilabel(corWLrow); lblCorWL.Layout.Column=1;
+            lblCorWL.Text='Cor W/L:'; lblCorWL.FontSize=9; lblCorWL.HorizontalAlignment='right';
             app.EdtCorWinLo = uieditfield(corWLrow,'numeric');
             app.EdtCorWinLo.Layout.Column=2; app.EdtCorWinLo.Value=0; app.EdtCorWinLo.FontSize=9;
             app.EdtCorWinLo.Tooltip='Coronal display min (0=auto)';
             app.EdtCorWinLo.ValueChangedFcn = @(~,~)app.refreshLocCoronal();
-            uilabel(corWLrow,'Text','–','FontSize',10,'HorizontalAlignment','center').Layout.Column=3;
+            lblCorDash = uilabel(corWLrow); lblCorDash.Layout.Column=3;
+            lblCorDash.Text=char(8211); lblCorDash.FontSize=10; lblCorDash.HorizontalAlignment='center';
             app.EdtCorWinHi = uieditfield(corWLrow,'numeric');
             app.EdtCorWinHi.Layout.Column=4; app.EdtCorWinHi.Value=0; app.EdtCorWinHi.FontSize=9;
             app.EdtCorWinHi.Tooltip='Coronal display max (0=auto)';
@@ -533,15 +535,17 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             btnCorA = uibutton(corWLrow,'push'); btnCorA.Layout.Column=5; btnCorA.Text='A'; btnCorA.FontSize=9;
             btnCorA.Tooltip='Auto coronal window'; btnCorA.ButtonPushedFcn = @(~,~)app.autoLocWin('cor');
 
-            sagWLrow = uigridlayout(app.LocGrid,[1 7]);
+            sagWLrow = uigridlayout(app.LocGrid,[1 6]);
             sagWLrow.Layout.Row=2; sagWLrow.Layout.Column=2;
-            sagWLrow.ColumnWidth = {'1x',40,10,40,10,34,34}; sagWLrow.Padding=[2 1 2 1]; sagWLrow.ColumnSpacing=3;
-            uilabel(sagWLrow,'Text','Sag W/L:','FontSize',9,'HorizontalAlignment','right');
+            sagWLrow.ColumnWidth = {'1x',40,10,40,34,34}; sagWLrow.Padding=[2 1 2 1]; sagWLrow.ColumnSpacing=3;
+            lblSagWL = uilabel(sagWLrow); lblSagWL.Layout.Column=1;
+            lblSagWL.Text='Sag W/L:'; lblSagWL.FontSize=9; lblSagWL.HorizontalAlignment='right';
             app.EdtSagWinLo = uieditfield(sagWLrow,'numeric');
             app.EdtSagWinLo.Layout.Column=2; app.EdtSagWinLo.Value=0; app.EdtSagWinLo.FontSize=9;
             app.EdtSagWinLo.Tooltip='Sagittal display min (0=auto)';
             app.EdtSagWinLo.ValueChangedFcn = @(~,~)app.refreshLocSagittal();
-            uilabel(sagWLrow,'Text','–','FontSize',10,'HorizontalAlignment','center').Layout.Column=3;
+            lblSagDash = uilabel(sagWLrow); lblSagDash.Layout.Column=3;
+            lblSagDash.Text=char(8211); lblSagDash.FontSize=10; lblSagDash.HorizontalAlignment='center';
             app.EdtSagWinHi = uieditfield(sagWLrow,'numeric');
             app.EdtSagWinHi.Layout.Column=4; app.EdtSagWinHi.Value=0; app.EdtSagWinHi.FontSize=9;
             app.EdtSagWinHi.Tooltip='Sagittal display max (0=auto)';
@@ -714,15 +718,17 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxDixonIP.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('water');
 
             % Water W/L row
-            wWLrow = uigridlayout(rightG,[1 6]);
+            wWLrow = uigridlayout(rightG,[1 5]);
             wWLrow.Layout.Row = 2;
-            wWLrow.ColumnWidth = {'1x',36,10,36,10,36}; wWLrow.Padding=[2 1 2 1]; wWLrow.ColumnSpacing=2;
-            uilabel(wWLrow,'Text','Water W/L:','FontSize',9,'HorizontalAlignment','right');
+            wWLrow.ColumnWidth = {'1x',36,10,36,36}; wWLrow.Padding=[2 1 2 1]; wWLrow.ColumnSpacing=2;
+            lblWaterWL = uilabel(wWLrow); lblWaterWL.Layout.Column=1;
+            lblWaterWL.Text='Water W/L:'; lblWaterWL.FontSize=9; lblWaterWL.HorizontalAlignment='right';
             app.EdtWaterWinLo = uieditfield(wWLrow,'numeric');
             app.EdtWaterWinLo.Layout.Column=2; app.EdtWaterWinLo.Value=0; app.EdtWaterWinLo.FontSize=9;
             app.EdtWaterWinLo.Tooltip='Water panel display min (0=auto)';
             app.EdtWaterWinLo.ValueChangedFcn = @(~,~)refreshDixon(app);
-            uilabel(wWLrow,'Text','–','FontSize',10,'HorizontalAlignment','center').Layout.Column=3;
+            lblWDash = uilabel(wWLrow); lblWDash.Layout.Column=3;
+            lblWDash.Text=char(8211); lblWDash.FontSize=10; lblWDash.HorizontalAlignment='center';
             app.EdtWaterWinHi = uieditfield(wWLrow,'numeric');
             app.EdtWaterWinHi.Layout.Column=4; app.EdtWaterWinHi.Value=0; app.EdtWaterWinHi.FontSize=9;
             app.EdtWaterWinHi.Tooltip='Water panel display max (0=auto)';
@@ -759,15 +765,17 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             nextBtnDix.ButtonPushedFcn = @(~,~)app.nudgeDixonSlice(+1);
 
             % Fat W/L row (row 4)
-            fWLrow = uigridlayout(rightG,[1 6]);
+            fWLrow = uigridlayout(rightG,[1 5]);
             fWLrow.Layout.Row = 4;
-            fWLrow.ColumnWidth = {'1x',36,10,36,10,36}; fWLrow.Padding=[2 1 2 1]; fWLrow.ColumnSpacing=2;
-            uilabel(fWLrow,'Text','Fat W/L:','FontSize',9,'HorizontalAlignment','right');
+            fWLrow.ColumnWidth = {'1x',36,10,36,36}; fWLrow.Padding=[2 1 2 1]; fWLrow.ColumnSpacing=2;
+            lblFatWL = uilabel(fWLrow); lblFatWL.Layout.Column=1;
+            lblFatWL.Text='Fat W/L:'; lblFatWL.FontSize=9; lblFatWL.HorizontalAlignment='right';
             app.EdtFatWinLo = uieditfield(fWLrow,'numeric');
             app.EdtFatWinLo.Layout.Column=2; app.EdtFatWinLo.Value=0; app.EdtFatWinLo.FontSize=9;
             app.EdtFatWinLo.Tooltip='Fat panel display min (0=auto)';
             app.EdtFatWinLo.ValueChangedFcn = @(~,~)refreshDixon(app);
-            uilabel(fWLrow,'Text','–','FontSize',10,'HorizontalAlignment','center').Layout.Column=3;
+            lblFDash = uilabel(fWLrow); lblFDash.Layout.Column=3;
+            lblFDash.Text=char(8211); lblFDash.FontSize=10; lblFDash.HorizontalAlignment='center';
             app.EdtFatWinHi = uieditfield(fWLrow,'numeric');
             app.EdtFatWinHi.Layout.Column=4; app.EdtFatWinHi.Value=0; app.EdtFatWinHi.FontSize=9;
             app.EdtFatWinHi.Tooltip='Fat panel display max (0=auto)';
