@@ -66,10 +66,22 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         SldrLocSag          matlab.ui.control.Slider
         LblLocCor           matlab.ui.control.Label
         LblLocSag           matlab.ui.control.Label
-        BtnPlaceL1          matlab.ui.control.Button
-        BtnPlaceL2          matlab.ui.control.Button
+        BtnPlaceL1          matlab.ui.control.Button   % legacy (T12)
+        BtnPlaceL2          matlab.ui.control.Button   % legacy (L3)
         BtnClearL12         matlab.ui.control.Button
         LblL12Status        matlab.ui.control.Label
+        % Five landmark buttons (T11/12 → L3/4 discs)
+        BtnMarkLM_T11T12    matlab.ui.control.Button
+        BtnMarkLM_T12L1     matlab.ui.control.Button
+        BtnMarkLM_L1L2      matlab.ui.control.Button
+        BtnMarkLM_L2L3      matlab.ui.control.Button
+        BtnMarkLM_L3L4      matlab.ui.control.Button
+        % Dixon landmark jump buttons (one per disc level)
+        BtnJumpLM_T11T12    matlab.ui.control.Button
+        BtnJumpLM_T12L1     matlab.ui.control.Button
+        BtnJumpLM_L1L2      matlab.ui.control.Button
+        BtnJumpLM_L2L3      matlab.ui.control.Button
+        BtnJumpLM_L3L4      matlab.ui.control.Button
 
         % Dixon tab
         DixonTab            matlab.ui.container.Tab
@@ -209,15 +221,35 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'Localizer',    [], ...   % from loc_loadLocalizer
             'Dixon',        [], ...   % from seg_buildDixonVolume
             'MRE',          [], ...   % struct: M,W,W_raw,S,LapC,H
-            'L12',          [], ...   % from loc_detectL1L2
-            'L12_Dixon',    [], ...   % propagated to Dixon space
-            'L12_MRE',      [], ...   % propagated to MRE space
-            'L1_CorRow',    NaN, ...  % row index in coronal localizer
-            'L2_CorRow',    NaN, ...  % row index in coronal localizer
-            'L1_SagRow',    NaN, ...  % row index in sagittal localizer
-            'L2_SagRow',    NaN, ...
+            'L12',          [], ...   % legacy (kept for loc_propagateToSpace compat)
+            'L12_Dixon',    [], ...   % legacy
+            'L12_MRE',      [], ...   % legacy
+            'L1_CorRow',    NaN, ...  % legacy (T12)
+            'L2_CorRow',    NaN, ...  % legacy (L3)
+            'L1_SagRow',    NaN, ...  % legacy
+            'L2_SagRow',    NaN, ...  % legacy
+            % ── 5 intervertebral disc landmarks ──────────────────────────
+            'LM', struct( ...
+                'T11T12', struct('CorRow',NaN,'SagRow',NaN), ...
+                'T12L1',  struct('CorRow',NaN,'SagRow',NaN), ...
+                'L1L2',   struct('CorRow',NaN,'SagRow',NaN), ...
+                'L2L3',   struct('CorRow',NaN,'SagRow',NaN), ...
+                'L3L4',   struct('CorRow',NaN,'SagRow',NaN)), ...
+            'LM_Dixon', struct( ...   % slice indices after confirmLandmarks
+                'T11T12', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
+                'T12L1',  struct('SliceIdx',NaN,'Dist_mm',NaN), ...
+                'L1L2',   struct('SliceIdx',NaN,'Dist_mm',NaN), ...
+                'L2L3',   struct('SliceIdx',NaN,'Dist_mm',NaN), ...
+                'L3L4',   struct('SliceIdx',NaN,'Dist_mm',NaN)), ...
+            'LM_MRE', struct( ...
+                'T11T12', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
+                'T12L1',  struct('SliceIdx',NaN,'Dist_mm',NaN), ...
+                'L1L2',   struct('SliceIdx',NaN,'Dist_mm',NaN), ...
+                'L2L3',   struct('SliceIdx',NaN,'Dist_mm',NaN), ...
+                'L3L4',   struct('SliceIdx',NaN,'Dist_mm',NaN)), ...
+            'ActiveLM',     '', ...   % which landmark is being placed
             'LocHoverAxes', '', ...   % 'cor' | 'sag' | '' for scroll-wheel routing
-            'AwaitingClick','', ...   % 'L1' | 'L2' | '' placement mode
+            'AwaitingClick','', ...   % legacy click-arm flag
             'CorSlice',     1, ...    % current coronal slice index
             'SagSlice',     1, ...    % current sagittal slice index
             'DixonSlice',   1, ...
@@ -442,11 +474,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         % ── LOCALIZER TAB ────────────────────────────────────────────────
         function createLocalizerTab(app)
-            app.LocTab = uitab(app.ImageTabGroup,'Title','Localizer / T12-L3');
+            app.LocTab = uitab(app.ImageTabGroup,'Title','Localizer / Disc Levels');
 
-            % Grid: images row | controls row
-            app.LocGrid = uigridlayout(app.LocTab,[3 2]);
-            app.LocGrid.RowHeight    = {'1x',32,42};
+            % Grid: images row | slider row | landmark buttons row | status row
+            app.LocGrid = uigridlayout(app.LocTab,[4 2]);
+            app.LocGrid.RowHeight    = {'1x',32,36,22};
             app.LocGrid.ColumnWidth  = {'1x','1x'};
             app.LocGrid.Padding      = [6 6 6 6];
             app.LocGrid.RowSpacing   = 4;
@@ -455,12 +487,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Coronal axis
             app.AxLocCoronal = uiaxes(app.LocGrid);
             app.AxLocCoronal.Layout.Row=1; app.AxLocCoronal.Layout.Column=1;
-            setupDarkAxes(app.AxLocCoronal,'Coronal  (T12-L3 identification)');
+            setupDarkAxes(app.AxLocCoronal,'Coronal  (disc level identification)');
 
             % Sagittal axis
             app.AxLocSagittal = uiaxes(app.LocGrid);
             app.AxLocSagittal.Layout.Row=1; app.AxLocSagittal.Layout.Column=2;
-            setupDarkAxes(app.AxLocSagittal,'Sagittal  (T12-L3 verification)');
+            setupDarkAxes(app.AxLocSagittal,'Sagittal  (disc level verification)');
 
             % Sliders (row 2)
             corSliderGrid = uigridlayout(app.LocGrid,[1 3]);
@@ -491,37 +523,41 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblLocSag.Text='5'; app.LblLocSag.FontSize=12;
             app.LblLocSag.HorizontalAlignment='center';
 
-            % L1/L2 buttons (row 3, spanning both columns)
-            ctrlGrid = uigridlayout(app.LocGrid,[1 5]);
-            ctrlGrid.Layout.Row=3; ctrlGrid.Layout.Column=[1 2];
-            ctrlGrid.ColumnWidth={160,160,130,'1x',280}; ctrlGrid.Padding=[0 2 0 2];
+            % ── Landmark buttons row (row 3, spanning both columns) ───────
+            % Five disc levels: T11/12, T12/L1, L1/2, L2/3, L3/4
+            lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmLabels = {'T11/12','T12/L1','L1/2','L2/3','L3/4'};
+            lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            lmBtnProps = {'BtnMarkLM_T11T12','BtnMarkLM_T12L1','BtnMarkLM_L1L2','BtnMarkLM_L2L3','BtnMarkLM_L3L4'};
 
-            app.BtnPlaceL1 = uibutton(ctrlGrid,'push');
-            app.BtnPlaceL1.Layout.Column=1;
-            app.BtnPlaceL1.Text='Mark T12';
-            app.BtnPlaceL1.FontSize=12; app.BtnPlaceL1.FontWeight='bold';
-            app.BtnPlaceL1.BackgroundColor=[0.92 0.60 0.12];
-            app.BtnPlaceL1.Tooltip='Click, then click on T12 in either the coronal or sagittal image';
-            app.BtnPlaceL1.ButtonPushedFcn = @(~,~)app.placeL1();
+            btnGrid = uigridlayout(app.LocGrid,[1 8]);
+            btnGrid.Layout.Row=3; btnGrid.Layout.Column=[1 2];
+            btnGrid.ColumnWidth = {100,100,100,100,100,88,'1x',88};
+            btnGrid.Padding=[0 2 0 2]; btnGrid.ColumnSpacing=4;
 
-            app.BtnPlaceL2 = uibutton(ctrlGrid,'push');
-            app.BtnPlaceL2.Layout.Column=2;
-            app.BtnPlaceL2.Text='Mark L3';
-            app.BtnPlaceL2.FontSize=12; app.BtnPlaceL2.FontWeight='bold';
-            app.BtnPlaceL2.BackgroundColor=[0.38 0.62 0.92];
-            app.BtnPlaceL2.Tooltip='Click, then click on L3 in either the coronal or sagittal image';
-            app.BtnPlaceL2.ButtonPushedFcn = @(~,~)app.placeL2();
+            for ki = 1:5
+                b = uibutton(btnGrid,'push');
+                b.Layout.Column = ki;
+                b.Text = lmLabels{ki};
+                b.FontSize = 11; b.FontWeight = 'bold';
+                b.BackgroundColor = lmColors{ki};
+                b.FontColor = [1 1 1];
+                b.Tooltip = sprintf('Mark %s disc level — click, then click in coronal or sagittal image', lmLabels{ki});
+                b.ButtonPushedFcn = @(~,~,n=lmNames{ki})app.placeLandmark(n);
+                app.(lmBtnProps{ki}) = b;
+            end
 
-            app.BtnClearL12 = uibutton(ctrlGrid,'push');
-            app.BtnClearL12.Layout.Column=3;
-            app.BtnClearL12.Text='Clear marks';
-            app.BtnClearL12.FontSize=12;
-            app.BtnClearL12.ButtonPushedFcn = @(~,~)app.clearL12();
+            app.BtnClearL12 = uibutton(btnGrid,'push');
+            app.BtnClearL12.Layout.Column = 6;
+            app.BtnClearL12.Text = 'Clear all';
+            app.BtnClearL12.FontSize = 11;
+            app.BtnClearL12.ButtonPushedFcn = @(~,~)app.clearLandmarks();
 
-            app.LblL12Status = uilabel(ctrlGrid);
-            app.LblL12Status.Layout.Column=[4 5];
-            app.LblL12Status.Text='Scroll wheel over image to navigate.  Click Mark T12/L3, then click in coronal or sagittal.';
-            app.LblL12Status.FontSize=12; app.LblL12Status.FontColor=[0.4 0.4 0.4];
+            % Status row (row 4)
+            app.LblL12Status = uilabel(app.LocGrid);
+            app.LblL12Status.Layout.Row=4; app.LblL12Status.Layout.Column=[1 2];
+            app.LblL12Status.Text='Scroll wheel over image to navigate.  Click a disc button, then click in coronal or sagittal image.';
+            app.LblL12Status.FontSize=11; app.LblL12Status.FontColor=[0.4 0.4 0.4];
 
             % Scroll-wheel and mouse-hover tracking (figure-level, registered once)
             app.UIFigure.WindowScrollWheelFcn   = @(~,e)app.onScrollWheel(e);
@@ -538,11 +574,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.DixonGrid.Padding      = [4 4 4 4];
             app.DixonGrid.ColumnSpacing = 6;
 
-            % Image area: header row + PDFF controls + image panels (no bottom bar needed).
+            % Image area: header row + PDFF controls + image panels + landmark jump bar.
             imgArea = uipanel(app.DixonGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
-            imgG = uigridlayout(imgArea,[3 1]);
-            imgG.RowHeight   = {28,30,'1x'};
+            imgG = uigridlayout(imgArea,[4 1]);
+            imgG.RowHeight   = {28,30,'1x',26};
             imgG.ColumnWidth = {'1x'};
             imgG.Padding     = [0 0 0 0];
             imgG.RowSpacing  = 3;
@@ -654,6 +690,31 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             % Keep the legacy ROI drawing path anchored to the PDFF panel.
             app.AxDixon = app.AxDixonPDFF;
+
+            % ── Row 4: Landmark jump bar ─────────────────────────────────
+            lmJumpGrid = uigridlayout(imgG,[1 7]);
+            lmJumpGrid.Layout.Row = 4;
+            lmJumpGrid.Padding = [0 1 0 1]; lmJumpGrid.ColumnSpacing = 3;
+            lmJumpGrid.ColumnWidth = {60,82,82,82,82,82,'1x'};
+            ljLabel = uilabel(lmJumpGrid,'Text','Jump to:','FontSize',10, ...
+                'FontColor',[0.45 0.45 0.45],'HorizontalAlignment','right');
+            ljLabel.Layout.Column = 1;
+            lmJNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmJLabels = {'T11/12','T12/L1','L1/2','L2/3','L3/4'};
+            lmJColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            lmJProps  = {'BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
+            for ki = 1:5
+                jb = uibutton(lmJumpGrid,'push');
+                jb.Layout.Column = ki + 1;
+                jb.Text = lmJLabels{ki};
+                jb.FontSize = 10; jb.FontWeight = 'bold';
+                jb.BackgroundColor = lmJColors{ki} * 0.75 + 0.25;
+                jb.FontColor = lmJColors{ki} * 0.4;
+                jb.Enable = 'off';
+                jb.Tooltip = sprintf('Jump Dixon to %s disc level', lmJLabels{ki});
+                jb.ButtonPushedFcn = @(~,~,n=lmJNames{ki})app.jumpDixonToLandmark(n);
+                app.(lmJProps{ki}) = jb;
+            end
 
             % ROI panel (right column) — Liver / Spleen / Muscle / SAT / VAT workflow
             roiPnl = uipanel(app.DixonGrid,'Title','Dixon ROI Tools', ...
@@ -1031,7 +1092,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BottomGrid.ColumnWidth  = {'1x','1x','1x','1x',8,'2x'};
             app.BottomGrid.Padding      = [6 3 6 2]; app.BottomGrid.ColumnSpacing=4;
 
-            stepLabels = {'Localizer / T12-L3','Dixon + ROIs','MRE + ROIs','Export'};
+            stepLabels = {'Localizer / Disc Levels','Dixon + ROIs','MRE + ROIs','Export'};
             stepProps  = {'BtnStepLoc','BtnStepDixon','BtnStepMRE','BtnStepResults'};
             stepCBs    = {@(~,~)app.activateTab('loc'), ...
                           @(~,~)app.activateTab('dixon'), ...
@@ -1200,119 +1261,255 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             refreshLocSagittal(app);
         end
 
-        function placeL1(app)
-            if isempty(app.AppData.Localizer)
-                uialert(app.UIFigure,'Load a study first.','No Localizer');
-                return
-            end
-            cancelPendingClick(app);
-            % Place line immediately at 1/3 from top if not already set
-            if isnan(app.AppData.L1_CorRow)
-                nRows = size(app.AppData.Localizer.Coronal.Volume, 1);
-                app.AppData.L1_CorRow = max(1, round(nRows / 3));
-            end
-            refreshLocCoronal(app);
-            refreshLocSagittal(app);
-            % Arm click to reposition
-            app.AppData.AwaitingClick = 'L1';
-            app.BtnPlaceL1.BackgroundColor = [1.0 0.95 0.2];
-            setStatus(app,'T12 line shown.  Click on coronal or sagittal image to reposition.');
-            app.LblL12Status.Text = 'T12 line shown — click image to reposition, scroll to navigate.';
-            app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor','L1');
-            app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag','L1');
-        end
+        % ── Landmark placement (replaces legacy placeL1/placeL2) ─────────
 
-        function placeL2(app)
+        function placeLandmark(app, lmName)
+        % Arm click-to-place for the given disc landmark name.
             if isempty(app.AppData.Localizer)
                 uialert(app.UIFigure,'Load a study first.','No Localizer');
                 return
             end
             cancelPendingClick(app);
-            % Place line immediately at 2/3 from top if not already set (L2 is below L1)
-            if isnan(app.AppData.L2_CorRow)
+            % Place line at a sensible default row if not already set
+            if isnan(app.AppData.LM.(lmName).CorRow)
                 nRows = size(app.AppData.Localizer.Coronal.Volume, 1);
-                app.AppData.L2_CorRow = max(1, round(nRows * 2 / 5));
+                lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+                frac    = [0.20, 0.28, 0.36, 0.44, 0.52];
+                idx = find(strcmp(lmNames, lmName), 1);
+                if ~isempty(idx)
+                    app.AppData.LM.(lmName).CorRow = max(1, round(nRows * frac(idx)));
+                end
             end
             refreshLocCoronal(app);
             refreshLocSagittal(app);
-            % Arm click to reposition
-            app.AppData.AwaitingClick = 'L2';
-            app.BtnPlaceL2.BackgroundColor = [0.80 0.95 1.0];
-            setStatus(app,'L3 line shown.  Click on coronal or sagittal image to reposition.');
-            app.LblL12Status.Text = 'L3 line shown — click image to reposition, scroll to navigate.';
-            app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor','L2');
-            app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag','L2');
+            % Highlight the active button
+            app.AppData.ActiveLM = lmName;
+            app.AppData.AwaitingClick = lmName;
+            try
+                btnProp = ['BtnMarkLM_' lmName];
+                app.(btnProp).BackgroundColor = [1 1 0.7];
+            catch, end
+            lbl = locLandmarkLabel(lmName);
+            setStatus(app, sprintf('%s line shown.  Click coronal or sagittal image to reposition.', lbl));
+            app.LblL12Status.Text = sprintf('%s — click image to reposition, scroll to navigate.', lbl);
+            app.AxLocCoronal.ButtonDownFcn  = @(~,e)app.onLocImageClick(e,'cor',lmName);
+            app.AxLocSagittal.ButtonDownFcn = @(~,e)app.onLocImageClick(e,'sag',lmName);
         end
 
         function cancelPendingClick(app)
-            % Clear any previously armed ButtonDownFcn on localizer axes
+        % Reset armed state and restore all landmark button colors.
             try; app.AxLocCoronal.ButtonDownFcn  = ''; catch; end
             try; app.AxLocSagittal.ButtonDownFcn = ''; catch; end
             app.AppData.AwaitingClick = '';
-            app.BtnPlaceL1.BackgroundColor = [0.92 0.60 0.12];
-            app.BtnPlaceL2.BackgroundColor = [0.38 0.62 0.92];
+            app.AppData.ActiveLM = '';
+            lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            for ki = 1:5
+                try
+                    app.(['BtnMarkLM_' lmNames{ki}]).BackgroundColor = lmColors{ki};
+                catch, end
+            end
+            % Legacy button resets
+            try; app.BtnPlaceL1.BackgroundColor = [0.92 0.60 0.12]; catch, end
+            try; app.BtnPlaceL2.BackgroundColor = [0.38 0.62 0.92]; catch, end
         end
 
-        function clearL12(app)
+        function clearLandmarks(app)
+        % Clear all 5 disc landmark positions.
             cancelPendingClick(app);
-            app.AppData.L1_CorRow = NaN;
-            app.AppData.L2_CorRow = NaN;
-            app.AppData.L1_SagRow = NaN;
-            app.AppData.L2_SagRow = NaN;
+            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            for ki = 1:5
+                app.AppData.LM.(lmNames{ki}).CorRow = NaN;
+                app.AppData.LM.(lmNames{ki}).SagRow = NaN;
+            end
+            % Legacy fields
+            app.AppData.L1_CorRow = NaN; app.AppData.L2_CorRow = NaN;
+            app.AppData.L1_SagRow = NaN; app.AppData.L2_SagRow = NaN;
             refreshLocCoronal(app);
             refreshLocSagittal(app);
-            app.LblL12Status.Text = 'T12/L3 cleared.';
-            setStatus(app,'T12-L3 cleared.');
+            app.LblL12Status.Text = 'All landmarks cleared.';
+            setStatus(app,'Disc landmarks cleared.');
         end
 
-        function updateL12Status(app)
-            l1r = app.AppData.L1_CorRow;
-            l2r = app.AppData.L2_CorRow;
-            if isnan(l1r) && isnan(l2r)
-                app.LblL12Status.Text = 'No T12/L3 placed yet.';
-            elseif isnan(l2r)
-                app.LblL12Status.Text = sprintf('T12 placed  |  L3: not placed yet.  Click Mark L3.');
-            elseif isnan(l1r)
-                app.LblL12Status.Text = sprintf('T12: not placed  |  L3 placed.  Click Mark T12.');
+        % Keep legacy wrappers so old code paths still compile
+        function placeL1(app), app.placeLandmark('T12L1'); end
+        function placeL2(app), app.placeLandmark('L3L4');  end
+        function clearL12(app), app.clearLandmarks(); end
+
+        function updateLandmarkStatus(app)
+        % Update the status label and enable Confirm button when enough landmarks are set.
+            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            nPlaced = 0;
+            for ki = 1:5
+                if ~isnan(app.AppData.LM.(lmNames{ki}).CorRow)
+                    nPlaced = nPlaced + 1;
+                end
+            end
+            if nPlaced == 0
+                app.LblL12Status.Text = 'No disc landmarks placed yet.  Click a disc button above.';
+            elseif nPlaced < 5
+                app.LblL12Status.Text = sprintf('%d/5 disc levels placed.  Press Confirm when done.', nPlaced);
             else
-                app.LblL12Status.Text = sprintf('T12 placed  |  L3 placed  — press Confirm T12-L3 in toolbar.');
-                app.BtnConfirmL12.Enable = 'on';
+                app.LblL12Status.Text = 'All 5 disc levels placed — press Confirm Levels in toolbar.';
+            end
+            if nPlaced >= 2
+                try, app.BtnConfirmL12.Enable = 'on'; catch, end
             end
         end
 
-        function confirmL12(app)
-            if isnan(app.AppData.L1_CorRow) || isnan(app.AppData.L2_CorRow)
-                uialert(app.UIFigure,'Place both T12 and L3 markers first.','Missing Marks');
+        % Legacy alias
+        function updateL12Status(app), app.updateLandmarkStatus(); end
+
+        function confirmLandmarks(app)
+        % Convert all placed landmarks to mm and propagate to Dixon + MRE.
+            loc = app.AppData.Localizer;
+            if isempty(loc)
+                uialert(app.UIFigure,'No localizer loaded.','Missing Data'); return
+            end
+            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            anyPlaced = false;
+            for ki = 1:5
+                if ~isnan(app.AppData.LM.(lmNames{ki}).CorRow)
+                    anyPlaced = true; break
+                end
+            end
+            if ~anyPlaced
+                uialert(app.UIFigure,'Place at least one disc level marker first.','No Landmarks');
                 return
             end
-            % Convert row position to mm using localizer spatial info
-            loc = app.AppData.Localizer;
-            if isempty(loc), return; end
 
+            % Convert coronal row → patient Z (mm) for each landmark
             sinfo = loc.Coronal.SpatialInfo;
-            L12 = rowsToL12mm(app, sinfo);
-            app.AppData.L12 = L12;
-
-            % Propagate to Dixon
-            if ~isempty(app.AppData.Dixon) && ~isempty(app.AppData.Dixon.SpatialInfo) && ...
-               isfield(app.AppData.Dixon.SpatialInfo,'AffineMatrix')
-                app.AppData.L12_Dixon = loc_propagateToSpace(L12, ...
-                    app.AppData.Dixon.SpatialInfo, struct('verbose',false));
-                setStatus(app,sprintf( ...
-                    'T12/L3 confirmed.  Dixon: T12→sl%d  L3→sl%d.  Switch to Dixon tab.', ...
-                    app.AppData.L12_Dixon.L1_sliceIdx, app.AppData.L12_Dixon.L2_sliceIdx));
+            lmZ   = struct();
+            for ki = 1:5
+                n = lmNames{ki};
+                lmZ.(n) = NaN;
+                row = app.AppData.LM.(n).CorRow;
+                if ~isnan(row)
+                    lmZ.(n) = corRowToZmm(app, row);
+                end
             end
 
-            % Jump Dixon to L1 level
-            if ~isempty(app.AppData.L12_Dixon) && ~isnan(app.AppData.L12_Dixon.L1_sliceIdx)
-                sl = max(1, min(app.AppData.Dixon.nSlices, ...
-                    round(app.AppData.L12_Dixon.L1_sliceIdx)));
+            % Propagate to Dixon
+            dixSinfo = [];
+            try
+                if ~isempty(app.AppData.Dixon) && ~isempty(app.AppData.Dixon.SpatialInfo) && ...
+                   isfield(app.AppData.Dixon.SpatialInfo,'AffineMatrix')
+                    dixSinfo = app.AppData.Dixon.SpatialInfo;
+                end
+            catch, end
+            for ki = 1:5
+                n = lmNames{ki};
+                app.AppData.LM_Dixon.(n).SliceIdx = NaN;
+                app.AppData.LM_Dixon.(n).Dist_mm  = NaN;
+                if ~isnan(lmZ.(n)) && ~isempty(dixSinfo)
+                    [si, dm] = propagateLandmarkMm(lmZ.(n), dixSinfo);
+                    app.AppData.LM_Dixon.(n).SliceIdx = si;
+                    app.AppData.LM_Dixon.(n).Dist_mm  = dm;
+                end
+            end
+
+            % Propagate to MRE
+            mreSinfo = [];
+            try
+                if ~isempty(app.AppData.MRE) && isfield(app.AppData.MRE,'SpatialInfo') && ...
+                   ~isempty(app.AppData.MRE.SpatialInfo) && ...
+                   isfield(app.AppData.MRE.SpatialInfo,'AffineMatrix')
+                    mreSinfo = app.AppData.MRE.SpatialInfo;
+                end
+            catch, end
+            for ki = 1:5
+                n = lmNames{ki};
+                app.AppData.LM_MRE.(n).SliceIdx = NaN;
+                app.AppData.LM_MRE.(n).Dist_mm  = NaN;
+                if ~isnan(lmZ.(n)) && ~isempty(mreSinfo)
+                    [si, dm] = propagateLandmarkMm(lmZ.(n), mreSinfo);
+                    app.AppData.LM_MRE.(n).SliceIdx = si;
+                    app.AppData.LM_MRE.(n).Dist_mm  = dm;
+                end
+            end
+
+            % Legacy L12 struct (keep for loc_propagateToSpace compat)
+            try
+                L12 = rowsToL12mm(app, sinfo);
+                app.AppData.L12 = L12;
+                if ~isempty(dixSinfo)
+                    app.AppData.L12_Dixon = loc_propagateToSpace(L12, dixSinfo, struct('verbose',false));
+                end
+            catch, end
+
+            % Enable Dixon jump buttons for placed landmarks
+            updateDixonJumpButtons(app);
+
+            % Jump Dixon to L1/2 disc level (or first available)
+            jumpSl = NaN;
+            for ki = 1:5
+                si = app.AppData.LM_Dixon.(lmNames{ki}).SliceIdx;
+                if ~isnan(si), jumpSl = si; break; end
+            end
+            if ~isnan(jumpSl) && ~isempty(app.AppData.Dixon)
+                sl = max(1, min(app.AppData.Dixon.nSlices, round(jumpSl)));
                 app.AppData.DixonSlice = sl;
                 refreshDixon(app);
             end
 
+            % Build status summary
+            parts = {};
+            for ki = 1:5
+                n = lmNames{ki};
+                lbl = locLandmarkLabel(n);
+                si  = app.AppData.LM_Dixon.(n).SliceIdx;
+                dm  = app.AppData.LM_Dixon.(n).Dist_mm;
+                if ~isnan(si)
+                    parts{end+1} = sprintf('%s→sl%d(%.1fmm)', lbl, si, dm); %#ok<AGROW>
+                end
+            end
+            if isempty(parts)
+                setStatus(app,'Landmarks confirmed. Could not map to Dixon slices — check geometry.');
+            else
+                setStatus(app,['Confirmed.  Dixon: ' strjoin(parts,'  ')]);
+            end
+            app.LblL12Status.Text = sprintf('%d/5 disc levels confirmed and propagated.', ...
+                sum(~isnan(cellfun(@(n)app.AppData.LM_Dixon.(n).SliceIdx, lmNames))));
             app.BtnStepDixon.BackgroundColor = [0.70 0.88 0.70];
             activateTab(app,'dixon');
+        end
+
+        % Legacy alias
+        function confirmL12(app), app.confirmLandmarks(); end
+
+        function updateDixonJumpButtons(app)
+        % Enable/disable Dixon jump buttons based on propagated slice indices.
+            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmProps = {'BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
+            for ki = 1:5
+                try
+                    si = app.AppData.LM_Dixon.(lmNames{ki}).SliceIdx;
+                    dm = app.AppData.LM_Dixon.(lmNames{ki}).Dist_mm;
+                    if ~isnan(si)
+                        lbl = locLandmarkLabel(lmNames{ki});
+                        app.(lmProps{ki}).Text = sprintf('%s\nsl%d', lbl, si);
+                        app.(lmProps{ki}).Enable = 'on';
+                        if ~isnan(dm) && dm > 5
+                            app.(lmProps{ki}).Enable = 'off';  % outside 5mm threshold
+                        end
+                    else
+                        app.(lmProps{ki}).Enable = 'off';
+                    end
+                catch, end
+            end
+        end
+
+        function jumpDixonToLandmark(app, lmName)
+        % Jump Dixon display to the slice closest to the given landmark.
+            try
+                si = app.AppData.LM_Dixon.(lmName).SliceIdx;
+                if isnan(si), return; end
+                sl = max(1, min(app.AppData.Dixon.nSlices, round(si)));
+                app.AppData.DixonSlice = sl;
+                refreshDixon(app);
+                setStatus(app, sprintf('Jumped to %s → Dixon slice %d.', locLandmarkLabel(lmName), sl));
+            catch, end
         end
 
         % ── DIXON ─────────────────────────────────────────────────────────
@@ -2317,6 +2514,11 @@ function I = getMREMagnitudeForROI(app, sl)
         function handled = handleDixonROIHotkey(app, event)
             handled = false;
             if ~app.isDixonROIWorkflowActive(), return; end
+            % Block re-entry: if a freehand/polygon draw is already blocking
+            % on wait(), ignore all further hotkeys until it finishes.
+            try
+                if app.AppData.DixonROIDrawing, return; end
+            catch, end
             handled = true;
             key = lower(event.Key);
             switch key
@@ -3042,29 +3244,9 @@ function tf = shouldBypassGlobalHotkeys(app)
             sl  = max(1, min(size(loc.Coronal.Volume,3), sl));
             img = double(loc.Coronal.Volume(:,:,sl));
             showImg(app.AxLocCoronal, img, sprintf('Coronal  slice %d',sl));
-            % Draw L1/L2 lines (HitTest off so clicks pass through to axes)
             hold(app.AxLocCoronal,'on');
             nC = size(img,2);
-            if ~isnan(app.AppData.L1_CorRow)
-                z1 = corRowToZmm(app, app.AppData.L1_CorRow);
-                lbl1 = ['T12 ' siCoordStr(z1)];
-                hl = plot(app.AxLocCoronal,[1 nC],[app.AppData.L1_CorRow app.AppData.L1_CorRow], ...
-                    '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
-                ht = text(app.AxLocCoronal, nC-2, app.AppData.L1_CorRow-3, lbl1, ...
-                    'Color',[0.95 0.60 0.10],'FontSize',12,'FontWeight','bold', ...
-                    'HorizontalAlignment','right');
-                try; hl.HitTest='off'; hl.PickableParts='none'; ht.HitTest='off'; ht.PickableParts='none'; catch; end
-            end
-            if ~isnan(app.AppData.L2_CorRow)
-                z2 = corRowToZmm(app, app.AppData.L2_CorRow);
-                lbl2 = ['L3 ' siCoordStr(z2)];
-                hl = plot(app.AxLocCoronal,[1 nC],[app.AppData.L2_CorRow app.AppData.L2_CorRow], ...
-                    '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
-                ht = text(app.AxLocCoronal, nC-2, app.AppData.L2_CorRow-3, lbl2, ...
-                    'Color',[0.38 0.62 0.92],'FontSize',12,'FontWeight','bold', ...
-                    'HorizontalAlignment','right');
-                try; hl.HitTest='off'; hl.PickableParts='none'; ht.HitTest='off'; ht.PickableParts='none'; catch; end
-            end
+            drawLocLines(app, app.AxLocCoronal, nC, 'cor', sl);
             hold(app.AxLocCoronal,'off');
         end
 
@@ -3076,32 +3258,37 @@ function tf = shouldBypassGlobalHotkeys(app)
             sl  = max(1, min(nSl, sl));
             img = double(loc.Sagittal.Volume(:,:,sl));
             showImg(app.AxLocSagittal, img, sprintf('Sagittal  %d/%d',sl,nSl));
-            % Overlay L1/L2 lines, converted from coronal mm coordinates
             hold(app.AxLocSagittal,'on');
             nC = size(img,2);
-            l1_sagRow = corRowToSagRow(app, app.AppData.L1_CorRow, sl);
-            l2_sagRow = corRowToSagRow(app, app.AppData.L2_CorRow, sl);
-            if ~isnan(l1_sagRow)
-                z1 = corRowToZmm(app, app.AppData.L1_CorRow);
-                lbl1 = ['T12 ' siCoordStr(z1)];
-                hl = plot(app.AxLocSagittal,[1 nC],[l1_sagRow l1_sagRow], ...
-                    '-','Color',[0.95 0.60 0.10],'LineWidth',2.5);
-                ht = text(app.AxLocSagittal, nC-2, l1_sagRow-3, lbl1, ...
-                    'Color',[0.95 0.60 0.10],'FontSize',12,'FontWeight','bold', ...
-                    'HorizontalAlignment','right');
-                try; hl.HitTest='off'; hl.PickableParts='none'; ht.HitTest='off'; ht.PickableParts='none'; catch; end
-            end
-            if ~isnan(l2_sagRow)
-                z2 = corRowToZmm(app, app.AppData.L2_CorRow);
-                lbl2 = ['L3 ' siCoordStr(z2)];
-                hl = plot(app.AxLocSagittal,[1 nC],[l2_sagRow l2_sagRow], ...
-                    '-','Color',[0.38 0.62 0.92],'LineWidth',2.5);
-                ht = text(app.AxLocSagittal, nC-2, l2_sagRow-3, lbl2, ...
-                    'Color',[0.38 0.62 0.92],'FontSize',12,'FontWeight','bold', ...
-                    'HorizontalAlignment','right');
-                try; hl.HitTest='off'; hl.PickableParts='none'; ht.HitTest='off'; ht.PickableParts='none'; catch; end
-            end
+            drawLocLines(app, app.AxLocSagittal, nC, 'sag', sl);
             hold(app.AxLocSagittal,'off');
+        end
+
+        function drawLocLines(app, ax, nC, plane, sl)
+        % Draw all 5 disc landmark lines on a localizer axes.
+            lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            for ki = 1:5
+                n   = lmNames{ki};
+                clr = lmColors{ki};
+                corRow = app.AppData.LM.(n).CorRow;
+                if isnan(corRow), continue; end
+                if strcmp(plane,'sag')
+                    rowY = corRowToSagRow(app, corRow, sl);
+                else
+                    rowY = corRow;
+                end
+                if isnan(rowY), continue; end
+                z = corRowToZmm(app, corRow);
+                lbl = [locLandmarkLabel(n) '  ' siCoordStr(z)];
+                hl = plot(ax, [1 nC], [rowY rowY], '-', 'Color', clr, 'LineWidth', 2.2);
+                ht = text(ax, nC-2, rowY-3, lbl, 'Color', clr, 'FontSize', 11, ...
+                    'FontWeight','bold','HorizontalAlignment','right');
+                try
+                    hl.HitTest='off'; hl.PickableParts='none';
+                    ht.HitTest='off'; ht.PickableParts='none';
+                catch, end
+            end
         end
 
         function populateDixonTab(app)
@@ -3883,42 +4070,41 @@ function tf = shouldBypassGlobalHotkeys(app)
         % -----------------------------------------------------------------
         %  L1/L2 CLICK HANDLER (fires from ButtonDownFcn on either axes)
         % -----------------------------------------------------------------
-        function onLocImageClick(app, event, plane, level)  %#ok<INUSD>
-            if ~strcmp(app.AppData.AwaitingClick, level), return; end
+        function onLocImageClick(app, event, plane, lmName)  %#ok<INUSD>
+            if ~strcmp(app.AppData.AwaitingClick, lmName), return; end
 
             % Clear armed state immediately
             cancelPendingClick(app);
 
             % Use ax.CurrentPoint (reliable in App Designer uiaxes)
-            if strcmp(plane, 'cor')
-                ax = app.AxLocCoronal;
-            else
-                ax = app.AxLocSagittal;
-            end
-            cp   = ax.CurrentPoint;   % [2×3]: near/far plane in data coords
-            rowY = round(cp(1, 2));   % y coordinate = row
+            ax = app.AxLocCoronal;
+            if strcmp(plane, 'sag'), ax = app.AxLocSagittal; end
+            cp   = ax.CurrentPoint;
+            rowY = round(cp(1, 2));
 
             if strcmp(plane, 'cor')
-                % Clicked on coronal — store directly as coronal row
                 corRow = rowY;
                 sagRow = corRowToSagRow(app, corRow);
             else
-                % Clicked on sagittal — convert to coronal row via mm
                 corRow = sagRowToCorRow(app, rowY, app.AppData.SagSlice);
                 sagRow = rowY;
             end
 
-            if strcmp(level, 'L1')
-                app.AppData.L1_CorRow = corRow;
-                app.AppData.L1_SagRow = sagRow;
-            else
-                app.AppData.L2_CorRow = corRow;
-                app.AppData.L2_SagRow = sagRow;
+            % Store in new LM struct (and legacy fields for T12L1/L3L4)
+            if isfield(app.AppData.LM, lmName)
+                app.AppData.LM.(lmName).CorRow = corRow;
+                app.AppData.LM.(lmName).SagRow = sagRow;
+            end
+            % Keep legacy T12/L3 fields in sync
+            if strcmp(lmName,'T12L1')
+                app.AppData.L1_CorRow = corRow; app.AppData.L1_SagRow = sagRow;
+            elseif strcmp(lmName,'L3L4')
+                app.AppData.L2_CorRow = corRow; app.AppData.L2_SagRow = sagRow;
             end
 
             refreshLocCoronal(app);
             refreshLocSagittal(app);
-            updateL12Status(app);
+            updateLandmarkStatus(app);
         end
 
         % -----------------------------------------------------------------
@@ -4178,19 +4364,52 @@ function renderDixonPanelAxes(app, ax, vol, sl, nZ, labelTxt, isPdff)
 end
 
 function overlayDixonLevelMarkers(app, ax, img, sl)
-    l12d = app.AppData.L12_Dixon;
-    if isempty(l12d) || ~isfield(l12d,'L1_sliceIdx') || isnan(l12d.L1_sliceIdx)
-        return
-    end
+% Draw disc landmark lines on a Dixon panel axes.
+% A dashed line + label is shown when the current slice is within 5 mm of
+% a confirmed landmark.  The distance is shown in the label if > 1 mm.
+    THRESH_MM = 5.0;   % show marker when closer than this
+    lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+    lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+
     nC = size(img, 2);
-    hold(ax,'on');
-    if sl == round(l12d.L1_sliceIdx)
-        plot(ax,[1 nC],[4 4],'--','Color',[0.95 0.60 0.10],'LineWidth',2);
-        text(ax,4,12,'T12','Color',[0.95 0.60 0.10],'FontSize',13,'FontWeight','bold');
+    nR = size(img, 1);
+    anyDrawn = false;
+    try
+        lmDix = app.AppData.LM_Dixon;
+    catch
+        lmDix = [];
     end
-    if isfield(l12d,'L2_sliceIdx') && ~isnan(l12d.L2_sliceIdx) && sl == round(l12d.L2_sliceIdx)
-        plot(ax,[1 nC],[4 4],'--','Color',[0.38 0.62 0.92],'LineWidth',2);
-        text(ax,4,12,'L3','Color',[0.38 0.62 0.92],'FontSize',13,'FontWeight','bold');
+    if isempty(lmDix), return; end
+
+    hold(ax,'on');
+    textRow = 8;   % y offset for successive labels so they don't overlap
+    for ki = 1:5
+        n   = lmNames{ki};
+        clr = lmColors{ki};
+        try
+            si = lmDix.(n).SliceIdx;
+            dm = lmDix.(n).Dist_mm;
+        catch
+            continue
+        end
+        if isnan(si) || isnan(dm), continue; end
+        if dm > THRESH_MM, continue; end   % outside threshold → skip
+        if round(si) ~= sl, continue; end  % not this slice → skip
+
+        % Draw dashed line across the image
+        hl = plot(ax, [1 nC], [textRow textRow], '--', 'Color', clr, 'LineWidth', 1.8);
+        try; hl.HitTest='off'; hl.PickableParts='none'; catch, end
+
+        % Label: disc name + distance if > 1 mm
+        lbl = locLandmarkLabel(n);
+        if dm > 1.0
+            lbl = sprintf('%s  (%.1f mm)', lbl, dm);
+        end
+        ht = text(ax, 4, textRow + 9, lbl, 'Color', clr, 'FontSize', 11, ...
+            'FontWeight','bold','HorizontalAlignment','left');
+        try; ht.HitTest='off'; ht.PickableParts='none'; catch, end
+        anyDrawn = true;
+        textRow = textRow + 18;   % next label below this one
     end
     hold(ax,'off');
 end
@@ -4816,6 +5035,41 @@ function slices = removeSlice(slices, sl)
     end
 end
 
+function [sliceIdx, dist_mm] = propagateLandmarkMm(z_mm, sinfo)
+% Map a disc landmark Z-position (patient mm) to the nearest slice in sinfo.
+% Uses the affine matrix to build slice centre Z-coordinates, then finds the
+% closest slice.  Returns sliceIdx (1-based integer) and dist_mm.
+    sliceIdx = NaN; dist_mm = NaN;
+    if isnan(z_mm) || isempty(sinfo) || ~isfield(sinfo,'AffineMatrix'), return; end
+    try
+        A  = sinfo.AffineMatrix;
+        nZ = sinfo.NumSlices;
+        if nZ < 1, return; end
+        cCol = sinfo.Columns / 2 - 0.5;
+        cRow = sinfo.Rows    / 2 - 0.5;
+        sliceZ = zeros(nZ, 1);
+        for sl = 1:nZ
+            pos4 = A * [cCol; cRow; sl-1; 1];
+            sliceZ(sl) = pos4(3);    % patient Z of this slice centre
+        end
+        dists = abs(sliceZ - z_mm);
+        [dist_mm, sliceIdx] = min(dists);
+    catch
+    end
+end
+
+function lbl = locLandmarkLabel(lmName)
+% Return the human-readable label for a landmark name string.
+    switch lmName
+        case 'T11T12', lbl = 'T11/12';
+        case 'T12L1',  lbl = 'T12/L1';
+        case 'L1L2',   lbl = 'L1/2';
+        case 'L2L3',   lbl = 'L2/3';
+        case 'L3L4',   lbl = 'L3/4';
+        otherwise,     lbl = lmName;
+    end
+end
+
 function mask = optimizeContourBand(polyPts, imgData, nR, nC)
 % Refine a confirmed polygon contour within a narrow boundary band.
 %
@@ -4953,6 +5207,10 @@ function pts = roiResamplePolyline(pos, nVerts)
         pts = repmat(pos(1,:), nVerts, 1);
         return;
     end
+    % Remove duplicate arc-length values (from zero-length freehand segments)
+    % so that interp1 receives strictly unique sample points.
+    [cumLen, uIdx] = unique(cumLen, 'stable');
+    pos = pos(uIdx, :);
     % Sample nVerts equally-spaced arc-length positions (open polygon)
     tq = linspace(0, totalLen, nVerts + 1);
     tq = tq(1:end-1);
