@@ -88,7 +88,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnROI_LiverDixon   matlab.ui.control.Button
         BtnROI_SpleenDixon  matlab.ui.control.Button
         BtnROI_MuscleDixon  matlab.ui.control.Button
-        BtnROI_FatDixon     matlab.ui.control.Button
+        BtnROI_SATDixon     matlab.ui.control.Button   % subcutaneous adipose tissue (magenta)
+        BtnROI_VATDixon     matlab.ui.control.Button   % visceral adipose tissue (yellow)
+        BtnROI_FatDixon     matlab.ui.control.Button   % legacy – kept for compatibility
         BtnClearDixonROIs   matlab.ui.control.Button
         LblDixonROIInfo     matlab.ui.control.Label
         EdtROIVerticesDixon matlab.ui.control.NumericEditField  % polygon vertex count (Dixon)
@@ -143,8 +145,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         ValSpleenDixonPDFF  matlab.ui.control.Label
         ValMuscleDixonVol   matlab.ui.control.Label
         ValMuscleDixonPDFF  matlab.ui.control.Label
-        ValFatDixonVol      matlab.ui.control.Label
-        ValFatDixonPDFF     matlab.ui.control.Label
+        ValSATDixonVol      matlab.ui.control.Label   % subcutaneous adipose tissue
+        ValSATDixonPDFF     matlab.ui.control.Label
+        ValVATDixonVol      matlab.ui.control.Label   % visceral adipose tissue
+        ValVATDixonPDFF     matlab.ui.control.Label
+        ValFatDixonVol      matlab.ui.control.Label   % legacy label (kept for compatibility)
+        ValFatDixonPDFF     matlab.ui.control.Label   % legacy label (kept for compatibility)
         % Legacy label handles (not wired to UI; kept for backward compatibility)
         ValMuscleL1Area     matlab.ui.control.Label
         ValMuscleL1PDFF     matlab.ui.control.Label
@@ -261,7 +267,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'LiverDixon',   struct('Slices',struct()), ...
                 'SpleenDixon',  struct('Slices',struct()), ...
                 'MuscleDixon',  struct('Slices',struct()), ...
-                'FatDixon',     struct('Slices',struct()), ...
+                'SATDixon',     struct('Slices',struct()), ...  % subcutaneous adipose tissue
+                'VATDixon',     struct('Slices',struct()), ...  % visceral adipose tissue
+                'FatDixon',     struct('Slices',struct()), ...  % legacy (kept for compatibility)
                 'LiverMRE',     struct('Slices',struct()), ...
                 'SpleenMRE',    struct('Slices',struct()), ...
                 'MuscleMRE',    struct('Slices',struct()), ...
@@ -647,12 +655,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Keep the legacy ROI drawing path anchored to the PDFF panel.
             app.AxDixon = app.AxDixonPDFF;
 
-            % ROI panel (right column) — Liver / Spleen / Muscle / Fat workflow
+            % ROI panel (right column) — Liver / Spleen / Muscle / SAT / VAT workflow
             roiPnl = uipanel(app.DixonGrid,'Title','Dixon ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[9 1]);
-            rg.RowHeight = {20,36,36,36,36,22,20,'1x',36};
+            rg = uigridlayout(roiPnl,[10 1]);
+            rg.RowHeight = {20,36,36,36,36,36,22,20,'1x',36};
             rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
             hdr = uilabel(rg,'Text','Click organ, then F/D on image:','FontSize',10, ...
@@ -671,13 +679,17 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 [0.95 0.55 0.15],[1 1 1]);
             app.BtnROI_MuscleDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleDixon');
 
-            app.BtnROI_FatDixon = roiBtn(rg,5,'Fat', ...
+            app.BtnROI_SATDixon = roiBtn(rg,5,'SAT (subcut.)', ...
                 [0.85 0.20 0.85],[1 1 1]);
-            app.BtnROI_FatDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('FatDixon');
+            app.BtnROI_SATDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('SATDixon');
 
-            % Polygon vertex count (row 6, below organ buttons)
+            app.BtnROI_VATDixon = roiBtn(rg,6,'VAT (visceral)', ...
+                [0.85 0.80 0.00],[0 0 0]);
+            app.BtnROI_VATDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('VATDixon');
+
+            % Polygon vertex count (row 7, below organ buttons)
             vtxRowD = uigridlayout(rg,[1 3]);
-            vtxRowD.Layout.Row = 6;
+            vtxRowD.Layout.Row = 7;
             vtxRowD.ColumnWidth = {'1x',52,10}; vtxRowD.Padding=[2 0 2 0]; vtxRowD.ColumnSpacing=3;
             uilabel(vtxRowD,'Text','Poly vertices:','FontSize',9, ...
                 'HorizontalAlignment','right','FontColor',[0.35 0.35 0.35]);
@@ -690,10 +702,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             workflowHdr = uilabel(rg,'Text','Hotkeys (after arming organ):','FontSize',9, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
-            workflowHdr.Layout.Row = 7;
+            workflowHdr.Layout.Row = 8;
 
             app.LblDixonROIInfo = uilabel(rg);
-            app.LblDixonROIInfo.Layout.Row = 8;
+            app.LblDixonROIInfo.Layout.Row = 9;
             app.LblDixonROIInfo.Text = sprintf(['F = freehand → edit polygon → dbl-click confirm' char(10) ...
                 'D = seed+auto on panel' char(10) ...
                 'E/I = exclude/include' char(10) ...
@@ -701,7 +713,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblDixonROIInfo.FontSize=10; app.LblDixonROIInfo.WordWrap='on';
             app.LblDixonROIInfo.FontColor=[0.40 0.40 0.40];
 
-            app.BtnClearDixonROIs = roiBtn(rg,9,'Clear this slice', ...
+            app.BtnClearDixonROIs = roiBtn(rg,10,'Clear this slice', ...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearDixonROIs.ButtonPushedFcn = @(~,~)app.clearDixonSlice();
         end
@@ -955,7 +967,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.RightPanel.Layout.Column = 3;
 
             app.RightGrid = uigridlayout(app.RightPanel,[3 1]);
-            app.RightGrid.RowHeight   = {110,110,'1x'};
+            app.RightGrid.RowHeight   = {110,165,'1x'};
             app.RightGrid.ColumnWidth = {'1x'};
             app.RightGrid.Padding     = [2 2 2 2];
             app.RightGrid.RowSpacing  = 2;
@@ -967,9 +979,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             addMeasSection(app,2,'Dixon — Muscle & Fat', ...
                 {'Muscle vol. (mm³)','Muscle PDFF', ...
-                 'Fat vol. (mm³)','Fat PDFF'}, ...
+                 'SAT vol. (mm³)','SAT PDFF', ...
+                 'VAT vol. (mm³)','VAT PDFF'}, ...
                 {'ValMuscleDixonVol','ValMuscleDixonPDFF', ...
-                 'ValFatDixonVol','ValFatDixonPDFF'});
+                 'ValSATDixonVol','ValSATDixonPDFF', ...
+                 'ValVATDixonVol','ValVATDixonPDFF'});
 
             % NOTE FOR MAINTAINERS:
             % The visible labels below were changed from stiffness + IQR to
@@ -1327,7 +1341,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AppData.ROIs.LiverDixon.Slices   = removeSlice(app.AppData.ROIs.LiverDixon.Slices,   sl);
             app.AppData.ROIs.SpleenDixon.Slices  = removeSlice(app.AppData.ROIs.SpleenDixon.Slices,  sl);
             app.AppData.ROIs.MuscleDixon.Slices  = removeSlice(app.AppData.ROIs.MuscleDixon.Slices,  sl);
-            app.AppData.ROIs.FatDixon.Slices     = removeSlice(app.AppData.ROIs.FatDixon.Slices,     sl);
+            app.AppData.ROIs.SATDixon.Slices     = removeSlice(app.AppData.ROIs.SATDixon.Slices,     sl);
+            app.AppData.ROIs.VATDixon.Slices     = removeSlice(app.AppData.ROIs.VATDixon.Slices,     sl);
             refreshDixon(app);
             setStatus(app,sprintf('ROIs cleared for Dixon slice %d.',sl));
         end
@@ -2015,9 +2030,11 @@ function I = getMREMagnitudeForROI(app, sl)
 
         function organLabel = getDixonOrganLabel(app, roiName)
             if nargin < 2 || isempty(roiName), roiName = app.AppData.DixonROIName; end
-            if contains(roiName,'Liver'),  organLabel = 'Liver';
+            if contains(roiName,'Liver'),   organLabel = 'Liver';
             elseif contains(roiName,'Spleen'), organLabel = 'Spleen';
             elseif contains(roiName,'Muscle'), organLabel = 'Muscle';
+            elseif contains(roiName,'SAT'),    organLabel = 'SAT';
+            elseif contains(roiName,'VAT'),    organLabel = 'VAT';
             elseif contains(roiName,'Fat'),    organLabel = 'Fat';
             else,                              organLabel = 'ROI';
             end
@@ -2028,7 +2045,8 @@ function I = getMREMagnitudeForROI(app, sl)
             try, app.BtnROI_LiverDixon.Enable  = state; catch, end
             try, app.BtnROI_SpleenDixon.Enable = state; catch, end
             try, app.BtnROI_MuscleDixon.Enable = state; catch, end
-            try, app.BtnROI_FatDixon.Enable    = state; catch, end
+            try, app.BtnROI_SATDixon.Enable    = state; catch, end
+            try, app.BtnROI_VATDixon.Enable    = state; catch, end
             try, app.BtnClearDixonROIs.Enable  = state; catch, end
         end
 
@@ -2367,11 +2385,14 @@ function I = getMREMagnitudeForROI(app, sl)
         end
 
         function mask = captureFreehandMask(app, ax, nR, nC, roiColor)
-        % Two-phase ROI capture:
+        % Three-phase ROI capture:
         %   Phase 1 — user draws freehand contour (mouse drag, release to close).
         %   Phase 2 — contour is resampled to N polygon vertices shown as an
         %             editable drawpolygon; user refines by dragging vertices,
         %             then double-clicks the polygon interior to confirm.
+        %   Phase 3 — automatic contour optimisation within a 2-px boundary
+        %             band using edge strength, core statistics, and local
+        %             variance; result is smoothed before returning.
             mask   = false(nR, nC);
             nVerts = max(3, round(app.AppData.ROIVertices));
 
@@ -2419,9 +2440,26 @@ function I = getMREMagnitudeForROI(app, sl)
             try, delete(hPoly); catch, end
 
             if isempty(posFinal) || size(posFinal,1) < 3, return; end
-            x = min(max(posFinal(:,1), 1), nC);
-            y = min(max(posFinal(:,2), 1), nR);
-            mask = logical(poly2mask(x, y, nR, nC));
+
+            % ── Phase 3: automatic contour optimisation ───────────────────
+            setStatus(app, 'Optimising contour boundary...');
+            try
+                imgData = getimage(ax);
+                if ~isempty(imgData) && isnumeric(imgData)
+                    % Use first channel if RGB
+                    if ndims(imgData) == 3, imgData = imgData(:,:,1); end
+                    imgData = double(imgData);
+                    mask = optimizeContourBand(posFinal, imgData, nR, nC);
+                else
+                    x = min(max(posFinal(:,1), 1), nC);
+                    y = min(max(posFinal(:,2), 1), nR);
+                    mask = logical(poly2mask(x, y, nR, nC));
+                end
+            catch
+                x = min(max(posFinal(:,1), 1), nC);
+                y = min(max(posFinal(:,2), 1), nR);
+                mask = logical(poly2mask(x, y, nR, nC));
+            end
         end
 
         function onROIVerticesChanged(app, src)
@@ -3390,6 +3428,8 @@ function tf = shouldBypassGlobalHotkeys(app)
                 case 'LiverDixon',  app.AppData.ROIs.LiverDixon.Slices.(key)  = mask;
                 case 'SpleenDixon', app.AppData.ROIs.SpleenDixon.Slices.(key) = mask;
                 case 'MuscleDixon', app.AppData.ROIs.MuscleDixon.Slices.(key) = mask;
+                case 'SATDixon',    app.AppData.ROIs.SATDixon.Slices.(key)    = mask;
+                case 'VATDixon',    app.AppData.ROIs.VATDixon.Slices.(key)    = mask;
                 case 'FatDixon',    app.AppData.ROIs.FatDixon.Slices.(key)    = mask;
                 case 'LiverMRE',    app.AppData.ROIs.LiverMRE.Slices.(key)  = mask;
                 case 'SpleenMRE',   app.AppData.ROIs.SpleenMRE.Slices.(key) = mask;
@@ -3436,14 +3476,15 @@ function tf = shouldBypassGlobalHotkeys(app)
                 case 'LiverDixon',  updatePair(app.ValLiverDixonVol,  app.ValLiverDixonPDFF);
                 case 'SpleenDixon', updatePair(app.ValSpleenDixonVol, app.ValSpleenDixonPDFF);
                 case 'MuscleDixon', updatePair(app.ValMuscleDixonVol, app.ValMuscleDixonPDFF);
-                case 'FatDixon',    updatePair(app.ValFatDixonVol,    app.ValFatDixonPDFF);
+                case 'SATDixon',    updatePair(app.ValSATDixonVol,    app.ValSATDixonPDFF);
+                case 'VATDixon',    updatePair(app.ValVATDixonVol,    app.ValVATDixonPDFF);
             end
         end
 
         function updateAllDixonStats(app)
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
-            for rn = {'LiverDixon','SpleenDixon','MuscleDixon','FatDixon'}
+            for rn = {'LiverDixon','SpleenDixon','MuscleDixon','SATDixon','VATDixon'}
                 roiName = rn{1};
                 slices = fieldnames(app.AppData.ROIs.(roiName).Slices);
                 for k = 1:numel(slices)
@@ -4157,7 +4198,7 @@ end
 function overlayStoredDixonROIs(app, ax, sl)
     key = sprintf('sl%d', sl);
     items = {};
-    for rn = {'LiverDixon','SpleenDixon','MuscleDixon','FatDixon'}
+    for rn = {'LiverDixon','SpleenDixon','MuscleDixon','SATDixon','VATDixon'}
         roiName = rn{1};
         try
             if isfield(app.AppData.ROIs.(roiName).Slices, key)
@@ -4555,8 +4596,12 @@ function clr = dixonROIColor(name)
         clr = [0.15 0.55 0.90];   % blue
     elseif contains(name,'Muscle')
         clr = [0.95 0.55 0.15];   % orange
+    elseif contains(name,'SAT')
+        clr = [0.85 0.20 0.85];   % magenta — subcutaneous adipose tissue
+    elseif contains(name,'VAT')
+        clr = [0.85 0.80 0.00];   % yellow — visceral adipose tissue
     elseif contains(name,'Fat')
-        clr = [0.85 0.20 0.85];   % magenta
+        clr = [0.85 0.20 0.85];   % magenta (legacy)
     else
         clr = [1 1 0];
     end
@@ -4768,6 +4813,123 @@ function slices = removeSlice(slices, sl)
     key = sprintf('sl%d',sl);
     if isfield(slices,key)
         slices = rmfield(slices,key);
+    end
+end
+
+function mask = optimizeContourBand(polyPts, imgData, nR, nC)
+% Refine a confirmed polygon contour within a narrow boundary band.
+%
+% Algorithm:
+%   1. Build initial binary mask from polygon vertices.
+%   2. Create a 2-px dilation/erosion band around the boundary.
+%   3. Compute inner-core (eroded) mean and SD.
+%   4. Score each band pixel using four cues:
+%        a) edge strength  (gradient magnitude, normalised)
+%        b) distance from the original contour (closer = less confident)
+%        c) deviation from core mean (normalised z-score)
+%        d) local variance  (3×3 stdfilt, normalised)
+%   5. Include band pixels whose combined score exceeds a threshold.
+%   6. Smooth the resulting contour boundary with a circular moving average.
+%
+% Returns a logical mask of size nR×nC.
+
+    BAND_PX   = 2;      % half-band width in pixels
+    INCL_THR  = 0.42;   % inclusion threshold (0–1, lower → more inclusive)
+    SMOOTH_W  = 9;      % smoothing window for boundary points
+
+    % ── Initial mask ─────────────────────────────────────────────────────
+    x0 = min(max(polyPts(:,1), 1), nC);
+    y0 = min(max(polyPts(:,2), 1), nR);
+    initMask = logical(poly2mask(x0, y0, nR, nC));
+
+    if ~any(initMask(:)) || isempty(imgData)
+        mask = initMask; return;
+    end
+
+    img = double(imgData);
+
+    % ── Boundary band ─────────────────────────────────────────────────────
+    se       = strel('disk', BAND_PX);
+    dilated  = imdilate(initMask, se);
+    eroded   = imerode(initMask, se);
+    bandMask = dilated & ~eroded;   % ring around the boundary
+    coreMask = eroded;              % strictly inner core
+
+    if ~any(coreMask(:))
+        % Contour too small to erode — return the original polygon mask
+        mask = initMask; return;
+    end
+
+    % ── Inner-core statistics ─────────────────────────────────────────────
+    coreVals = img(coreMask);
+    coreMean = mean(coreVals);
+    coreSD   = std(coreVals);
+    if coreSD < eps, coreSD = max(1, abs(coreMean) * 0.05 + 1); end
+
+    % ── Cue a: edge strength (gradient magnitude, normalised 0–1) ────────
+    [Gx, Gy]  = gradient(img);
+    edgeStr   = sqrt(Gx.^2 + Gy.^2);
+    edgeMax   = max(edgeStr(:));
+    if edgeMax > eps, edgeStr = edgeStr / edgeMax; end
+
+    % ── Cue b: distance from original contour boundary (normalised 0–1) ──
+    % Build a 1-px-thick boundary mask and compute distance transform
+    bndEdge   = initMask & ~imerode(initMask, strel('disk',1));
+    distFromBnd = bwdist(bndEdge);                        % distance in pixels
+    distNorm    = min(distFromBnd / BAND_PX, 1);          % 0 at boundary, 1 at band edge
+
+    % ── Cue c: deviation from core mean (z-score, clamped to [0,1]) ──────
+    devScore = min(abs(img - coreMean) / coreSD, 4) / 4;  % 0=similar, 1=very different
+
+    % ── Cue d: local variance (3×3 neighbourhood, normalised) ────────────
+    localSD      = stdfilt(img, ones(3,3));
+    localVarNorm = min(localSD / (coreSD + eps), 3) / 3;  % 0=uniform, 1=highly variable
+
+    % ── Combined inclusion score ──────────────────────────────────────────
+    % A band pixel is IN if it resembles the core, has low local variance,
+    % and does not sit on a strong edge.
+    %   – (1 - devScore)     high when pixel is close to core mean
+    %   – (1 - edgeStr*0.4)  penalise pixels on strong edges slightly
+    %   – (1 - localVarNorm*0.3) penalise highly variable regions
+    %   – distNorm has minor contribution (pixels closer to boundary
+    %     are harder to classify, so we apply a small penalty)
+    inclScore = (1 - devScore) .* (1 - 0.4*edgeStr) .* (1 - 0.3*localVarNorm) ...
+                .* (1 - 0.1*distNorm);
+
+    % Apply threshold only within the boundary band
+    bandIn  = bandMask & (inclScore > INCL_THR);
+    newMask = coreMask | bandIn;
+    newMask = imfill(newMask, 'holes');
+
+    if ~any(newMask(:)), mask = initMask; return; end
+
+    % ── Smooth boundary ───────────────────────────────────────────────────
+    bndList = bwboundaries(newMask);
+    if isempty(bndList), mask = initMask; return; end
+
+    % Take the largest connected boundary
+    [~, maxIdx] = max(cellfun(@(b) size(b,1), bndList));
+    bRow = bndList{maxIdx}(:,1);
+    bCol = bndList{maxIdx}(:,2);
+
+    % Circular padding to avoid end-effects in movmean
+    n = numel(bRow);
+    W = min(SMOOTH_W, floor(n/4));   % guard for very small contours
+    if W >= 2
+        padRow = [bRow(end-W+1:end); bRow; bRow(1:W)];
+        padCol = [bCol(end-W+1:end); bCol; bCol(1:W)];
+        sRow   = movmean(padRow, W);
+        sCol   = movmean(padCol, W);
+        sRow   = sRow(W+1:end-W);
+        sCol   = sCol(W+1:end-W);
+        % Clamp to image bounds
+        sRow = min(max(sRow, 1), nR);
+        sCol = min(max(sCol, 1), nC);
+        mask = logical(poly2mask(sCol, sRow, nR, nC));
+        mask = imfill(mask, 'holes');
+        if ~any(mask(:)), mask = newMask; end
+    else
+        mask = newMask;
     end
 end
 
