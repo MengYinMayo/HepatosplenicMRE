@@ -542,7 +542,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 b.BackgroundColor = lmColors{ki};
                 b.FontColor = [1 1 1];
                 b.Tooltip = sprintf('Mark %s disc level — click, then click in coronal or sagittal image', lmLabels{ki});
-                b.ButtonPushedFcn = @(~,~,n=lmNames{ki})app.placeLandmark(n);
+                lmNameCap = lmNames{ki};
+                b.ButtonPushedFcn = @(~,~)app.placeLandmark(lmNameCap);
                 app.(lmBtnProps{ki}) = b;
             end
 
@@ -711,7 +712,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 jb.FontColor = lmJColors{ki} * 0.4;
                 jb.Enable = 'off';
                 jb.Tooltip = sprintf('Jump Dixon to %s disc level', lmJLabels{ki});
-                jb.ButtonPushedFcn = @(~,~,n=lmJNames{ki})app.jumpDixonToLandmark(n);
+                lmJNameCap = lmJNames{ki};
+                jb.ButtonPushedFcn = @(~,~)app.jumpDixonToLandmark(lmJNameCap);
                 app.(lmJProps{ki}) = jb;
             end
 
