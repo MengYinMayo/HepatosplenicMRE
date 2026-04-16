@@ -98,6 +98,11 @@ function sinfo = io_extractSpatialInfo(files, info1, nSlices, nPhases)
     if sinfo.SliceSpacing == 0
         sinfo.SliceSpacing = sinfo.SliceThickness;
     end
+    % Final guard: a zero slice-spacing makes the affine matrix singular.
+    % Use a nominal 1 mm fallback for truly 2D series or missing DICOM tags.
+    if sinfo.SliceSpacing == 0 || isnan(sinfo.SliceSpacing)
+        sinfo.SliceSpacing = 1.0;
+    end
 
     % ── Combined voxel size ───────────────────────────────────────────
     sinfo.VoxelSize = [sinfo.PixelSpacing, sinfo.SliceSpacing];
@@ -129,8 +134,17 @@ function sinfo = io_extractSpatialInfo(files, info1, nSlices, nPhases)
 
     F = [rowDir(:)*dr, colDir(:)*dc, sinfo.SliceNormal(:)*ds, pos1(:)];
     A = [F; 0 0 0 1];
-    sinfo.AffineMatrix    = A;
-    sinfo.AffineMatrixInv = inv(A);
+    sinfo.AffineMatrix = A;
+    % Use pseudo-inverse as fallback when the matrix is ill-conditioned
+    % (e.g. residual zero-slice-spacing after the guard above).
+    M = A(1:3,1:3);
+    if rcond(M) > 1e-10
+        sinfo.AffineMatrixInv  = inv(A);
+        sinfo.AffineIsSingular = false;
+    else
+        sinfo.AffineMatrixInv  = pinv(A);
+        sinfo.AffineIsSingular = true;
+    end
 end
 
 
