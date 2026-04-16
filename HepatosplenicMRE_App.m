@@ -358,7 +358,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BodyGrid = uigridlayout(outer,[1 3]);
             app.BodyGrid.Layout.Row    = 2;
             app.BodyGrid.Layout.Column = 1;
-            app.BodyGrid.ColumnWidth   = {260,'1x',250};
+            app.BodyGrid.ColumnWidth   = {260,'1x',310};
             app.BodyGrid.RowHeight     = {'1x'};
             app.BodyGrid.Padding       = [0 0 0 0];
             app.BodyGrid.ColumnSpacing = 0;
@@ -1184,7 +1184,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             pnl.Layout.Row=row;
             n = numel(labels);
             g = uigridlayout(pnl,[n 2]);
-            g.ColumnWidth={'1x','1x'}; g.RowHeight=repmat({20},1,n);
+            g.ColumnWidth={110,'1x'}; g.RowHeight=repmat({20},1,n);
             g.Padding=[4 2 4 2]; g.ColumnSpacing=4; g.RowSpacing=2;
             for k = 1:n
                 lbl = uilabel(g); lbl.Layout.Row=k; lbl.Layout.Column=1;
@@ -1393,16 +1393,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 return
             end
             cancelPendingClick(app);
-            % Place line at a sensible default row if not already set
-            if isnan(app.AppData.LM.(lmName).CorRow)
-                nRows = size(app.AppData.Localizer.Coronal.Volume, 1);
-                lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
-                frac    = [0.20, 0.28, 0.36, 0.44, 0.52];
-                idx = find(strcmp(lmNames, lmName), 1);
-                if ~isempty(idx)
-                    app.AppData.LM.(lmName).CorRow = max(1, round(nRows * frac(idx)));
-                end
-            end
+            % Refresh to show current line positions (only placed markers are shown).
             refreshLocCoronal(app);
             refreshLocSagittal(app);
             % Highlight the active button
@@ -2610,8 +2601,18 @@ function I = getMREMagnitudeForROI(app, sl)
                 setStatus(app,'Freehand contour was empty. Press F to retry or Esc to cancel.');
                 return
             end
-            app.AppData.DixonROIOuterMask = cleanOuterMask(app, mask);
-            app.recomputeCurrentDixonROI(true);
+            % Fill holes in drawn polygon, no erosion or blob filtering.
+            try; newRegion = imfill(logical(mask), 'holes'); catch; newRegion = logical(mask); end
+            % Merge with any existing ROI region (supports bilateral structures, e.g. psoas).
+            existing = logical(app.AppData.DixonROIFinalMask);
+            if ~isequal(size(existing), [nR nC]), existing = false(nR, nC); end
+            merged = existing | newRegion;
+            app.AppData.DixonROIOuterMask = merged;
+            app.AppData.DixonROIFinalMask = merged;
+            app.showDixonROIHotkeyHelp();
+            refreshDixon(app);
+            setStatus(app, sprintf('%s ROI preview (sl %d). F=add region  E/I=refine  Enter/A=accept  Esc=cancel.', ...
+                app.getDixonOrganLabel(), app.AppData.DixonROISlice));
         end
 
         function captureSeedAutoDixonROI(app)
@@ -5303,7 +5304,9 @@ function showImgWL(ax, img, titleStr, userLo, userHi)
 % When userHi <= userLo the window is computed automatically.
     if nargin < 4, userLo = 0; userHi = 0; end
     colormap(ax,'gray');
-    imagesc(ax, img);
+    hImg = imagesc(ax, img);
+    % Allow clicks to pass through the image to the axes ButtonDownFcn
+    try; hImg.HitTest = 'off'; hImg.PickableParts = 'none'; catch; end
     if userHi > userLo
         clim(ax, [userLo userHi]);
     else
