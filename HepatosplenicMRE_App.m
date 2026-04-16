@@ -1341,8 +1341,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     end
                     tmp = normalizeMREStruct(app, tmp);
                     app.AppData.MRE = tmp;
-                    % Load saved MRE ROIs from mat file
-                    loadMREROIsFromMat(app, matPath);
+                    % Load saved MRE ROIs from mre_rois.mat in exam folder
+                    loadMREROIsFromMat(app, folderPath);
                     populateMRETab(app);
                 end
 
@@ -3344,7 +3344,66 @@ function setStiffScale(app, newClim)
             setStatus(app,'[Phase 7] Export CSV — not yet implemented.');
         end
         function exportROIs(app)
-            setStatus(app,'[Phase 7] Export ROI masks — not yet implemented.');
+        % Export all accepted ROI binary masks + polygon vertices to a MAT file.
+        % Each ROI entry contains:
+        %   .masks.(sliceKey)    — logical binary mask [nR x nC]
+        %   .vertices.(sliceKey) — cell array of Nx2 [col,row] polygon boundaries
+            examPath = '';
+            try, examPath = app.AppData.ExamPath; catch, end
+            defaultName = 'roi_export.mat';
+            if ~isempty(examPath)
+                [~, examName] = fileparts(examPath);
+                defaultName = sprintf('%s_rois.mat', examName);
+            end
+            [fname, fpath] = uiputfile('*.mat', 'Export ROI Masks', defaultName);
+            if isequal(fname, 0), return; end
+            try
+                setStatus(app, 'Exporting ROI masks...');
+                roiExport = struct();
+                roiExport.ExportedAt  = datestr(now, 'yyyy-mm-dd HH:MM:SS'); %#ok<TNOW1,DATST>
+                roiExport.ExamPath    = examPath;
+                % Metadata from Dixon geometry
+                dix = app.AppData.Dixon;
+                if ~isempty(dix)
+                    roiExport.PixelSpacing_mm   = dix.PixelSpacing_mm;
+                    roiExport.SliceThickness_mm = dix.SliceThickness_mm;
+                    roiExport.SliceLocations    = dix.SliceLocations;
+                end
+                allROINames = {'LiverDixon','SpleenDixon','PsoasDixon','TrunkDixon', ...
+                               'MuscleDixon','SATDixon','VATDixon','FatDixon', ...
+                               'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
+                rois = app.AppData.ROIs;
+                for ri = 1:numel(allROINames)
+                    rn = allROINames{ri};
+                    if ~isfield(rois, rn), continue; end
+                    slices = rois.(rn).Slices;
+                    keys = fieldnames(slices);
+                    if isempty(keys), continue; end
+                    entry = struct('masks', struct(), 'vertices', struct());
+                    for ki = 1:numel(keys)
+                        k = keys{ki};
+                        mask = logical(slices.(k));
+                        entry.masks.(k) = mask;
+                        % Derive polygon boundary vertices [col, row] per region
+                        if any(mask(:))
+                            bnds = bwboundaries(mask, 'noholes');
+                            verts = cell(numel(bnds), 1);
+                            for b = 1:numel(bnds)
+                                verts{b} = [bnds{b}(:,2), bnds{b}(:,1)];  % [x, y]
+                            end
+                            entry.vertices.(k) = verts;
+                        else
+                            entry.vertices.(k) = {};
+                        end
+                    end
+                    roiExport.(rn) = entry;
+                end
+                save(fullfile(fpath, fname), 'roiExport', '-v7');
+                setStatus(app, sprintf('ROI masks exported to %s', fname));
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Export Error', 'Icon', 'error');
+                setStatus(app, ['Export failed: ' ME.message]);
+            end
         end
         function exportPDF(app)
             setStatus(app,'[Phase 7] Export PDF — not yet implemented.');
@@ -3458,10 +3517,11 @@ function setStiffScale(app, newClim)
         end
 
         function saveMREROIsToMat(app)
-        % Append MRE ROIs into the existing mre_data .mat file.
-            matPath = '';
-            try, matPath = app.AppData.MATPath; catch, end
-            if isempty(matPath) || ~isfile(matPath), return; end
+        % Save MRE ROIs to mre_rois.mat in the exam folder (separate from the
+        % MRE data mat, which gets rebuilt from DICOM on every reload).
+            examPath = '';
+            try, examPath = app.AppData.ExamPath; catch, end
+            if isempty(examPath) || ~isfolder(examPath), return; end
             try
                 mreROIs = struct();
                 mreROINames = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
@@ -3472,17 +3532,18 @@ function setStiffScale(app, newClim)
                     end
                 end
                 mreLM = app.AppData.LM_MRE;
-                save(matPath, 'mreROIs', 'mreLM', '-append');
+                save(fullfile(examPath, 'mre_rois.mat'), 'mreROIs', 'mreLM', '-v7');
             catch ME
-                warning('saveMREROIsToMat:fail','Could not save MRE ROIs: %s', ME.message);
+                warning('saveMREROIsToMat:fail','Could not save mre_rois.mat: %s', ME.message);
             end
         end
 
-        function loadMREROIsFromMat(app, matPath)
-        % Load MRE ROIs from the MRE .mat file if they were previously saved.
-            if ~isfile(matPath), return; end
+        function loadMREROIsFromMat(app, examPath)
+        % Load MRE ROIs from mre_rois.mat in the exam folder.
+            matFile = fullfile(examPath, 'mre_rois.mat');
+            if ~isfile(matFile), return; end
             try
-                S = load(matPath, 'mreROIs', 'mreLM');
+                S = load(matFile, 'mreROIs', 'mreLM');
                 if isfield(S,'mreROIs')
                     rnames = fieldnames(S.mreROIs);
                     for ri = 1:numel(rnames)
@@ -3501,8 +3562,9 @@ function setStiffScale(app, newClim)
                         end
                     end
                 end
+                setStatus(app,'Loaded saved MRE ROIs from mre_rois.mat.');
             catch ME
-                warning('loadMREROIsFromMat:fail','Could not load MRE ROIs: %s', ME.message);
+                warning('loadMREROIsFromMat:fail','Could not load mre_rois.mat: %s', ME.message);
             end
         end
 
@@ -4227,6 +4289,8 @@ function tf = shouldBypassGlobalHotkeys(app)
                 case 'LiverDixon',  app.AppData.ROIs.LiverDixon.Slices.(key)  = mask;
                 case 'SpleenDixon', app.AppData.ROIs.SpleenDixon.Slices.(key) = mask;
                 case 'MuscleDixon', app.AppData.ROIs.MuscleDixon.Slices.(key) = mask;
+                case 'PsoasDixon',  app.AppData.ROIs.PsoasDixon.Slices.(key)  = mask;
+                case 'TrunkDixon',  app.AppData.ROIs.TrunkDixon.Slices.(key)  = mask;
                 case 'SATDixon',    app.AppData.ROIs.SATDixon.Slices.(key)    = mask;
                 case 'VATDixon',    app.AppData.ROIs.VATDixon.Slices.(key)    = mask;
                 case 'FatDixon',    app.AppData.ROIs.FatDixon.Slices.(key)    = mask;
