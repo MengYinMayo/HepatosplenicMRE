@@ -692,33 +692,30 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             btnAuto.FontSize=11;
             btnAuto.ButtonPushedFcn = @(~,~)app.onDixonAutoScale();
 
-            % Row 3: two-column display — left=PDFF, right=Water/IP + nav + Fat/OP.
+            % Row 3: two-column display.
+            % Left  = PDFF image + Water W/L + Fat W/L (stacked below).
+            % Right = Water image + nav bar + Fat image (maximised).
             panelGrid = uigridlayout(imgG,[1 2]);
             panelGrid.Layout.Row=3;
             panelGrid.ColumnWidth={'1x','1x'};
             panelGrid.Padding=[0 0 0 0]; panelGrid.ColumnSpacing=6;
 
-            app.AxDixonPDFF = uiaxes(panelGrid);
-            app.AxDixonPDFF.Layout.Column = 1;
+            % Left column: PDFF on top, then compact W/L rows below.
+            leftPnl = uipanel(panelGrid,'BorderType','none');
+            leftPnl.Layout.Column = 1;
+            leftG = uigridlayout(leftPnl,[3 1]);
+            leftG.RowHeight = {'1x',22,22};
+            leftG.ColumnWidth = {'1x'};
+            leftG.Padding    = [0 0 0 0];
+            leftG.RowSpacing = 2;
+
+            app.AxDixonPDFF = uiaxes(leftG);
+            app.AxDixonPDFF.Layout.Row = 1;
             setupDarkAxes(app.AxDixonPDFF,'PDFF (%)');
             app.AxDixonPDFF.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('pdff');
 
-            % Right column: Water (top) — Water W/L — Nav — Fat W/L — Fat (bottom).
-            rightPnl = uipanel(panelGrid,'BorderType','none');
-            rightPnl.Layout.Column = 2;
-            rightG = uigridlayout(rightPnl,[5 1]);
-            rightG.RowHeight   = {'1x',22,34,22,'1x'};
-            rightG.ColumnWidth = {'1x'};
-            rightG.Padding     = [0 0 0 0];
-            rightG.RowSpacing  = 2;
-
-            app.AxDixonIP = uiaxes(rightG);
-            app.AxDixonIP.Layout.Row = 1;
-            setupDarkAxes(app.AxDixonIP,'Water');
-            app.AxDixonIP.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('water');
-
-            % Water W/L row
-            wWLrow = uigridlayout(rightG,[1 5]);
+            % Water W/L row (under PDFF)
+            wWLrow = uigridlayout(leftG,[1 5]);
             wWLrow.Layout.Row = 2;
             wWLrow.ColumnWidth = {'1x',36,10,36,36}; wWLrow.Padding=[2 1 2 1]; wWLrow.ColumnSpacing=2;
             lblWaterWL = uilabel(wWLrow); lblWaterWL.Layout.Column=1;
@@ -738,9 +735,44 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             btnWAuto.Tooltip='Auto water window';
             btnWAuto.ButtonPushedFcn = @(~,~)app.autoWaterFatWin('water');
 
-            % Middle row: Prev / slice label / Next (row 3)
+            % Fat W/L row (under Water W/L)
+            fWLrow = uigridlayout(leftG,[1 5]);
+            fWLrow.Layout.Row = 3;
+            fWLrow.ColumnWidth = {'1x',36,10,36,36}; fWLrow.Padding=[2 1 2 1]; fWLrow.ColumnSpacing=2;
+            lblFatWL = uilabel(fWLrow); lblFatWL.Layout.Column=1;
+            lblFatWL.Text='Fat W/L:'; lblFatWL.FontSize=9; lblFatWL.HorizontalAlignment='right';
+            app.EdtFatWinLo = uieditfield(fWLrow,'numeric');
+            app.EdtFatWinLo.Layout.Column=2; app.EdtFatWinLo.Value=0; app.EdtFatWinLo.FontSize=9;
+            app.EdtFatWinLo.Tooltip='Fat panel display min (0=auto)';
+            app.EdtFatWinLo.ValueChangedFcn = @(~,~)refreshDixon(app);
+            lblFDash = uilabel(fWLrow); lblFDash.Layout.Column=3;
+            lblFDash.Text=char(8211); lblFDash.FontSize=10; lblFDash.HorizontalAlignment='center';
+            app.EdtFatWinHi = uieditfield(fWLrow,'numeric');
+            app.EdtFatWinHi.Layout.Column=4; app.EdtFatWinHi.Value=0; app.EdtFatWinHi.FontSize=9;
+            app.EdtFatWinHi.Tooltip='Fat panel display max (0=auto)';
+            app.EdtFatWinHi.ValueChangedFcn = @(~,~)refreshDixon(app);
+            btnFAuto = uibutton(fWLrow,'push');
+            btnFAuto.Layout.Column=5; btnFAuto.Text='A'; btnFAuto.FontSize=9;
+            btnFAuto.Tooltip='Auto fat window';
+            btnFAuto.ButtonPushedFcn = @(~,~)app.autoWaterFatWin('fat');
+
+            % Right column: Water (top) — Nav — Fat (bottom), full height.
+            rightPnl = uipanel(panelGrid,'BorderType','none');
+            rightPnl.Layout.Column = 2;
+            rightG = uigridlayout(rightPnl,[3 1]);
+            rightG.RowHeight   = {'1x',34,'1x'};
+            rightG.ColumnWidth = {'1x'};
+            rightG.Padding     = [0 0 0 0];
+            rightG.RowSpacing  = 2;
+
+            app.AxDixonIP = uiaxes(rightG);
+            app.AxDixonIP.Layout.Row = 1;
+            setupDarkAxes(app.AxDixonIP,'Water');
+            app.AxDixonIP.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('water');
+
+            % Nav row: Prev / slice label / Next
             navG = uigridlayout(rightG,[1 3]);
-            navG.Layout.Row = 3;
+            navG.Layout.Row = 2;
             navG.ColumnWidth = {64,'1x',64};
             navG.Padding = [4 4 4 4]; navG.ColumnSpacing=10;
 
@@ -764,29 +796,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             nextBtnDix.Tooltip='Next slice';
             nextBtnDix.ButtonPushedFcn = @(~,~)app.nudgeDixonSlice(+1);
 
-            % Fat W/L row (row 4)
-            fWLrow = uigridlayout(rightG,[1 5]);
-            fWLrow.Layout.Row = 4;
-            fWLrow.ColumnWidth = {'1x',36,10,36,36}; fWLrow.Padding=[2 1 2 1]; fWLrow.ColumnSpacing=2;
-            lblFatWL = uilabel(fWLrow); lblFatWL.Layout.Column=1;
-            lblFatWL.Text='Fat W/L:'; lblFatWL.FontSize=9; lblFatWL.HorizontalAlignment='right';
-            app.EdtFatWinLo = uieditfield(fWLrow,'numeric');
-            app.EdtFatWinLo.Layout.Column=2; app.EdtFatWinLo.Value=0; app.EdtFatWinLo.FontSize=9;
-            app.EdtFatWinLo.Tooltip='Fat panel display min (0=auto)';
-            app.EdtFatWinLo.ValueChangedFcn = @(~,~)refreshDixon(app);
-            lblFDash = uilabel(fWLrow); lblFDash.Layout.Column=3;
-            lblFDash.Text=char(8211); lblFDash.FontSize=10; lblFDash.HorizontalAlignment='center';
-            app.EdtFatWinHi = uieditfield(fWLrow,'numeric');
-            app.EdtFatWinHi.Layout.Column=4; app.EdtFatWinHi.Value=0; app.EdtFatWinHi.FontSize=9;
-            app.EdtFatWinHi.Tooltip='Fat panel display max (0=auto)';
-            app.EdtFatWinHi.ValueChangedFcn = @(~,~)refreshDixon(app);
-            btnFAuto = uibutton(fWLrow,'push');
-            btnFAuto.Layout.Column=5; btnFAuto.Text='A'; btnFAuto.FontSize=9;
-            btnFAuto.Tooltip='Auto fat window';
-            btnFAuto.ButtonPushedFcn = @(~,~)app.autoWaterFatWin('fat');
-
             app.AxDixonWater = uiaxes(rightG);
-            app.AxDixonWater.Layout.Row = 5;
+            app.AxDixonWater.Layout.Row = 3;
             setupDarkAxes(app.AxDixonWater,'Fat');
             app.AxDixonWater.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('fat');
 
@@ -2601,7 +2612,7 @@ function I = getMREMagnitudeForROI(app, sl)
                 setStatus(app,'Freehand contour was empty. Press F to retry or Esc to cancel.');
                 return
             end
-            % Fill holes in drawn polygon, no erosion or blob filtering.
+            % Fill holes only — no erosion, no vertex changes, no blob filtering.
             try; newRegion = imfill(logical(mask), 'holes'); catch; newRegion = logical(mask); end
             % Merge with any existing ROI region (supports bilateral structures, e.g. psoas).
             existing = logical(app.AppData.DixonROIFinalMask);
@@ -2609,10 +2620,8 @@ function I = getMREMagnitudeForROI(app, sl)
             merged = existing | newRegion;
             app.AppData.DixonROIOuterMask = merged;
             app.AppData.DixonROIFinalMask = merged;
-            app.showDixonROIHotkeyHelp();
-            refreshDixon(app);
-            setStatus(app, sprintf('%s ROI preview (sl %d). F=add region  E/I=refine  Enter/A=accept  Esc=cancel.', ...
-                app.getDixonOrganLabel(), app.AppData.DixonROISlice));
+            % Double-click = immediate accept (no extra keypress needed).
+            app.acceptCurrentDixonROI();
         end
 
         function captureSeedAutoDixonROI(app)
@@ -4989,7 +4998,7 @@ function renderDixonPanelAxes(app, ax, vol, sl, nZ, labelTxt, isPdff, panelKey)
     title(ax, sprintf('%s   sl %d/%d', labelTxt, sl, nZ), ...
         'FontSize',13,'Color',[0.78 0.78 0.78],'FontWeight','normal');
     overlayDixonLevelMarkers(app, ax, img, sl);
-    overlayStoredDixonROIs(app, ax, sl);
+    overlayStoredDixonROIs(app, ax, sl, ~isPdff);
 end
 
 function overlayDixonLevelMarkers(app, ax, img, sl)
@@ -5043,7 +5052,8 @@ function overlayDixonLevelMarkers(app, ax, img, sl)
     hold(ax,'off');
 end
 
-function overlayStoredDixonROIs(app, ax, sl)
+function overlayStoredDixonROIs(app, ax, sl, doFill)
+    if nargin < 4, doFill = false; end
     key = sprintf('sl%d', sl);
     items = {};
     for rn = {'LiverDixon','SpleenDixon','PsoasDixon','TrunkDixon','MuscleDixon','SATDixon','VATDixon'}
@@ -5069,8 +5079,17 @@ function overlayStoredDixonROIs(app, ax, sl)
         roiName = items{ii,1};
         mask = logical(items{ii,2});
         if ~any(mask(:)), continue; end
-        bnd = bwboundaries(mask);
         clr = dixonROIColor(roiName);
+        % Semi-transparent fill on Water/Fat panels
+        if doFill
+            [nR, nC] = size(mask);
+            colorData = reshape(clr, [1 1 3]);
+            colorData = repmat(colorData, [nR nC 1]);
+            hFill = image(ax, 'CData', colorData, 'AlphaData', single(mask)*0.25, ...
+                'XData', [1 nC], 'YData', [1 nR]);
+            try; hFill.HitTest = 'off'; hFill.PickableParts = 'none'; catch; end
+        end
+        bnd = bwboundaries(mask);
         for b = 1:numel(bnd)
             plot(ax, bnd{b}(:,2), bnd{b}(:,1), '-', 'Color', clr, 'LineWidth', 2);
         end
