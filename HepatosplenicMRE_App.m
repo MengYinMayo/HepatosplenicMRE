@@ -100,6 +100,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnROI_LiverDixon   matlab.ui.control.Button
         BtnROI_SpleenDixon  matlab.ui.control.Button
         BtnROI_MuscleDixon  matlab.ui.control.Button
+        BtnROI_PsoasDixon   matlab.ui.control.Button   % psoas muscle (Dixon)
+        BtnROI_TrunkDixon   matlab.ui.control.Button   % non-psoas trunk skeletal muscle (Dixon)
         BtnROI_SATDixon     matlab.ui.control.Button   % subcutaneous adipose tissue (magenta)
         BtnROI_VATDixon     matlab.ui.control.Button   % visceral adipose tissue (yellow)
         BtnROI_FatDixon     matlab.ui.control.Button   % legacy – kept for compatibility
@@ -107,6 +109,16 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         LblDixonROIInfo     matlab.ui.control.Label
         EdtROIVerticesDixon matlab.ui.control.NumericEditField  % polygon vertex count (Dixon)
         EdtROIVerticesMRE   matlab.ui.control.NumericEditField  % polygon vertex count (MRE)
+        % Water / Fat panel window-level controls
+        EdtWaterWinLo   matlab.ui.control.NumericEditField
+        EdtWaterWinHi   matlab.ui.control.NumericEditField
+        EdtFatWinLo     matlab.ui.control.NumericEditField
+        EdtFatWinHi     matlab.ui.control.NumericEditField
+        % Localizer coronal/sagittal window-level controls
+        EdtCorWinLo     matlab.ui.control.NumericEditField
+        EdtCorWinHi     matlab.ui.control.NumericEditField
+        EdtSagWinLo     matlab.ui.control.NumericEditField
+        EdtSagWinHi     matlab.ui.control.NumericEditField
         % Legacy properties kept for code compatibility (no longer wired to UI)
         BtnROI_MuscleL1     matlab.ui.control.Button
         BtnROI_MuscleL2     matlab.ui.control.Button
@@ -157,6 +169,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         ValSpleenDixonPDFF  matlab.ui.control.Label
         ValMuscleDixonVol   matlab.ui.control.Label
         ValMuscleDixonPDFF  matlab.ui.control.Label
+        ValPsoasDixonVol    matlab.ui.control.Label
+        ValPsoasDixonPDFF   matlab.ui.control.Label
+        ValTrunkDixonVol    matlab.ui.control.Label
+        ValTrunkDixonPDFF   matlab.ui.control.Label
         ValSATDixonVol      matlab.ui.control.Label   % subcutaneous adipose tissue
         ValSATDixonPDFF     matlab.ui.control.Label
         ValVATDixonVol      matlab.ui.control.Label   % visceral adipose tissue
@@ -218,6 +234,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'Exam',         [], ...
             'Selection',    [], ...
             'MATPath',      '', ...
+            'ExamPath',     '', ...
             'Localizer',    [], ...   % from loc_loadLocalizer
             'Dixon',        [], ...   % from seg_buildDixonVolume
             'MRE',          [], ...   % struct: M,W,W_raw,S,LapC,H
@@ -298,13 +315,19 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'LiverDixon',   struct('Slices',struct()), ...
                 'SpleenDixon',  struct('Slices',struct()), ...
                 'MuscleDixon',  struct('Slices',struct()), ...
+                'PsoasDixon',   struct('Slices',struct()), ...  % psoas muscle
+                'TrunkDixon',   struct('Slices',struct()), ...  % non-psoas trunk skeletal muscle
                 'SATDixon',     struct('Slices',struct()), ...  % subcutaneous adipose tissue
                 'VATDixon',     struct('Slices',struct()), ...  % visceral adipose tissue
                 'FatDixon',     struct('Slices',struct()), ...  % legacy (kept for compatibility)
                 'LiverMRE',     struct('Slices',struct()), ...
                 'SpleenMRE',    struct('Slices',struct()), ...
                 'MuscleMRE',    struct('Slices',struct()), ...
-                'FatMRE',       struct('Slices',struct())))
+                'FatMRE',       struct('Slices',struct())), ...
+            'WaterWin',     [0 0], ...   % [lo hi] for Water panel; [0 0] = auto
+            'FatWin',       [0 0], ...   % [lo hi] for Fat panel; [0 0] = auto
+            'CorWin',       [0 0], ...   % [lo hi] for Coronal panel; [0 0] = auto
+            'SagWin',       [0 0])
     end
 
     % =====================================================================
@@ -475,9 +498,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function createLocalizerTab(app)
             app.LocTab = uitab(app.ImageTabGroup,'Title','Localizer / Disc Levels');
 
-            % Grid: images row | slider row | landmark buttons row | status row
-            app.LocGrid = uigridlayout(app.LocTab,[4 2]);
-            app.LocGrid.RowHeight    = {'1x',32,36,22};
+            % Grid: images row | W/L row | slider row | landmark buttons row | status row
+            app.LocGrid = uigridlayout(app.LocTab,[5 2]);
+            app.LocGrid.RowHeight    = {'1x',24,32,36,22};
             app.LocGrid.ColumnWidth  = {'1x','1x'};
             app.LocGrid.Padding      = [6 6 6 6];
             app.LocGrid.RowSpacing   = 4;
@@ -493,9 +516,42 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxLocSagittal.Layout.Row=1; app.AxLocSagittal.Layout.Column=2;
             setupDarkAxes(app.AxLocSagittal,'Sagittal  (disc level verification)');
 
-            % Sliders (row 2)
+            % W/L controls (row 2)
+            corWLrow = uigridlayout(app.LocGrid,[1 7]);
+            corWLrow.Layout.Row=2; corWLrow.Layout.Column=1;
+            corWLrow.ColumnWidth = {'1x',40,10,40,10,34,34}; corWLrow.Padding=[2 1 2 1]; corWLrow.ColumnSpacing=3;
+            uilabel(corWLrow,'Text','Cor W/L:','FontSize',9,'HorizontalAlignment','right');
+            app.EdtCorWinLo = uieditfield(corWLrow,'numeric');
+            app.EdtCorWinLo.Layout.Column=2; app.EdtCorWinLo.Value=0; app.EdtCorWinLo.FontSize=9;
+            app.EdtCorWinLo.Tooltip='Coronal display min (0=auto)';
+            app.EdtCorWinLo.ValueChangedFcn = @(~,~)app.refreshLocCoronal();
+            uilabel(corWLrow,'Text','–','FontSize',10,'HorizontalAlignment','center').Layout.Column=3;
+            app.EdtCorWinHi = uieditfield(corWLrow,'numeric');
+            app.EdtCorWinHi.Layout.Column=4; app.EdtCorWinHi.Value=0; app.EdtCorWinHi.FontSize=9;
+            app.EdtCorWinHi.Tooltip='Coronal display max (0=auto)';
+            app.EdtCorWinHi.ValueChangedFcn = @(~,~)app.refreshLocCoronal();
+            btnCorA = uibutton(corWLrow,'push'); btnCorA.Layout.Column=5; btnCorA.Text='A'; btnCorA.FontSize=9;
+            btnCorA.Tooltip='Auto coronal window'; btnCorA.ButtonPushedFcn = @(~,~)app.autoLocWin('cor');
+
+            sagWLrow = uigridlayout(app.LocGrid,[1 7]);
+            sagWLrow.Layout.Row=2; sagWLrow.Layout.Column=2;
+            sagWLrow.ColumnWidth = {'1x',40,10,40,10,34,34}; sagWLrow.Padding=[2 1 2 1]; sagWLrow.ColumnSpacing=3;
+            uilabel(sagWLrow,'Text','Sag W/L:','FontSize',9,'HorizontalAlignment','right');
+            app.EdtSagWinLo = uieditfield(sagWLrow,'numeric');
+            app.EdtSagWinLo.Layout.Column=2; app.EdtSagWinLo.Value=0; app.EdtSagWinLo.FontSize=9;
+            app.EdtSagWinLo.Tooltip='Sagittal display min (0=auto)';
+            app.EdtSagWinLo.ValueChangedFcn = @(~,~)app.refreshLocSagittal();
+            uilabel(sagWLrow,'Text','–','FontSize',10,'HorizontalAlignment','center').Layout.Column=3;
+            app.EdtSagWinHi = uieditfield(sagWLrow,'numeric');
+            app.EdtSagWinHi.Layout.Column=4; app.EdtSagWinHi.Value=0; app.EdtSagWinHi.FontSize=9;
+            app.EdtSagWinHi.Tooltip='Sagittal display max (0=auto)';
+            app.EdtSagWinHi.ValueChangedFcn = @(~,~)app.refreshLocSagittal();
+            btnSagA = uibutton(sagWLrow,'push'); btnSagA.Layout.Column=5; btnSagA.Text='A'; btnSagA.FontSize=9;
+            btnSagA.Tooltip='Auto sagittal window'; btnSagA.ButtonPushedFcn = @(~,~)app.autoLocWin('sag');
+
+            % Sliders (row 3)
             corSliderGrid = uigridlayout(app.LocGrid,[1 3]);
-            corSliderGrid.Layout.Row=2; corSliderGrid.Layout.Column=1;
+            corSliderGrid.Layout.Row=3; corSliderGrid.Layout.Column=1;
             corSliderGrid.ColumnWidth={60,'1x',40}; corSliderGrid.Padding=[0 0 0 0];
             lc = uilabel(corSliderGrid); lc.Layout.Column=1;
             lc.Text='Coronal:'; lc.FontSize=12;
@@ -509,7 +565,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblLocCor.HorizontalAlignment='center';
 
             sagSliderGrid = uigridlayout(app.LocGrid,[1 3]);
-            sagSliderGrid.Layout.Row=2; sagSliderGrid.Layout.Column=2;
+            sagSliderGrid.Layout.Row=3; sagSliderGrid.Layout.Column=2;
             sagSliderGrid.ColumnWidth={60,'1x',40}; sagSliderGrid.Padding=[0 0 0 0];
             ls = uilabel(sagSliderGrid); ls.Layout.Column=1;
             ls.Text='Sagittal:'; ls.FontSize=12;
@@ -522,7 +578,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblLocSag.Text='5'; app.LblLocSag.FontSize=12;
             app.LblLocSag.HorizontalAlignment='center';
 
-            % ── Landmark buttons row (row 3, spanning both columns) ───────
+            % ── Landmark buttons row (row 4, spanning both columns) ───────
             % Five disc levels: T11/12, T12/L1, L1/2, L2/3, L3/4
             lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
             lmLabels = {'T11/12','T12/L1','L1/2','L2/3','L3/4'};
@@ -530,7 +586,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             lmBtnProps = {'BtnMarkLM_T11T12','BtnMarkLM_T12L1','BtnMarkLM_L1L2','BtnMarkLM_L2L3','BtnMarkLM_L3L4'};
 
             btnGrid = uigridlayout(app.LocGrid,[1 8]);
-            btnGrid.Layout.Row=3; btnGrid.Layout.Column=[1 2];
+            btnGrid.Layout.Row=4; btnGrid.Layout.Column=[1 2];
             btnGrid.ColumnWidth = {100,100,100,100,100,88,'1x',88};
             btnGrid.Padding=[0 2 0 2]; btnGrid.ColumnSpacing=4;
 
@@ -553,9 +609,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BtnClearL12.FontSize = 11;
             app.BtnClearL12.ButtonPushedFcn = @(~,~)app.clearLandmarks();
 
-            % Status row (row 4)
+            % Status row (row 5)
             app.LblL12Status = uilabel(app.LocGrid);
-            app.LblL12Status.Layout.Row=4; app.LblL12Status.Layout.Column=[1 2];
+            app.LblL12Status.Layout.Row=5; app.LblL12Status.Layout.Column=[1 2];
             app.LblL12Status.Text='Scroll wheel over image to navigate.  Click a disc button, then click in coronal or sagittal image.';
             app.LblL12Status.FontSize=11; app.LblL12Status.FontColor=[0.4 0.4 0.4];
 
@@ -589,7 +645,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             contRow.ColumnWidth = {180,'1x',140};
             contRow.Padding=[0 2 0 2]; contRow.ColumnSpacing=6;
             lcon = uilabel(contRow); lcon.Layout.Column=1;
-            lcon.Text='PDFF | Water/IP | Fat/OP'; lcon.FontSize=13; lcon.FontWeight='bold';
+            lcon.Text='PDFF | Water | Fat'; lcon.FontSize=13; lcon.FontWeight='bold';
             app.DdlDixonContrast = uidropdown(contRow);
             app.DdlDixonContrast.Layout.Column=2;
             app.DdlDixonContrast.Items     = {'PDFF'};
@@ -643,23 +699,42 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             setupDarkAxes(app.AxDixonPDFF,'PDFF (%)');
             app.AxDixonPDFF.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('pdff');
 
-            % Right column: Water/IP (top) — Prev/slice/Next (middle) — Fat/OP (bottom).
+            % Right column: Water (top) — Water W/L — Nav — Fat W/L — Fat (bottom).
             rightPnl = uipanel(panelGrid,'BorderType','none');
             rightPnl.Layout.Column = 2;
-            rightG = uigridlayout(rightPnl,[3 1]);
-            rightG.RowHeight   = {'1x',34,'1x'};
+            rightG = uigridlayout(rightPnl,[5 1]);
+            rightG.RowHeight   = {'1x',22,34,22,'1x'};
             rightG.ColumnWidth = {'1x'};
             rightG.Padding     = [0 0 0 0];
             rightG.RowSpacing  = 2;
 
             app.AxDixonIP = uiaxes(rightG);
             app.AxDixonIP.Layout.Row = 1;
-            setupDarkAxes(app.AxDixonIP,'Water or In-phase');
+            setupDarkAxes(app.AxDixonIP,'Water');
             app.AxDixonIP.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('water');
 
-            % Middle row: Prev / slice label / Next
+            % Water W/L row
+            wWLrow = uigridlayout(rightG,[1 6]);
+            wWLrow.Layout.Row = 2;
+            wWLrow.ColumnWidth = {'1x',36,10,36,10,36}; wWLrow.Padding=[2 1 2 1]; wWLrow.ColumnSpacing=2;
+            uilabel(wWLrow,'Text','Water W/L:','FontSize',9,'HorizontalAlignment','right');
+            app.EdtWaterWinLo = uieditfield(wWLrow,'numeric');
+            app.EdtWaterWinLo.Layout.Column=2; app.EdtWaterWinLo.Value=0; app.EdtWaterWinLo.FontSize=9;
+            app.EdtWaterWinLo.Tooltip='Water panel display min (0=auto)';
+            app.EdtWaterWinLo.ValueChangedFcn = @(~,~)refreshDixon(app);
+            uilabel(wWLrow,'Text','–','FontSize',10,'HorizontalAlignment','center').Layout.Column=3;
+            app.EdtWaterWinHi = uieditfield(wWLrow,'numeric');
+            app.EdtWaterWinHi.Layout.Column=4; app.EdtWaterWinHi.Value=0; app.EdtWaterWinHi.FontSize=9;
+            app.EdtWaterWinHi.Tooltip='Water panel display max (0=auto)';
+            app.EdtWaterWinHi.ValueChangedFcn = @(~,~)refreshDixon(app);
+            btnWAuto = uibutton(wWLrow,'push');
+            btnWAuto.Layout.Column=5; btnWAuto.Text='A'; btnWAuto.FontSize=9;
+            btnWAuto.Tooltip='Auto water window';
+            btnWAuto.ButtonPushedFcn = @(~,~)app.autoWaterFatWin('water');
+
+            % Middle row: Prev / slice label / Next (row 3)
             navG = uigridlayout(rightG,[1 3]);
-            navG.Layout.Row = 2;
+            navG.Layout.Row = 3;
             navG.ColumnWidth = {64,'1x',64};
             navG.Padding = [4 4 4 4]; navG.ColumnSpacing=10;
 
@@ -683,9 +758,28 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             nextBtnDix.Tooltip='Next slice';
             nextBtnDix.ButtonPushedFcn = @(~,~)app.nudgeDixonSlice(+1);
 
+            % Fat W/L row (row 4)
+            fWLrow = uigridlayout(rightG,[1 6]);
+            fWLrow.Layout.Row = 4;
+            fWLrow.ColumnWidth = {'1x',36,10,36,10,36}; fWLrow.Padding=[2 1 2 1]; fWLrow.ColumnSpacing=2;
+            uilabel(fWLrow,'Text','Fat W/L:','FontSize',9,'HorizontalAlignment','right');
+            app.EdtFatWinLo = uieditfield(fWLrow,'numeric');
+            app.EdtFatWinLo.Layout.Column=2; app.EdtFatWinLo.Value=0; app.EdtFatWinLo.FontSize=9;
+            app.EdtFatWinLo.Tooltip='Fat panel display min (0=auto)';
+            app.EdtFatWinLo.ValueChangedFcn = @(~,~)refreshDixon(app);
+            uilabel(fWLrow,'Text','–','FontSize',10,'HorizontalAlignment','center').Layout.Column=3;
+            app.EdtFatWinHi = uieditfield(fWLrow,'numeric');
+            app.EdtFatWinHi.Layout.Column=4; app.EdtFatWinHi.Value=0; app.EdtFatWinHi.FontSize=9;
+            app.EdtFatWinHi.Tooltip='Fat panel display max (0=auto)';
+            app.EdtFatWinHi.ValueChangedFcn = @(~,~)refreshDixon(app);
+            btnFAuto = uibutton(fWLrow,'push');
+            btnFAuto.Layout.Column=5; btnFAuto.Text='A'; btnFAuto.FontSize=9;
+            btnFAuto.Tooltip='Auto fat window';
+            btnFAuto.ButtonPushedFcn = @(~,~)app.autoWaterFatWin('fat');
+
             app.AxDixonWater = uiaxes(rightG);
-            app.AxDixonWater.Layout.Row = 3;
-            setupDarkAxes(app.AxDixonWater,'Fat or Out-of-Phase');
+            app.AxDixonWater.Layout.Row = 5;
+            setupDarkAxes(app.AxDixonWater,'Fat');
             app.AxDixonWater.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('fat');
 
             % Keep the legacy ROI drawing path anchored to the PDFF panel.
@@ -721,8 +815,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             roiPnl = uipanel(app.DixonGrid,'Title','Dixon ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[10 1]);
-            rg.RowHeight = {20,36,36,36,36,36,22,20,'1x',36};
+            rg = uigridlayout(roiPnl,[12 1]);
+            rg.RowHeight = {20,36,36,36,36,36,36,36,22,20,'1x',36};
             rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
             hdr = uilabel(rg,'Text','Click organ, then F/D on image:','FontSize',10, ...
@@ -737,21 +831,31 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 [0.15 0.55 0.90],[1 1 1]);
             app.BtnROI_SpleenDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('SpleenDixon');
 
-            app.BtnROI_MuscleDixon = roiBtn(rg,4,'Muscle', ...
+            app.BtnROI_PsoasDixon = roiBtn(rg,4,'Psoas Muscle', ...
                 [0.95 0.55 0.15],[1 1 1]);
-            app.BtnROI_MuscleDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleDixon');
+            app.BtnROI_PsoasDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('PsoasDixon');
 
-            app.BtnROI_SATDixon = roiBtn(rg,5,'SAT (subcut.)', ...
+            app.BtnROI_TrunkDixon = roiBtn(rg,5,'Trunk Muscle', ...
+                [0.85 0.40 0.05],[1 1 1]);
+            app.BtnROI_TrunkDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('TrunkDixon');
+
+            % Keep legacy Muscle button hidden in row 8 (for backward-compat code paths)
+            app.BtnROI_MuscleDixon = roiBtn(rg,8,'Muscle (legacy)', ...
+                [0.70 0.70 0.70],[0.3 0.3 0.3]);
+            app.BtnROI_MuscleDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('MuscleDixon');
+            app.BtnROI_MuscleDixon.Visible = 'off';
+
+            app.BtnROI_SATDixon = roiBtn(rg,6,'SAT (subcut.)', ...
                 [0.85 0.20 0.85],[1 1 1]);
             app.BtnROI_SATDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('SATDixon');
 
-            app.BtnROI_VATDixon = roiBtn(rg,6,'VAT (visceral)', ...
+            app.BtnROI_VATDixon = roiBtn(rg,7,'VAT (visceral)', ...
                 [0.85 0.80 0.00],[0 0 0]);
             app.BtnROI_VATDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('VATDixon');
 
-            % Polygon vertex count (row 7, below organ buttons)
+            % Polygon vertex count (row 9, below organ buttons)
             vtxRowD = uigridlayout(rg,[1 3]);
-            vtxRowD.Layout.Row = 7;
+            vtxRowD.Layout.Row = 9;
             vtxRowD.ColumnWidth = {'1x',52,10}; vtxRowD.Padding=[2 0 2 0]; vtxRowD.ColumnSpacing=3;
             uilabel(vtxRowD,'Text','Poly vertices:','FontSize',9, ...
                 'HorizontalAlignment','right','FontColor',[0.35 0.35 0.35]);
@@ -764,10 +868,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             workflowHdr = uilabel(rg,'Text','Hotkeys (after arming organ):','FontSize',9, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
-            workflowHdr.Layout.Row = 8;
+            workflowHdr.Layout.Row = 10;
 
             app.LblDixonROIInfo = uilabel(rg);
-            app.LblDixonROIInfo.Layout.Row = 9;
+            app.LblDixonROIInfo.Layout.Row = 11;
             app.LblDixonROIInfo.Text = sprintf(['F = freehand → edit polygon → dbl-click confirm' char(10) ...
                 'D = seed+auto on panel' char(10) ...
                 'E/I = exclude/include' char(10) ...
@@ -775,7 +879,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblDixonROIInfo.FontSize=10; app.LblDixonROIInfo.WordWrap='on';
             app.LblDixonROIInfo.FontColor=[0.40 0.40 0.40];
 
-            app.BtnClearDixonROIs = roiBtn(rg,10,'Clear this slice', ...
+            app.BtnClearDixonROIs = roiBtn(rg,12,'Clear this slice', ...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearDixonROIs.ButtonPushedFcn = @(~,~)app.clearDixonSlice();
         end
@@ -1040,10 +1144,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                  'ValSpleenDixonVol','ValSpleenDixonPDFF'});
 
             addMeasSection(app,2,'Dixon — Muscle & Fat', ...
-                {'Muscle vol. (mm³)','Muscle PDFF', ...
+                {'Psoas vol. (mm³)','Psoas PDFF', ...
+                 'Trunk vol. (mm³)','Trunk PDFF', ...
                  'SAT vol. (mm³)','SAT PDFF', ...
                  'VAT vol. (mm³)','VAT PDFF'}, ...
-                {'ValMuscleDixonVol','ValMuscleDixonPDFF', ...
+                {'ValPsoasDixonVol','ValPsoasDixonPDFF', ...
+                 'ValTrunkDixonVol','ValTrunkDixonPDFF', ...
                  'ValSATDixonVol','ValSATDixonPDFF', ...
                  'ValVATDixonVol','ValVATDixonPDFF'});
 
@@ -1150,6 +1256,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             folderPath = uigetdir(pwd,'Select DICOM Exam Folder');
             if isequal(folderPath,0), return; end
 
+            % Clear all exam-specific data to prevent bleed from prior exam.
+            app.resetExamAppData();
+
             dlg = uiprogressdlg(app.UIFigure,'Title','Loading Study', ...
                 'Message','Parsing DICOM exam...','Indeterminate','on');
 
@@ -1199,7 +1308,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     app.AppData.Dixon = seg_buildDixonVolume( ...
                         selection.DixonGroup, struct('verbose',false));
                     populateDixonTab(app);
+                    % Load existing pdff.mat for this exam (disc marks + ROIs)
+                    loadPDFFMat(app, folderPath);
                 end
+                app.AppData.ExamPath = folderPath;
 
                 % 7. Load MRE .mat
                 if ~isempty(matPath) && isfile(matPath)
@@ -1210,6 +1322,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     end
                     tmp = normalizeMREStruct(app, tmp);
                     app.AppData.MRE = tmp;
+                    % Load saved MRE ROIs from mat file
+                    loadMREROIsFromMat(app, matPath);
                     populateMRETab(app);
                 end
 
@@ -1474,6 +1588,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 sum(~isnan(cellfun(@(n)app.AppData.LM_Dixon.(n).SliceIdx, lmNames))));
             app.BtnStepDixon.BackgroundColor = [0.70 0.88 0.70];
             activateTab(app,'dixon');
+            app.savePDFFMat();   % persist disc marks to pdff.mat
         end
 
         % Legacy alias
@@ -1548,11 +1663,14 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         function clearDixonSlice(app)
             sl = app.AppData.DixonSlice;
-            app.AppData.ROIs.LiverDixon.Slices   = removeSlice(app.AppData.ROIs.LiverDixon.Slices,   sl);
-            app.AppData.ROIs.SpleenDixon.Slices  = removeSlice(app.AppData.ROIs.SpleenDixon.Slices,  sl);
-            app.AppData.ROIs.MuscleDixon.Slices  = removeSlice(app.AppData.ROIs.MuscleDixon.Slices,  sl);
-            app.AppData.ROIs.SATDixon.Slices     = removeSlice(app.AppData.ROIs.SATDixon.Slices,     sl);
-            app.AppData.ROIs.VATDixon.Slices     = removeSlice(app.AppData.ROIs.VATDixon.Slices,     sl);
+            dixonROINames = {'LiverDixon','SpleenDixon','MuscleDixon', ...
+                             'PsoasDixon','TrunkDixon','SATDixon','VATDixon','FatDixon'};
+            for ri = 1:numel(dixonROINames)
+                n = dixonROINames{ri};
+                if isfield(app.AppData.ROIs, n)
+                    app.AppData.ROIs.(n).Slices = removeSlice(app.AppData.ROIs.(n).Slices, sl);
+                end
+            end
             refreshDixon(app);
             setStatus(app,sprintf('ROIs cleared for Dixon slice %d.',sl));
         end
@@ -2261,6 +2379,7 @@ function acceptCurrentMREROI(app)
     end
     refreshMRE(app);
     setStatus(app, sprintf('%s ROI saved on slice %d.', app.getMREROIOrganLabel(roiName), sl));
+    app.saveMREROIsToMat();   % persist MRE ROI to exam mat file
 end
 
 function cancelMREROIWorkflow(app, doRefresh)
@@ -2319,24 +2438,27 @@ function I = getMREMagnitudeForROI(app, sl)
 
         function organLabel = getDixonOrganLabel(app, roiName)
             if nargin < 2 || isempty(roiName), roiName = app.AppData.DixonROIName; end
-            if contains(roiName,'Liver'),   organLabel = 'Liver';
-            elseif contains(roiName,'Spleen'), organLabel = 'Spleen';
-            elseif contains(roiName,'Muscle'), organLabel = 'Muscle';
-            elseif contains(roiName,'SAT'),    organLabel = 'SAT';
-            elseif contains(roiName,'VAT'),    organLabel = 'VAT';
-            elseif contains(roiName,'Fat'),    organLabel = 'Fat';
-            else,                              organLabel = 'ROI';
+            if contains(roiName,'Liver'),    organLabel = 'Liver';
+            elseif contains(roiName,'Spleen'),  organLabel = 'Spleen';
+            elseif contains(roiName,'Psoas'),   organLabel = 'Psoas Muscle';
+            elseif contains(roiName,'Trunk'),   organLabel = 'Trunk Muscle';
+            elseif contains(roiName,'Muscle'),  organLabel = 'Muscle';
+            elseif contains(roiName,'SAT'),     organLabel = 'SAT';
+            elseif contains(roiName,'VAT'),     organLabel = 'VAT';
+            elseif contains(roiName,'Fat'),     organLabel = 'Fat';
+            else,                               organLabel = 'ROI';
             end
         end
 
         function setDixonROIButtonsEnabled(app, tf)
             state = 'off'; if tf, state = 'on'; end
-            try, app.BtnROI_LiverDixon.Enable  = state; catch, end
-            try, app.BtnROI_SpleenDixon.Enable = state; catch, end
-            try, app.BtnROI_MuscleDixon.Enable = state; catch, end
-            try, app.BtnROI_SATDixon.Enable    = state; catch, end
-            try, app.BtnROI_VATDixon.Enable    = state; catch, end
-            try, app.BtnClearDixonROIs.Enable  = state; catch, end
+            try, app.BtnROI_LiverDixon.Enable   = state; catch, end
+            try, app.BtnROI_SpleenDixon.Enable  = state; catch, end
+            try, app.BtnROI_PsoasDixon.Enable   = state; catch, end
+            try, app.BtnROI_TrunkDixon.Enable   = state; catch, end
+            try, app.BtnROI_SATDixon.Enable     = state; catch, end
+            try, app.BtnROI_VATDixon.Enable     = state; catch, end
+            try, app.BtnClearDixonROIs.Enable   = state; catch, end
         end
 
         function showDixonROIHotkeyHelp(app)
@@ -2726,6 +2848,7 @@ function I = getMREMagnitudeForROI(app, sl)
             app.cancelDixonROIWorkflow(false);
             refreshDixon(app);
             setStatus(app, sprintf('%s ROI accepted on slice %d.', app.getDixonOrganLabel(roiName), sl));
+            app.savePDFFMat();  % persist Dixon ROI to exam folder
         end
 
         function handled = handleDixonROIHotkey(app, event)
@@ -3208,6 +3331,163 @@ function setStiffScale(app, newClim)
         function exportPDF(app)
             setStatus(app,'[Phase 7] Export PDF — not yet implemented.');
         end
+        function resetExamAppData(app)
+        % Clear all per-exam data so a new exam starts fresh.
+            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            for ki = 1:numel(lmNames)
+                n = lmNames{ki};
+                app.AppData.LM.(n).CorRow = NaN;
+                app.AppData.LM.(n).SagRow = NaN;
+                app.AppData.LM_Dixon.(n).SliceIdx = NaN;
+                app.AppData.LM_Dixon.(n).Dist_mm  = NaN;
+                app.AppData.LM_MRE.(n).SliceIdx   = NaN;
+                app.AppData.LM_MRE.(n).Dist_mm    = NaN;
+            end
+            dixonROINames = {'LiverDixon','SpleenDixon','MuscleDixon', ...
+                             'PsoasDixon','TrunkDixon','SATDixon','VATDixon','FatDixon'};
+            mreROINames   = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
+            for ri = 1:numel(dixonROINames)
+                app.AppData.ROIs.(dixonROINames{ri}) = struct('Slices',struct());
+            end
+            for ri = 1:numel(mreROINames)
+                app.AppData.ROIs.(mreROINames{ri}) = struct('Slices',struct());
+            end
+            app.AppData.Dixon    = [];
+            app.AppData.MRE      = [];
+            app.AppData.Localizer= [];
+            app.AppData.ExamPath = '';
+        end
+
+        function savePDFFMat(app)
+        % Save disc landmarks + Dixon ROIs into pdff.mat in the exam folder.
+            examPath = '';
+            try, examPath = app.AppData.ExamPath; catch, end
+            if isempty(examPath) || ~isfolder(examPath), return; end
+            try
+                pdff = struct();
+                pdff.SavedAt = datestr(now,'yyyy-mm-dd HH:MM:SS'); %#ok<TNOW1,DATST>
+                pdff.LM       = app.AppData.LM;
+                pdff.LM_Dixon = app.AppData.LM_Dixon;
+                pdff.LM_MRE   = app.AppData.LM_MRE;
+                dix = app.AppData.Dixon;
+                if ~isempty(dix)
+                    pdff.SliceLocations    = dix.SliceLocations;
+                    pdff.PixelSpacing_mm   = dix.PixelSpacing_mm;
+                    pdff.SliceThickness_mm = dix.SliceThickness_mm;
+                    pdff.nSlices           = dix.nSlices;
+                end
+                rois = app.AppData.ROIs;
+                dixonROINames = {'LiverDixon','SpleenDixon','MuscleDixon', ...
+                                 'PsoasDixon','TrunkDixon','SATDixon','VATDixon','FatDixon'};
+                pdff.ROIs = struct();
+                for ri = 1:numel(dixonROINames)
+                    n = dixonROINames{ri};
+                    if isfield(rois, n), pdff.ROIs.(n) = rois.(n); end
+                end
+                save(fullfile(examPath,'pdff.mat'), 'pdff', '-v7');
+            catch ME
+                warning('savePDFFMat:fail','Could not save pdff.mat: %s', ME.message);
+            end
+        end
+
+        function loadPDFFMat(app, examPath)
+        % Load disc landmarks + Dixon ROIs from pdff.mat in the exam folder.
+            matFile = fullfile(examPath, 'pdff.mat');
+            if ~isfile(matFile), return; end
+            try
+                S = load(matFile, 'pdff');
+                if ~isfield(S,'pdff'), return; end
+                p = S.pdff;
+                lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+                if isfield(p,'LM')
+                    for ki = 1:numel(lmNames)
+                        n = lmNames{ki};
+                        if isfield(p.LM,n), app.AppData.LM.(n) = p.LM.(n); end
+                    end
+                end
+                if isfield(p,'LM_Dixon')
+                    for ki = 1:numel(lmNames)
+                        n = lmNames{ki};
+                        if isfield(p.LM_Dixon,n)
+                            app.AppData.LM_Dixon.(n) = p.LM_Dixon.(n);
+                        end
+                    end
+                end
+                if isfield(p,'LM_MRE')
+                    for ki = 1:numel(lmNames)
+                        n = lmNames{ki};
+                        if isfield(p.LM_MRE,n)
+                            app.AppData.LM_MRE.(n) = p.LM_MRE.(n);
+                        end
+                    end
+                end
+                if isfield(p,'ROIs')
+                    rnames = fieldnames(p.ROIs);
+                    for ri = 1:numel(rnames)
+                        rn = rnames{ri};
+                        if isfield(app.AppData.ROIs, rn)
+                            app.AppData.ROIs.(rn) = p.ROIs.(rn);
+                        end
+                    end
+                end
+                setStatus(app,'Loaded saved landmarks and Dixon ROIs from pdff.mat.');
+                refreshDixon(app);
+                app.refreshLocCoronal(); app.refreshLocSagittal();
+                updateDixonJumpButtons(app);
+            catch ME
+                warning('loadPDFFMat:fail','Could not load pdff.mat: %s', ME.message);
+            end
+        end
+
+        function saveMREROIsToMat(app)
+        % Append MRE ROIs into the existing mre_data .mat file.
+            matPath = '';
+            try, matPath = app.AppData.MATPath; catch, end
+            if isempty(matPath) || ~isfile(matPath), return; end
+            try
+                mreROIs = struct();
+                mreROINames = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
+                for ri = 1:numel(mreROINames)
+                    n = mreROINames{ri};
+                    if isfield(app.AppData.ROIs, n)
+                        mreROIs.(n) = app.AppData.ROIs.(n);
+                    end
+                end
+                mreLM = app.AppData.LM_MRE;
+                save(matPath, 'mreROIs', 'mreLM', '-append');
+            catch ME
+                warning('saveMREROIsToMat:fail','Could not save MRE ROIs: %s', ME.message);
+            end
+        end
+
+        function loadMREROIsFromMat(app, matPath)
+        % Load MRE ROIs from the MRE .mat file if they were previously saved.
+            if ~isfile(matPath), return; end
+            try
+                S = load(matPath, 'mreROIs', 'mreLM');
+                if isfield(S,'mreROIs')
+                    rnames = fieldnames(S.mreROIs);
+                    for ri = 1:numel(rnames)
+                        rn = rnames{ri};
+                        if isfield(app.AppData.ROIs, rn)
+                            app.AppData.ROIs.(rn) = S.mreROIs.(rn);
+                        end
+                    end
+                end
+                if isfield(S,'mreLM')
+                    lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+                    for ki = 1:numel(lmNames)
+                        n = lmNames{ki};
+                        if isfield(S.mreLM, n)
+                            app.AppData.LM_MRE.(n) = S.mreLM.(n);
+                        end
+                    end
+                end
+            catch ME
+                warning('loadMREROIsFromMat:fail','Could not load MRE ROIs: %s', ME.message);
+            end
+        end
+
         function saveSession(app)
             [fname, fpath] = uiputfile('*.mat', 'Save HepatosplenicMRE Session', ...
                 'HepatosplenicMRE_session.mat');
@@ -3510,7 +3790,8 @@ function tf = shouldBypassGlobalHotkeys(app)
             sl  = app.AppData.CorSlice;
             sl  = max(1, min(size(loc.Coronal.Volume,3), sl));
             img = double(loc.Coronal.Volume(:,:,sl));
-            showImg(app.AxLocCoronal, img, sprintf('Coronal  slice %d',sl));
+            showImgWL(app.AxLocCoronal, img, sprintf('Coronal  slice %d',sl), ...
+                app.EdtCorWinLo.Value, app.EdtCorWinHi.Value);
             hold(app.AxLocCoronal,'on');
             nC = size(img,2);
             drawLocLines(app, app.AxLocCoronal, nC, 'cor', sl);
@@ -3524,7 +3805,8 @@ function tf = shouldBypassGlobalHotkeys(app)
             nSl = size(loc.Sagittal.Volume,3);
             sl  = max(1, min(nSl, sl));
             img = double(loc.Sagittal.Volume(:,:,sl));
-            showImg(app.AxLocSagittal, img, sprintf('Sagittal  %d/%d',sl,nSl));
+            showImgWL(app.AxLocSagittal, img, sprintf('Sagittal  %d/%d',sl,nSl), ...
+                app.EdtSagWinLo.Value, app.EdtSagWinHi.Value);
             hold(app.AxLocSagittal,'on');
             nC = size(img,2);
             drawLocLines(app, app.AxLocSagittal, nC, 'sag', sl);
@@ -3617,6 +3899,51 @@ function tf = shouldBypassGlobalHotkeys(app)
             refreshDixon(app);
         end
 
+        function autoWaterFatWin(app, panelKey)
+        % Reset Water or Fat W/L to auto (0/0 = auto-scale).
+            dix = app.AppData.Dixon;
+            if isempty(dix), return; end
+            sl = app.AppData.DixonSlice;
+            switch panelKey
+                case 'water'
+                    vol = dixonPreferredDisplayVolume(dix,'InPhase');
+                    if isempty(vol), return; end
+                    img = double(vol(:,:,min(sl,size(vol,3))));
+                    [lo,hi] = robustCLim(img,1,99,false);
+                    app.EdtWaterWinLo.Value = lo; app.EdtWaterWinHi.Value = hi;
+                case 'fat'
+                    vol = dixonPreferredDisplayVolume(dix,'OutPhase');
+                    if isempty(vol), return; end
+                    img = double(vol(:,:,min(sl,size(vol,3))));
+                    [lo,hi] = robustCLim(img,1,99,false);
+                    app.EdtFatWinLo.Value = lo; app.EdtFatWinHi.Value = hi;
+            end
+            refreshDixon(app);
+        end
+
+        function autoLocWin(app, panelKey)
+        % Reset Coronal or Sagittal W/L to auto.
+            loc = app.AppData.Localizer;
+            if isempty(loc), return; end
+            switch panelKey
+                case 'cor'
+                    if isempty(loc.Coronal.Volume), return; end
+                    sl = app.AppData.CorSlice;
+                    sl = max(1,min(size(loc.Coronal.Volume,3),sl));
+                    img = double(loc.Coronal.Volume(:,:,sl));
+                    [lo,hi] = robustCLim(img,1,99,false);
+                    app.EdtCorWinLo.Value = lo; app.EdtCorWinHi.Value = hi;
+                case 'sag'
+                    if isempty(loc.Sagittal.Volume), return; end
+                    sl = app.AppData.SagSlice;
+                    sl = max(1,min(size(loc.Sagittal.Volume,3),sl));
+                    img = double(loc.Sagittal.Volume(:,:,sl));
+                    [lo,hi] = robustCLim(img,1,99,false);
+                    app.EdtSagWinLo.Value = lo; app.EdtSagWinHi.Value = hi;
+            end
+            app.refreshLocCoronal(); app.refreshLocSagittal();
+        end
+
         function refreshDixon(app)
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
@@ -3652,8 +3979,8 @@ function tf = shouldBypassGlobalHotkeys(app)
             end
 
             renderDixonPanelAxes(app, app.AxDixonPDFF, pdffVol, sl, nZ, 'PDFF (%)', true);
-            renderDixonPanelAxes(app, app.AxDixonIP,   ipVol,   sl, nZ, 'Water or In-phase', false);
-            renderDixonPanelAxes(app, app.AxDixonWater,opVol,   sl, nZ, 'Fat or Out-of-Phase', false);
+            renderDixonPanelAxes(app, app.AxDixonIP,   ipVol,   sl, nZ, 'Water', false, 'water');
+            renderDixonPanelAxes(app, app.AxDixonWater,opVol,   sl, nZ, 'Fat',   false, 'fat');
         end
 
         function populateMRETab(app)
@@ -3929,6 +4256,8 @@ function tf = shouldBypassGlobalHotkeys(app)
             switch roiName
                 case 'LiverDixon',  updatePair(app.ValLiverDixonVol,  app.ValLiverDixonPDFF);
                 case 'SpleenDixon', updatePair(app.ValSpleenDixonVol, app.ValSpleenDixonPDFF);
+                case 'PsoasDixon',  updatePair(app.ValPsoasDixonVol,  app.ValPsoasDixonPDFF);
+                case 'TrunkDixon',  updatePair(app.ValTrunkDixonVol,  app.ValTrunkDixonPDFF);
                 case 'MuscleDixon', updatePair(app.ValMuscleDixonVol, app.ValMuscleDixonPDFF);
                 case 'SATDixon',    updatePair(app.ValSATDixonVol,    app.ValSATDixonPDFF);
                 case 'VATDixon',    updatePair(app.ValVATDixonVol,    app.ValVATDixonPDFF);
@@ -3938,7 +4267,7 @@ function tf = shouldBypassGlobalHotkeys(app)
         function updateAllDixonStats(app)
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
-            for rn = {'LiverDixon','SpleenDixon','MuscleDixon','SATDixon','VATDixon'}
+            for rn = {'LiverDixon','SpleenDixon','PsoasDixon','TrunkDixon','MuscleDixon','SATDixon','VATDixon'}
                 roiName = rn{1};
                 slices = fieldnames(app.AppData.ROIs.(roiName).Slices);
                 for k = 1:numel(slices)
@@ -4579,20 +4908,24 @@ function vol = dixonVolume(dix, contrast)
 end
 function vol = dixonPreferredDisplayVolume(dix, which)
 % Return the preferred volume for the fixed three-panel Dixon view.
+% Water panel: prefer Water (T2*-corrected) over InPhase when both exist.
+% Fat panel:   prefer Fat  (T2*-corrected) over OutPhase when both exist.
     vol = [];
     switch which
         case 'PDFF'
             vol = dixonVolume(dix, 'PDFF');
         case 'InPhase'
-            vol = dixonVolume(dix, 'InPhase');
-            if isempty(vol), vol = dixonVolume(dix, 'Water'); end
+            vol = dixonVolume(dix, 'Water');
+            if isempty(vol), vol = dixonVolume(dix, 'InPhase'); end
         case 'OutPhase'
-            vol = dixonVolume(dix, 'OutPhase');
-            if isempty(vol), vol = dixonVolume(dix, 'Fat'); end
+            vol = dixonVolume(dix, 'Fat');
+            if isempty(vol), vol = dixonVolume(dix, 'OutPhase'); end
     end
 end
 
-function renderDixonPanelAxes(app, ax, vol, sl, nZ, labelTxt, isPdff)
+function renderDixonPanelAxes(app, ax, vol, sl, nZ, labelTxt, isPdff, panelKey)
+% panelKey (optional): 'water'|'fat' to apply user W/L; omit for auto.
+    if nargin < 8, panelKey = ''; end
     if isempty(ax) || ~isvalid(ax)
         return
     end
@@ -4622,8 +4955,25 @@ function renderDixonPanelAxes(app, ax, vol, sl, nZ, labelTxt, isPdff)
         if hi > lo, clim(ax, [lo hi]); end
     else
         colormap(ax, 'gray');
-        [lo, hi] = robustCLim(img, 1, 99, false);
-        if hi > lo, clim(ax, [lo hi]); end
+        % Apply user-defined W/L when available, otherwise auto.
+        userLo = 0; userHi = 0;
+        try
+            switch panelKey
+                case 'water'
+                    userLo = app.EdtWaterWinLo.Value;
+                    userHi = app.EdtWaterWinHi.Value;
+                case 'fat'
+                    userLo = app.EdtFatWinLo.Value;
+                    userHi = app.EdtFatWinHi.Value;
+            end
+        catch
+        end
+        if userHi > userLo
+            clim(ax, [userLo userHi]);
+        else
+            [lo, hi] = robustCLim(img, 1, 99, false);
+            if hi > lo, clim(ax, [lo hi]); end
+        end
     end
     axis(ax,'image');
     ax.XTick=[]; ax.YTick=[];
@@ -4687,7 +5037,7 @@ end
 function overlayStoredDixonROIs(app, ax, sl)
     key = sprintf('sl%d', sl);
     items = {};
-    for rn = {'LiverDixon','SpleenDixon','MuscleDixon','SATDixon','VATDixon'}
+    for rn = {'LiverDixon','SpleenDixon','PsoasDixon','TrunkDixon','MuscleDixon','SATDixon','VATDixon'}
         roiName = rn{1};
         try
             if isfield(app.AppData.ROIs.(roiName).Slices, key)
@@ -4940,6 +5290,23 @@ function showImg(ax, img, titleStr)
     title(ax,titleStr,'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
 end
 
+function showImgWL(ax, img, titleStr, userLo, userHi)
+% Like showImg but respects user-defined window/level (userLo/userHi).
+% When userHi <= userLo the window is computed automatically.
+    if nargin < 4, userLo = 0; userHi = 0; end
+    colormap(ax,'gray');
+    imagesc(ax, img);
+    if userHi > userLo
+        clim(ax, [userLo userHi]);
+    else
+        [lo, hi] = robustCLim(img, 1, 99, false);
+        if hi > lo, clim(ax, [lo hi]); end
+    end
+    axis(ax,'image');
+    ax.XTick=[]; ax.YTick=[];
+    title(ax,titleStr,'FontSize',12,'Color',[0.72 0.72 0.72],'FontWeight','normal');
+end
+
 
 function showNativeGray(ax, img, titleStr, pctLo, pctHi, baseTag)
     if nargin < 4, pctLo = 1; end
@@ -5083,8 +5450,12 @@ function clr = dixonROIColor(name)
         clr = [0.15 0.75 0.15];   % green
     elseif contains(name,'Spleen')
         clr = [0.15 0.55 0.90];   % blue
+    elseif contains(name,'Psoas')
+        clr = [0.95 0.55 0.15];   % orange — psoas muscle
+    elseif contains(name,'Trunk')
+        clr = [0.85 0.40 0.05];   % dark orange — trunk muscle
     elseif contains(name,'Muscle')
-        clr = [0.95 0.55 0.15];   % orange
+        clr = [0.95 0.55 0.15];   % orange (legacy generic muscle)
     elseif contains(name,'SAT')
         clr = [0.85 0.20 0.85];   % magenta — subcutaneous adipose tissue
     elseif contains(name,'VAT')

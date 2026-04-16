@@ -298,17 +298,27 @@ function entry = classifySeries(entry)
             % 's15997_R2_1_s_1.5T_IDEAL-IQ_Abdomen'.
             entry.Role = 'IDEALIQ_T2s';
 
-        elseif contains(desc,'water') || ...
-               contains(desc,' fat') || contains(desc,'_fat') || ...
-               startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat') || ...
-               contains(desc,'inphase') || contains(desc,'in_phase') || ...
-               contains(desc,'outphase') || contains(desc,'out_phase')
-            % Single-contrast recon: Water, T2*-corrected Water/Fat,
-            % standalone Fat, InPhase, or OutPhase volume.
-            % Fat is matched as a token (prefix/underscore-delimited) to handle
+        elseif contains(desc,'water')
+            % T2*-corrected Water image (IDEAL-IQ Water recon).
+            entry.Role = 'IDEALIQ_Water';
+
+        elseif contains(desc,'inphase') || contains(desc,'in_phase') || ...
+               contains(desc,'in phase') || contains(desc,'in-phase')
+            % In-phase (Water+Fat) image.
+            entry.Role = 'IDEALIQ_InPhase';
+
+        elseif contains(desc,'outphase') || contains(desc,'out_phase') || ...
+               contains(desc,'out phase') || contains(desc,'out-of-phase') || ...
+               contains(desc,'outofphase')
+            % Out-of-phase (Water-Fat) image.
+            entry.Role = 'IDEALIQ_OutPhase';
+
+        elseif contains(desc,' fat') || contains(desc,'_fat') || ...
+               startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat')
+            % T2*-corrected Fat image (IDEAL-IQ Fat recon).
+            % Matched as prefix/underscore-delimited token to handle
             % GE names like 's0202_FAT__Ax_IDEAL_IQ_BH' and 's15993_T2_Fat_...'.
-            % fatfrac/pdff were already caught above.
-            entry.Role = 'IDEALIQ_Raw';
+            entry.Role = 'IDEALIQ_Fat';
 
         else
             % Multi-contrast stack or unclassified IDEAL-IQ product.

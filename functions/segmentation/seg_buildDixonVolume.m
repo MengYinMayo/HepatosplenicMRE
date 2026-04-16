@@ -49,7 +49,9 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     % ── 1.  Find the best source series for each contrast ─────────────
     % Priority: IDEALIQ_Multi (has everything) > individual series
     multiSeries = findRole(dixonGroup, 'IDEALIQ_Multi');
-    rawSeries   = findRole(dixonGroup, 'IDEALIQ_Raw');
+    % Collect all single-contrast IDEAL-IQ recons regardless of sub-role.
+    rawSeries   = findRoles(dixonGroup, ...
+        {'IDEALIQ_Raw','IDEALIQ_Water','IDEALIQ_Fat','IDEALIQ_InPhase','IDEALIQ_OutPhase'});
     pdffSeries  = findRole(dixonGroup, 'IDEALIQ_PDFF');
     t2sSeries   = findRole(dixonGroup, 'IDEALIQ_T2s');
 
@@ -561,6 +563,17 @@ function s = findRole(group, role)
     s = [];
     for k = 1:numel(group)
         if strcmp(group(k).Role, role)
+            if isempty(s), s = group(k);
+            else,          s(end+1) = group(k); end %#ok<AGROW>
+        end
+    end
+end
+
+function s = findRoles(group, roles)
+% Like findRole but accepts a cell array of role strings.
+    s = [];
+    for k = 1:numel(group)
+        if any(strcmp(group(k).Role, roles))
             if isempty(s), s = group(k);
             else,          s(end+1) = group(k); end %#ok<AGROW>
         end
