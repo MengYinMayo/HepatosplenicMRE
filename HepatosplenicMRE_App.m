@@ -1278,83 +1278,139 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Clear all exam-specific data to prevent bleed from prior exam.
             app.resetExamAppData();
 
+            % Check for previously saved session files
+            pdffPath   = fullfile(folderPath, 'pdff.mat');
+            mreMatPath = fullfile(folderPath, 'mre_data.mat');
+            hasPdff    = isfile(pdffPath);
+            hasMreMat  = isfile(mreMatPath);
+            loadFromMat = false;
+
+            if hasPdff || hasMreMat
+                found = {};
+                if hasPdff,   found{end+1} = 'pdff.mat  (Dixon images + landmarks + ROIs)'; end
+                if hasMreMat, found{end+1} = 'mre_data.mat  (MRE data + ROIs)'; end
+                msg = sprintf('Previous session data found:\n  \x2022 %s\n\nLoad from saved files (fast, ROIs preserved) or re-select series from DICOM (overwrites saved data)?', ...
+                    strjoin(found, sprintf('\n  \x2022 ')));
+                choice = uiconfirm(app.UIFigure, msg, 'Previous Session Found', ...
+                    'Options', {'Load Saved Data', 'Re-select from DICOM'}, ...
+                    'DefaultOption', 1, 'CancelOption', 2, 'Icon', 'question');
+                loadFromMat = strcmp(choice, 'Load Saved Data');
+            end
+
             dlg = uiprogressdlg(app.UIFigure,'Title','Loading Study', ...
-                'Message','Parsing DICOM exam...','Indeterminate','on');
+                'Message','Loading...','Indeterminate','on');
 
             try
-                % 2. Parse
-                setStatus(app,'Parsing DICOM exam...');
-                exam = mre_parseDICOMExam(folderPath, struct('verbose',false));
-                app.AppData.Exam = exam;
+                if loadFromMat
+                    % ── Fast path: restore from saved mat files ──────────────
+                    app.AppData.ExamPath = folderPath;
+                    app.AppData.MATPath  = mreMatPath;
 
-                close(dlg);
-
-                % 3. Series selection GUI (inside the main figure context)
-                setStatus(app,'Select series...');
-                selection = mre_selectSeriesGUI(exam);
-                if ~selection.Confirmed
-                    setStatus(app,'Series selection cancelled.');
-                    return
-                end
-                app.AppData.Selection = selection;
-
-                dlg = uiprogressdlg(app.UIFigure,'Title','Building Data', ...
-                    'Message','Loading series data...','Indeterminate','on');
-
-                matOpts = struct('outputDir',folderPath,'verbose',false, ...
-                                 'forceRebuild',true,'interpolateWave',true);
-                matPath = '';
-
-                % 4. Build MRE MAT (only if MRE series was selected)
-                if ~isempty(selection.MRE)
-                    dlg.Message = 'Building MRE MAT file...';
-                    % Pass selection (not exam) so user-chosen series group is used
-                    matPath = mre_buildMATFile(selection, matOpts);
-                end
-                app.AppData.MATPath = matPath;
-
-                % 5. Load Localizer
-                if ~isempty(selection.Localizer)
-                    dlg.Message = 'Loading localizer...';
-                    app.AppData.Localizer = loc_loadLocalizer( ...
-                        selection.Localizer, struct('verbose',false));
-                    populateLocalizerTab(app);
-                end
-
-                % 6. Build Dixon volumes
-                if ~isempty(selection.DixonGroup)
-                    dlg.Message = 'Building Dixon volumes...';
-                    app.AppData.Dixon = seg_buildDixonVolume( ...
-                        selection.DixonGroup, struct('verbose',false));
-                    populateDixonTab(app);
-                    % Load existing pdff.mat for this exam (disc marks + ROIs)
-                    loadPDFFMat(app, folderPath);
-                end
-                app.AppData.ExamPath = folderPath;
-
-                % 7. Load MRE .mat
-                if ~isempty(matPath) && isfile(matPath)
-                    dlg.Message = 'Loading MRE data...';
-                    tmp = load(matPath,'M','M_raw','W','W_raw','S','LapC','H');
-                    if ~isfield(tmp,'W_raw') || isempty(tmp.W_raw)
-                        tmp.W_raw = tmp.W;
+                    if hasPdff
+                        dlg.Message = 'Loading from pdff.mat...';
+                        loadPDFFMat(app, folderPath);   % loads Dixon + Localizer + ROIs + LMs
+                        % Patient info from pdff.mat metadata
+                        try
+                            S = load(pdffPath, 'pdff');
+                            p = S.pdff;
+                            pid = ''; dt = ''; tp = '';
+                            if isfield(p,'PatientID'), pid = p.PatientID; end
+                            if isfield(p,'StudyDate'), dt  = p.StudyDate;  end
+                            if isfield(p,'MREType'),   tp  = p.MREType;    end
+                            app.LblPatientInfo.Text = sprintf('%s  |  %s  |  %s', pid, dt, tp);
+                        catch
+                        end
                     end
-                    tmp = normalizeMREStruct(app, tmp);
-                    app.AppData.MRE = tmp;
-                    % Load saved MRE ROIs from mre_rois.mat in exam folder
-                    loadMREROIsFromMat(app, folderPath);
-                    populateMRETab(app);
+
+                    if hasMreMat
+                        dlg.Message = 'Loading MRE from mre_data.mat...';
+                        tmp = load(mreMatPath,'M','M_raw','W','W_raw','S','LapC','H');
+                        if ~isfield(tmp,'W_raw') || isempty(tmp.W_raw)
+                            tmp.W_raw = tmp.W;
+                        end
+                        tmp = normalizeMREStruct(app, tmp);
+                        app.AppData.MRE = tmp;
+                        loadMREROIsFromMat(app, mreMatPath);
+                        populateMRETab(app);
+                        updateAllMREStats(app);
+                    end
+
+                    app.BtnRunPipeline.Enable = 'on';
+                    app.BtnConfirmL12.Enable  = 'on';
+                    setStatus(app, 'Session restored from saved data.');
+
+                else
+                    % ── Full DICOM load path ─────────────────────────────────
+                    dlg.Message = 'Parsing DICOM exam...';
+                    setStatus(app,'Parsing DICOM exam...');
+                    exam = mre_parseDICOMExam(folderPath, struct('verbose',false));
+                    app.AppData.Exam = exam;
+
+                    close(dlg);
+
+                    setStatus(app,'Select series...');
+                    selection = mre_selectSeriesGUI(exam);
+                    if ~selection.Confirmed
+                        setStatus(app,'Series selection cancelled.');
+                        return
+                    end
+                    app.AppData.Selection = selection;
+
+                    dlg = uiprogressdlg(app.UIFigure,'Title','Building Data', ...
+                        'Message','Loading series data...','Indeterminate','on');
+
+                    matOpts = struct('outputDir',folderPath,'verbose',false, ...
+                                     'forceRebuild',true,'interpolateWave',true);
+                    matPath = '';
+
+                    if ~isempty(selection.MRE)
+                        dlg.Message = 'Building MRE MAT file...';
+                        matPath = mre_buildMATFile(selection, matOpts);
+                    end
+                    app.AppData.MATPath  = matPath;
+                    app.AppData.ExamPath = folderPath;
+
+                    if ~isempty(selection.Localizer)
+                        dlg.Message = 'Loading localizer...';
+                        app.AppData.Localizer = loc_loadLocalizer( ...
+                            selection.Localizer, struct('verbose',false));
+                        populateLocalizerTab(app);
+                    end
+
+                    if ~isempty(selection.DixonGroup)
+                        dlg.Message = 'Building Dixon volumes...';
+                        app.AppData.Dixon = seg_buildDixonVolume( ...
+                            selection.DixonGroup, struct('verbose',false));
+                        populateDixonTab(app);
+                        % Restore any previously saved landmarks from pdff.mat
+                        % (ROIs are intentionally NOT loaded here since the user
+                        %  chose to rebuild — they will draw fresh ROIs)
+                        if hasPdff
+                            loadPDFFMat(app, folderPath);
+                        end
+                    end
+
+                    if ~isempty(matPath) && isfile(matPath)
+                        dlg.Message = 'Loading MRE data...';
+                        tmp = load(matPath,'M','M_raw','W','W_raw','S','LapC','H');
+                        if ~isfield(tmp,'W_raw') || isempty(tmp.W_raw)
+                            tmp.W_raw = tmp.W;
+                        end
+                        tmp = normalizeMREStruct(app, tmp);
+                        app.AppData.MRE = tmp;
+                        loadMREROIsFromMat(app, matPath);
+                        populateMRETab(app);
+                    end
+
+                    app.LblPatientInfo.Text = sprintf('%s  |  %s  |  %s', ...
+                        exam.PatientID, exam.StudyDate, exam.MREType);
+                    app.BtnRunPipeline.Enable  = 'on';
+                    app.BtnConfirmL12.Enable   = 'on';
+
+                    updateStudyBrowser(app, exam, selection);
+                    setStatus(app,sprintf('Loaded: %s — %s | %d series', ...
+                        exam.PatientID, exam.StudyDate, numel(exam.Series)));
                 end
-
-                % 8. Update patient info
-                app.LblPatientInfo.Text = sprintf('%s  |  %s  |  %s', ...
-                    exam.PatientID, exam.StudyDate, exam.MREType);
-                app.BtnRunPipeline.Enable  = 'on';
-                app.BtnConfirmL12.Enable   = 'on';
-
-                updateStudyBrowser(app, exam, selection);
-                setStatus(app,sprintf('Loaded: %s — %s | %d series', ...
-                    exam.PatientID, exam.StudyDate, numel(exam.Series)));
 
             catch ME
                 if isvalid(dlg), close(dlg); end
@@ -2861,7 +2917,7 @@ function I = getMREMagnitudeForROI(app, sl)
             end
             storeROI(app, roiName, sl, finalMask, nR, nC);
             if hasValid
-                computeDixonROIStats(app, roiName, finalMask, sl);
+                computeAggregatedDixonROIStats(app, roiName);
             end
             app.cancelDixonROIWorkflow(false);
             refreshDixon(app);
@@ -3436,7 +3492,8 @@ function setStiffScale(app, newClim)
         end
 
         function savePDFFMat(app)
-        % Save disc landmarks + Dixon ROIs into pdff.mat in the exam folder.
+        % Save disc landmarks + Dixon ROIs + Dixon image volumes + Localizer into
+        % pdff.mat so the exam can be fully restored without re-selecting DICOM series.
             examPath = '';
             try, examPath = app.AppData.ExamPath; catch, end
             if isempty(examPath) || ~isfolder(examPath), return; end
@@ -3446,12 +3503,22 @@ function setStiffScale(app, newClim)
                 pdff.LM       = app.AppData.LM;
                 pdff.LM_Dixon = app.AppData.LM_Dixon;
                 pdff.LM_MRE   = app.AppData.LM_MRE;
+                % Patient metadata for fast-path reload display
+                try
+                    pdff.PatientID = app.AppData.Exam.PatientID;
+                    pdff.StudyDate = app.AppData.Exam.StudyDate;
+                    pdff.MREType   = app.AppData.Exam.MREType;
+                catch
+                end
+                % Full Dixon image volumes (enables fast-path reload without DICOM)
                 dix = app.AppData.Dixon;
                 if ~isempty(dix)
-                    pdff.SliceLocations    = dix.SliceLocations;
-                    pdff.PixelSpacing_mm   = dix.PixelSpacing_mm;
-                    pdff.SliceThickness_mm = dix.SliceThickness_mm;
-                    pdff.nSlices           = dix.nSlices;
+                    pdff.DixonData = dix;
+                end
+                % Localizer scout images (enables fast-path reload without DICOM)
+                loc = app.AppData.Localizer;
+                if ~isempty(loc)
+                    pdff.LocalizerData = loc;
                 end
                 rois = app.AppData.ROIs;
                 dixonROINames = {'LiverDixon','SpleenDixon','MuscleDixon', ...
@@ -3461,14 +3528,16 @@ function setStiffScale(app, newClim)
                     n = dixonROINames{ri};
                     if isfield(rois, n), pdff.ROIs.(n) = rois.(n); end
                 end
-                save(fullfile(examPath,'pdff.mat'), 'pdff', '-v7');
+                save(fullfile(examPath,'pdff.mat'), 'pdff', '-v7.3');
             catch ME
                 warning('savePDFFMat:fail','Could not save pdff.mat: %s', ME.message);
             end
         end
 
         function loadPDFFMat(app, examPath)
-        % Load disc landmarks + Dixon ROIs from pdff.mat in the exam folder.
+        % Load from pdff.mat: landmarks, ROIs, Dixon volumes, Localizer.
+        % When DixonData and LocalizerData are present (saved since v2.1),
+        % the Dixon and Localizer tabs are fully populated without DICOM access.
             matFile = fullfile(examPath, 'pdff.mat');
             if ~isfile(matFile), return; end
             try
@@ -3507,21 +3576,33 @@ function setStiffScale(app, newClim)
                         end
                     end
                 end
-                setStatus(app,'Loaded saved landmarks and Dixon ROIs from pdff.mat.');
+                % Restore full Dixon image volumes (v2.1+)
+                if isfield(p,'DixonData') && ~isempty(p.DixonData)
+                    app.AppData.Dixon = p.DixonData;
+                    populateDixonTab(app);
+                end
+                % Restore Localizer scout images (v2.1+)
+                if isfield(p,'LocalizerData') && ~isempty(p.LocalizerData)
+                    app.AppData.Localizer = p.LocalizerData;
+                    populateLocalizerTab(app);
+                end
                 refreshDixon(app);
                 app.refreshLocCoronal(); app.refreshLocSagittal();
                 updateDixonJumpButtons(app);
+                updateAllDixonStats(app);
+                setStatus(app,'Loaded saved session data from pdff.mat.');
             catch ME
                 warning('loadPDFFMat:fail','Could not load pdff.mat: %s', ME.message);
             end
         end
 
         function saveMREROIsToMat(app)
-        % Save MRE ROIs to mre_rois.mat in the exam folder (separate from the
-        % MRE data mat, which gets rebuilt from DICOM on every reload).
-            examPath = '';
-            try, examPath = app.AppData.ExamPath; catch, end
-            if isempty(examPath) || ~isfolder(examPath), return; end
+        % Append MRE ROIs into mre_data.mat (the main MRE processing file).
+        % Only call this after the file has been built; on fast-path reloads
+        % the file is preserved intact, so the appended ROIs survive.
+            matPath = '';
+            try, matPath = app.AppData.MATPath; catch, end
+            if isempty(matPath) || ~isfile(matPath), return; end
             try
                 mreROIs = struct();
                 mreROINames = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
@@ -3532,18 +3613,17 @@ function setStiffScale(app, newClim)
                     end
                 end
                 mreLM = app.AppData.LM_MRE;
-                save(fullfile(examPath, 'mre_rois.mat'), 'mreROIs', 'mreLM', '-v7');
+                save(matPath, 'mreROIs', 'mreLM', '-append');
             catch ME
-                warning('saveMREROIsToMat:fail','Could not save mre_rois.mat: %s', ME.message);
+                warning('saveMREROIsToMat:fail','Could not save MRE ROIs: %s', ME.message);
             end
         end
 
-        function loadMREROIsFromMat(app, examPath)
-        % Load MRE ROIs from mre_rois.mat in the exam folder.
-            matFile = fullfile(examPath, 'mre_rois.mat');
-            if ~isfile(matFile), return; end
+        function loadMREROIsFromMat(app, matPath)
+        % Load MRE ROIs appended to mre_data.mat.
+            if ~isfile(matPath), return; end
             try
-                S = load(matFile, 'mreROIs', 'mreLM');
+                S = load(matPath, 'mreROIs', 'mreLM');
                 if isfield(S,'mreROIs')
                     rnames = fieldnames(S.mreROIs);
                     for ri = 1:numel(rnames)
@@ -3562,9 +3642,8 @@ function setStiffScale(app, newClim)
                         end
                     end
                 end
-                setStatus(app,'Loaded saved MRE ROIs from mre_rois.mat.');
             catch ME
-                warning('loadMREROIsFromMat:fail','Could not load mre_rois.mat: %s', ME.message);
+                warning('loadMREROIsFromMat:fail','Could not load MRE ROIs: %s', ME.message);
             end
         end
 
@@ -4312,54 +4391,71 @@ function tf = shouldBypassGlobalHotkeys(app)
             storeROI(app, roiName, sl, emptyMask, nR, nC);
         end
 
-        function computeDixonROIStats(app, roiName, mask, sl)
+        function computeAggregatedDixonROIStats(app, roiName)
+        % Aggregate volume and mean PDFF across all stored slices for roiName
+        % and update the corresponding measurement labels.
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
+            if ~isfield(app.AppData.ROIs, roiName), return; end
             dx = dix.PixelSpacing_mm(1);
             dy = dix.PixelSpacing_mm(2);
-            % Slice thickness: use SliceThickness_mm if available, else assume 5 mm
             dz = 5;
             if isfield(dix,'SliceThickness_mm') && ~isempty(dix.SliceThickness_mm)
                 dz = dix.SliceThickness_mm;
             end
-            nVox  = sum(mask(:));
-            volMm3 = nVox * dx * dy * dz;
-
-            pdff = [];
-            if ~isempty(dix.PDFF) && sl <= size(dix.PDFF,3)
-                ff = dix.PDFF(:,:,sl); pdff = nanmean(ff(mask));
+            sliceKeys = fieldnames(app.AppData.ROIs.(roiName).Slices);
+            totalVox = 0;
+            pdffVals = [];
+            for k = 1:numel(sliceKeys)
+                key = sliceKeys{k};
+                sl  = str2double(strrep(key,'sl',''));
+                mask = logical(app.AppData.ROIs.(roiName).Slices.(key));
+                if ~any(mask(:)), continue; end
+                totalVox = totalVox + sum(mask(:));
+                if ~isempty(dix.PDFF) && sl >= 1 && sl <= size(dix.PDFF,3)
+                    ff = dix.PDFF(:,:,sl);
+                    pdffVals = [pdffVals; double(ff(mask(:)))]; %#ok<AGROW>
+                end
             end
-
-            function updatePair(volHandle, pdffHandle)
-                try, volHandle.Text  = sprintf('%d vox / %.0f mm³', nVox, volMm3); catch, end
-                try, if ~isempty(pdff), pdffHandle.Text = sprintf('%.1f%%',pdff); end; catch, end
+            if totalVox == 0, return; end
+            volTxt  = sprintf('%d vox / %.0f mm³', totalVox, totalVox * dx * dy * dz);
+            pdffTxt = '';
+            if ~isempty(pdffVals)
+                pdffTxt = sprintf('%.1f%%', nanmean(pdffVals));
             end
-
             switch roiName
-                case 'LiverDixon',  updatePair(app.ValLiverDixonVol,  app.ValLiverDixonPDFF);
-                case 'SpleenDixon', updatePair(app.ValSpleenDixonVol, app.ValSpleenDixonPDFF);
-                case 'PsoasDixon',  updatePair(app.ValPsoasDixonVol,  app.ValPsoasDixonPDFF);
-                case 'TrunkDixon',  updatePair(app.ValTrunkDixonVol,  app.ValTrunkDixonPDFF);
-                case 'MuscleDixon', updatePair(app.ValMuscleDixonVol, app.ValMuscleDixonPDFF);
-                case 'SATDixon',    updatePair(app.ValSATDixonVol,    app.ValSATDixonPDFF);
-                case 'VATDixon',    updatePair(app.ValVATDixonVol,    app.ValVATDixonPDFF);
+                case 'LiverDixon'
+                    try, app.ValLiverDixonVol.Text  = volTxt;  catch, end
+                    try, if ~isempty(pdffTxt), app.ValLiverDixonPDFF.Text  = pdffTxt; end; catch, end
+                case 'SpleenDixon'
+                    try, app.ValSpleenDixonVol.Text = volTxt;  catch, end
+                    try, if ~isempty(pdffTxt), app.ValSpleenDixonPDFF.Text = pdffTxt; end; catch, end
+                case 'PsoasDixon'
+                    try, app.ValPsoasDixonVol.Text  = volTxt;  catch, end
+                    try, if ~isempty(pdffTxt), app.ValPsoasDixonPDFF.Text  = pdffTxt; end; catch, end
+                case 'TrunkDixon'
+                    try, app.ValTrunkDixonVol.Text  = volTxt;  catch, end
+                    try, if ~isempty(pdffTxt), app.ValTrunkDixonPDFF.Text  = pdffTxt; end; catch, end
+                case 'MuscleDixon'
+                    try, app.ValMuscleDixonVol.Text = volTxt;  catch, end
+                    try, if ~isempty(pdffTxt), app.ValMuscleDixonPDFF.Text = pdffTxt; end; catch, end
+                case 'SATDixon'
+                    try, app.ValSATDixonVol.Text    = volTxt;  catch, end
+                    try, if ~isempty(pdffTxt), app.ValSATDixonPDFF.Text    = pdffTxt; end; catch, end
+                case 'VATDixon'
+                    try, app.ValVATDixonVol.Text    = volTxt;  catch, end
+                    try, if ~isempty(pdffTxt), app.ValVATDixonPDFF.Text    = pdffTxt; end; catch, end
             end
         end
 
+        function computeDixonROIStats(app, roiName, ~, ~) %#ok<INUSD>
+            computeAggregatedDixonROIStats(app, roiName);
+        end
+
         function updateAllDixonStats(app)
-            dix = app.AppData.Dixon;
-            if isempty(dix), return; end
+            if isempty(app.AppData.Dixon), return; end
             for rn = {'LiverDixon','SpleenDixon','PsoasDixon','TrunkDixon','MuscleDixon','SATDixon','VATDixon'}
-                roiName = rn{1};
-                slices = fieldnames(app.AppData.ROIs.(roiName).Slices);
-                for k = 1:numel(slices)
-                    sl = str2double(strrep(slices{k},'sl',''));
-                    mask = app.AppData.ROIs.(roiName).Slices.(slices{k});
-                    if any(mask(:))
-                        computeDixonROIStats(app, roiName, mask, sl);
-                        break   % use first stored slice for display
-                    end
-                end
+                computeAggregatedDixonROIStats(app, rn{1});
             end
         end
 
