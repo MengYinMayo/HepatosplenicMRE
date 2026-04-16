@@ -91,6 +91,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnROI_FatDixon     matlab.ui.control.Button
         BtnClearDixonROIs   matlab.ui.control.Button
         LblDixonROIInfo     matlab.ui.control.Label
+        EdtROIVerticesDixon matlab.ui.control.NumericEditField  % polygon vertex count (Dixon)
+        EdtROIVerticesMRE   matlab.ui.control.NumericEditField  % polygon vertex count (MRE)
         % Legacy properties kept for code compatibility (no longer wired to UI)
         BtnROI_MuscleL1     matlab.ui.control.Button
         BtnROI_MuscleL2     matlab.ui.control.Button
@@ -254,6 +256,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'DixonROIErodePx',  2, ...
             'DixonROIDrawing',  false, ...
             'DixonTargetAxis',  'pdff', ...  % 'pdff'|'water'|'fat'
+            'ROIVertices',      47, ...      % polygon vertex count after freehand
             'ROIs',         struct( ...   % all ROI masks
                 'LiverDixon',   struct('Slices',struct()), ...
                 'SpleenDixon',  struct('Slices',struct()), ...
@@ -648,8 +651,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             roiPnl = uipanel(app.DixonGrid,'Title','Dixon ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[8 1]);
-            rg.RowHeight = {20,36,36,36,36,20,'1x',36};
+            rg = uigridlayout(roiPnl,[9 1]);
+            rg.RowHeight = {20,36,36,36,36,22,20,'1x',36};
             rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
             hdr = uilabel(rg,'Text','Click organ, then F/D on image:','FontSize',10, ...
@@ -672,20 +675,33 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 [0.85 0.20 0.85],[1 1 1]);
             app.BtnROI_FatDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('FatDixon');
 
+            % Polygon vertex count (row 6, below organ buttons)
+            vtxRowD = uigridlayout(rg,[1 3]);
+            vtxRowD.Layout.Row = 6;
+            vtxRowD.ColumnWidth = {'1x',52,10}; vtxRowD.Padding=[2 0 2 0]; vtxRowD.ColumnSpacing=3;
+            uilabel(vtxRowD,'Text','Poly vertices:','FontSize',9, ...
+                'HorizontalAlignment','right','FontColor',[0.35 0.35 0.35]);
+            app.EdtROIVerticesDixon = uieditfield(vtxRowD,'numeric');
+            app.EdtROIVerticesDixon.Layout.Column = 2;
+            app.EdtROIVerticesDixon.Limits = [3 500]; app.EdtROIVerticesDixon.Value = 47;
+            app.EdtROIVerticesDixon.RoundFractionalValues = true; app.EdtROIVerticesDixon.FontSize = 10;
+            app.EdtROIVerticesDixon.Tooltip = 'Vertices in the editable polygon after freehand draw (default 47)';
+            app.EdtROIVerticesDixon.ValueChangedFcn = @(src,~)app.onROIVerticesChanged(src);
+
             workflowHdr = uilabel(rg,'Text','Hotkeys (after arming organ):','FontSize',9, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
-            workflowHdr.Layout.Row = 6;
+            workflowHdr.Layout.Row = 7;
 
             app.LblDixonROIInfo = uilabel(rg);
-            app.LblDixonROIInfo.Layout.Row = 7;
-            app.LblDixonROIInfo.Text = sprintf(['F = freehand on panel' char(10) ...
+            app.LblDixonROIInfo.Layout.Row = 8;
+            app.LblDixonROIInfo.Text = sprintf(['F = freehand → edit polygon → dbl-click confirm' char(10) ...
                 'D = seed+auto on panel' char(10) ...
                 'E/I = exclude/include' char(10) ...
                 'Enter/A = accept    Esc = cancel']);
             app.LblDixonROIInfo.FontSize=10; app.LblDixonROIInfo.WordWrap='on';
             app.LblDixonROIInfo.FontColor=[0.40 0.40 0.40];
 
-            app.BtnClearDixonROIs = roiBtn(rg,8,'Clear this slice', ...
+            app.BtnClearDixonROIs = roiBtn(rg,9,'Clear this slice', ...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearDixonROIs.ButtonPushedFcn = @(~,~)app.clearDixonSlice();
         end
@@ -832,8 +848,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             roiPnl = uipanel(app.MREGrid,'Title','MRE ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[12 1]);
-            rg.RowHeight   = {24,36,24,36,24,36,24,36,24,24,'1x',36};
+            rg = uigridlayout(roiPnl,[13 1]);
+            rg.RowHeight   = {24,36,24,36,24,36,24,36,24,22,24,'1x',36};
             rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
             uilabel(rg,'Text','Stiffness ROIs (same-slice, any panel):','FontSize',11, ...
@@ -887,19 +903,33 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.EdtFatConfThresh.Tooltip = 'Confidence threshold used for Fat ROI masking';
             app.EdtFatConfThresh.ValueChangedFcn = @(src,~)app.onMREObjectConfChange('FatMRE', src);
 
+            % Polygon vertex count (row 10, below Fat confidence)
+            vtxRowM = uigridlayout(rg,[1 3]);
+            vtxRowM.Layout.Row = 10;
+            vtxRowM.ColumnWidth = {'1x',52,10}; vtxRowM.Padding=[2 0 2 0]; vtxRowM.ColumnSpacing=3;
+            uilabel(vtxRowM,'Text','Poly vertices:','FontSize',9, ...
+                'HorizontalAlignment','right','FontColor',[0.35 0.35 0.35]);
+            app.EdtROIVerticesMRE = uieditfield(vtxRowM,'numeric');
+            app.EdtROIVerticesMRE.Layout.Column = 2;
+            app.EdtROIVerticesMRE.Limits = [3 500]; app.EdtROIVerticesMRE.Value = 47;
+            app.EdtROIVerticesMRE.RoundFractionalValues = true; app.EdtROIVerticesMRE.FontSize = 10;
+            app.EdtROIVerticesMRE.Tooltip = 'Vertices in the editable polygon after freehand draw (default 47)';
+            app.EdtROIVerticesMRE.ValueChangedFcn = @(src,~)app.onROIVerticesChanged(src);
+
             workflowLbl = uilabel(rg,'Text','Workflow:','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
-            workflowLbl.Layout.Row = 10;
+            workflowLbl.Layout.Row = 11;
             app.LblMREInfo = uilabel(rg);
-            app.LblMREInfo.Layout.Row=11;
-            app.LblMREInfo.Text = sprintf(['MRE ROI workflow:' char(10) ...
-                'Choose organ, click target panel, then use hotkeys:' char(10) ...
-                'F = freehand on selected panel, D = seed + auto on Magnitude' char(10) ...
-                'E = exclude, I = include, +/- = erosion, A/Enter = accept, Esc = cancel']);
+            app.LblMREInfo.Layout.Row=12;
+            app.LblMREInfo.Text = sprintf(['Choose organ, click target panel, hotkeys:' char(10) ...
+                'F = freehand → edit polygon → dbl-click confirm' char(10) ...
+                'D = seed + auto on Magnitude' char(10) ...
+                'E = exclude, I = include, +/- = erosion' char(10) ...
+                'A/Enter = accept, Esc = cancel']);
             app.LblMREInfo.FontSize=11; app.LblMREInfo.WordWrap='on';
             app.LblMREInfo.FontColor=[0.45 0.45 0.45];
 
-            app.BtnClearMREROIs = roiBtn(rg,12,'Clear this slice', ...
+            app.BtnClearMREROIs = roiBtn(rg,13,'Clear this slice', ...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearMREROIs.ButtonPushedFcn = @(~,~)app.clearMRESlice();
         end
@@ -2337,28 +2367,78 @@ function I = getMREMagnitudeForROI(app, sl)
         end
 
         function mask = captureFreehandMask(app, ax, nR, nC, roiColor)
-            mask = false(nR, nC);
+        % Two-phase ROI capture:
+        %   Phase 1 — user draws freehand contour (mouse drag, release to close).
+        %   Phase 2 — contour is resampled to N polygon vertices shown as an
+        %             editable drawpolygon; user refines by dragging vertices,
+        %             then double-clicks the polygon interior to confirm.
+            mask   = false(nR, nC);
+            nVerts = max(3, round(app.AppData.ROIVertices));
+
+            % ── Phase 1: freehand draw ────────────────────────────────────
+            hFree = [];
             try
                 if exist('drawfreehand','file') == 2
-                    h = drawfreehand(ax, 'Color', roiColor, 'LineWidth', 1.8, 'FaceAlpha', 0.08);
+                    hFree = drawfreehand(ax, 'Color', roiColor, ...
+                        'LineWidth', 1.5, 'FaceAlpha', 0.06);
                 else
-                    h = drawpolygon(ax, 'Color', roiColor, 'LineWidth', 1.8, 'FaceAlpha', 0.08);
+                    % Older toolbox: drawpolygon in draw mode (no Position)
+                    hFree = drawpolygon(ax, 'Color', roiColor, ...
+                        'LineWidth', 1.5, 'FaceAlpha', 0.06);
                 end
             catch
                 return
             end
-            if isempty(h) || ~isvalid(h), return; end
+            if isempty(hFree) || ~isvalid(hFree), return; end
+            try, posRaw = hFree.Position; catch, posRaw = []; end
+            try, delete(hFree); catch, end
+
+            if isempty(posRaw) || size(posRaw,1) < 3, return; end
+
+            % ── Phase 2: resample → editable polygon ─────────────────────
+            polyPts = roiResamplePolyline(posRaw, nVerts);
+
+            hPoly = [];
             try
-                pos = h.Position;
+                setStatus(app, sprintf( ...
+                    'Polygon: %d vertices. Drag to refine. Double-click interior to confirm.', ...
+                    nVerts));
+                hPoly = drawpolygon(ax, ...
+                    'Position',   polyPts, ...
+                    'Color',      roiColor, ...
+                    'LineWidth',  1.8, ...
+                    'FaceAlpha',  0.10);
+                wait(hPoly);   % blocks until double-click or deletion
             catch
-                pos = [];
+                try, delete(hPoly); catch, end
+                return
             end
-            try, delete(h); catch, end
-            if isempty(pos) || size(pos,1) < 3, return; end
-            x = min(max(pos(:,1), 1), nC);
-            y = min(max(pos(:,2), 1), nR);
-            mask = poly2mask(x, y, nR, nC);
-            mask = logical(mask);
+
+            if isempty(hPoly) || ~isvalid(hPoly), return; end
+            try, posFinal = hPoly.Position; catch, posFinal = []; end
+            try, delete(hPoly); catch, end
+
+            if isempty(posFinal) || size(posFinal,1) < 3, return; end
+            x = min(max(posFinal(:,1), 1), nC);
+            y = min(max(posFinal(:,2), 1), nR);
+            mask = logical(poly2mask(x, y, nR, nC));
+        end
+
+        function onROIVerticesChanged(app, src)
+        % Sync vertex count between Dixon and MRE tabs.
+            nV = max(3, round(src.Value));
+            src.Value = nV;
+            app.AppData.ROIVertices = nV;
+            try
+                if ~isequal(src, app.EdtROIVerticesDixon)
+                    app.EdtROIVerticesDixon.Value = nV;
+                end
+            catch, end
+            try
+                if ~isequal(src, app.EdtROIVerticesMRE)
+                    app.EdtROIVerticesMRE.Value = nV;
+                end
+            catch, end
         end
 
         function choice = askROIChoice(app, msg, options, defaultOption, cancelOption)
@@ -4689,4 +4769,32 @@ function slices = removeSlice(slices, sl)
     if isfield(slices,key)
         slices = rmfield(slices,key);
     end
+end
+
+function pts = roiResamplePolyline(pos, nVerts)
+% Resample a freehand polyline to exactly nVerts equally-spaced points
+% using arc-length parameterization. The loop is closed before resampling
+% and the returned polygon is open (no repeated endpoint).
+    if size(pos,1) <= 2
+        pts = pos;
+        return;
+    end
+    % Close the loop if not already closed
+    if norm(pos(end,:) - pos(1,:)) > 1
+        pos = [pos; pos(1,:)];
+    end
+    diffs  = diff(pos, 1, 1);
+    segLen = sqrt(sum(diffs.^2, 2));
+    cumLen = [0; cumsum(segLen)];
+    totalLen = cumLen(end);
+    if totalLen < eps
+        pts = repmat(pos(1,:), nVerts, 1);
+        return;
+    end
+    % Sample nVerts equally-spaced arc-length positions (open polygon)
+    tq = linspace(0, totalLen, nVerts + 1);
+    tq = tq(1:end-1);
+    xi = interp1(cumLen, pos(:,1), tq, 'linear');
+    yi = interp1(cumLen, pos(:,2), tq, 'linear');
+    pts = [xi(:), yi(:)];
 end
