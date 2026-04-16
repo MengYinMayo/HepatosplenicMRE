@@ -1529,9 +1529,21 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AppData.DixonROIDrawing = false;
             app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
             app.setDixonROIButtonsEnabled(false);
-            app.showDixonROIHotkeyHelp();
-            setStatus(app, sprintf('%s ROI armed on slice %d. Click a Dixon panel, then F = freehand or D = seed+auto.', ...
-                app.getDixonOrganLabel(roiName), app.AppData.DixonROISlice));
+
+            % If a ROI already exists on this slice, pre-load it for editing.
+            existMask = getStoredDixonROIMask(app, roiName, app.AppData.DixonROISlice);
+            if ~isempty(existMask) && any(existMask(:))
+                app.AppData.DixonROIOuterMask = existMask;
+                app.AppData.DixonROIFinalMask = existMask;
+                app.showDixonROIHotkeyHelp();
+                refreshDixon(app);
+                setStatus(app, sprintf('%s ROI loaded for editing (sl %d). R = vertex-edit, F = redraw, Enter = accept.', ...
+                    app.getDixonOrganLabel(roiName), app.AppData.DixonROISlice));
+            else
+                app.showDixonROIHotkeyHelp();
+                setStatus(app, sprintf('%s ROI armed (sl %d). F = freehand  D = seed+auto  R = edit vertices.', ...
+                    app.getDixonOrganLabel(roiName), app.AppData.DixonROISlice));
+            end
         end
 
         function clearDixonSlice(app)
@@ -2250,9 +2262,9 @@ function I = getMREMagnitudeForROI(app, sl)
 
         function showDixonROIHotkeyHelp(app)
             try
-                app.LblDixonROIInfo.Text = sprintf(['%s ROI armed — slice %d' char(10) ...
-                    'Click PDFF/Water/Fat panel, then:' char(10) ...
+                app.LblDixonROIInfo.Text = sprintf(['%s ROI — slice %d' char(10) ...
                     'F = freehand   D = seed+auto' char(10) ...
+                    'R = edit vertices of existing ROI' char(10) ...
                     'E/I = exclude/include region' char(10) ...
                     'Enter/A = accept   Esc = cancel'], ...
                     app.getDixonOrganLabel(), app.AppData.DixonROISlice);
@@ -2539,6 +2551,67 @@ function I = getMREMagnitudeForROI(app, sl)
             setStatus(app,'Region included.');
         end
 
+        function editCurrentDixonROIVertices(app)
+        % Load the current outer mask as an editable drawpolygon so the
+        % operator can drag individual vertices to refine the contour.
+            if ~app.isDixonROIWorkflowActive(), return; end
+            mask = app.AppData.DixonROIOuterMask;
+            if isempty(mask) || ~any(mask(:))
+                % No mask yet — fall back to freehand
+                app.captureManualOuterDixonROI(); return;
+            end
+            axisKey = app.inferCurrentDixonTargetAxis();
+            app.setCurrentDixonTargetAxis(axisKey);
+            ax = app.getDixonAxisByKey(axisKey);
+            [nR, nC] = size(mask);
+            roiColor = dixonROIColor(app.AppData.DixonROIName);
+            nVerts   = max(3, round(app.AppData.ROIVertices));
+
+            % Extract boundary → resample to nVerts polygon vertices
+            bndList = bwboundaries(mask, 'noholes');
+            if isempty(bndList), app.captureManualOuterDixonROI(); return; end
+            [~, maxIdx] = max(cellfun(@(b) size(b,1), bndList));
+            bnd  = bndList{maxIdx};          % [row col] pairs
+            pos0 = [bnd(:,2), bnd(:,1)];     % convert to [x y] = [col row]
+            polyPts = roiResamplePolyline(pos0, nVerts);
+
+            % Show editable polygon
+            hPoly = [];
+            try
+                setStatus(app, sprintf( ...
+                    'Vertex edit: drag vertices to refine. Double-click interior to confirm.'));
+                app.AppData.DixonROIDrawing = true;
+                hPoly = drawpolygon(ax, ...
+                    'Position',  polyPts, ...
+                    'Color',     roiColor, ...
+                    'LineWidth', 1.8, ...
+                    'FaceAlpha', 0.10);
+                wait(hPoly);
+            catch
+                try, delete(hPoly); catch, end
+                app.AppData.DixonROIDrawing = false;
+                return
+            end
+            app.AppData.DixonROIDrawing = false;
+
+            if isempty(hPoly) || ~isvalid(hPoly)
+                return
+            end
+            try, posFinal = hPoly.Position; catch, posFinal = []; end
+            try, delete(hPoly); catch, end
+
+            if isempty(posFinal) || size(posFinal,1) < 3, return; end
+
+            x0 = min(max(posFinal(:,1), 1), nC);
+            y0 = min(max(posFinal(:,2), 1), nR);
+            newMask = logical(poly2mask(x0, y0, nR, nC));
+            newMask = imfill(newMask, 'holes');
+            if ~any(newMask(:)), return; end
+
+            app.AppData.DixonROIOuterMask = newMask;
+            app.recomputeCurrentDixonROI(true);
+        end
+
         function adjustCurrentDixonROIErosion(app, deltaPx)
             if ~app.isDixonROIWorkflowActive() || isempty(app.AppData.DixonROIOuterMask)
                 setStatus(app,'Press F or D first before adjusting erosion.'); return
@@ -2598,6 +2671,9 @@ function I = getMREMagnitudeForROI(app, sl)
                 case 'd'
                     app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
                     app.captureSeedAutoDixonROI();
+                case 'r'
+                    app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
+                    app.editCurrentDixonROIVertices();
                 case {'e','x'}
                     app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
                     app.excludeFromCurrentDixonROI();
@@ -3054,10 +3130,57 @@ function setStiffScale(app, newClim)
             setStatus(app,'[Phase 7] Export PDF — not yet implemented.');
         end
         function saveSession(app)
-            setStatus(app,'[Phase 7] Save session — not yet implemented.');
+            [fname, fpath] = uiputfile('*.mat', 'Save HepatosplenicMRE Session', ...
+                'HepatosplenicMRE_session.mat');
+            if isequal(fname, 0), return; end
+            try
+                session        = struct();
+                session.Version  = '2.0';
+                session.SavedAt  = datestr(now, 'yyyy-mm-dd HH:MM:SS'); %#ok<TNOW1,DATST>
+                session.LM       = app.AppData.LM;
+                session.LM_Dixon = app.AppData.LM_Dixon;
+                session.LM_MRE   = app.AppData.LM_MRE;
+                session.ROIs     = app.AppData.ROIs;
+                try, session.PatientInfo = app.LblPatientInfo.Text; catch, end
+                save(fullfile(fpath, fname), 'session', '-v7');
+                setStatus(app, sprintf('Session saved → %s', fname));
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Save Failed');
+            end
         end
+
         function loadSession(app)
-            setStatus(app,'[Phase 7] Load session — not yet implemented.');
+            [fname, fpath] = uigetfile('*.mat', 'Load HepatosplenicMRE Session');
+            if isequal(fname, 0), return; end
+            try
+                S = load(fullfile(fpath, fname), 'session');
+                sess = S.session;
+                if isfield(sess,'LM'),       app.AppData.LM       = sess.LM;       end
+                if isfield(sess,'LM_Dixon'), app.AppData.LM_Dixon = sess.LM_Dixon; end
+                if isfield(sess,'LM_MRE'),   app.AppData.LM_MRE   = sess.LM_MRE;   end
+                if isfield(sess,'ROIs')
+                    for fn = fieldnames(sess.ROIs)'
+                        if isfield(app.AppData.ROIs, fn{1})
+                            app.AppData.ROIs.(fn{1}) = sess.ROIs.(fn{1});
+                        end
+                    end
+                end
+                % Refresh all active displays
+                if ~isempty(app.AppData.Localizer)
+                    refreshLocCoronal(app); refreshLocSagittal(app);
+                    updateLandmarkStatus(app);
+                end
+                updateDixonJumpButtons(app);
+                if ~isempty(app.AppData.Dixon)
+                    refreshDixon(app); updateAllDixonStats(app);
+                end
+                if ~isempty(app.AppData.MRE)
+                    refreshMRE(app); updateAllMREStats(app);
+                end
+                setStatus(app, sprintf('Session loaded ← %s', fname));
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Load Failed');
+            end
         end
         function setColormap(app,~)
             % Placeholder
@@ -4026,11 +4149,11 @@ function tf = shouldBypassGlobalHotkeys(app)
             try
                 ps = sinfo.PixelSpacing(1);
                 iop = sinfo.ImageOrientationPatient;
-                rowDir = iop(1:3);
+                colDir = iop(4:6);   % column direction (down the image)
                 imgPos = app.AppData.Localizer.Coronal.ImagePositions( ...
                     app.AppData.CorSlice,:);
-                L1pos = imgPos + (app.AppData.L1_CorRow-1)*ps*rowDir;
-                L2pos = imgPos + (app.AppData.L2_CorRow-1)*ps*rowDir;
+                L1pos = imgPos + (app.AppData.L1_CorRow-1)*ps*colDir;
+                L2pos = imgPos + (app.AppData.L2_CorRow-1)*ps*colDir;
                 L12.L1_mm = L1pos(3); L12.L2_mm = L2pos(3);
                 L12.L1_L2_mid_mm = (L12.L1_mm+L12.L2_mm)/2;
                 L12.PixelSpacing_mm = [ps ps];
@@ -4178,6 +4301,7 @@ function tf = shouldBypassGlobalHotkeys(app)
         function sagRow = corRowToSagRow(app, corRow, sagSliceOverride)
             % Convert a coronal row index to the equivalent sagittal row index
             % using patient-coordinate Z positions.
+            % Both panels use column direction cosines (iop(4:6)) for row→Z.
             sagRow = NaN;
             if isnan(corRow), return; end
             loc = app.AppData.Localizer;
@@ -4190,9 +4314,9 @@ function tf = shouldBypassGlobalHotkeys(app)
                 corSl  = max(1, min(size(cor.Volume,3), corSl));
                 ps     = cor.SpatialInfo.PixelSpacing(1);
                 iop    = cor.SpatialInfo.ImageOrientationPatient;
-                rowDir = iop(1:3);
+                colDir = iop(4:6);   % column direction (down the image)
                 imgPos = cor.ImagePositions(corSl, :);
-                ptMm   = imgPos + (corRow - 1) * ps * rowDir;
+                ptMm   = imgPos + (corRow - 1) * ps * colDir;
                 z_mm   = ptMm(3);
             catch
                 return
@@ -4206,12 +4330,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                 else
                     sagSl = sagSliceOverride;
                 end
-                sagSl  = max(1, min(size(sag.Volume,3), sagSl));
-                ps2    = sag.SpatialInfo.PixelSpacing(1);
-                iop2   = sag.SpatialInfo.ImageOrientationPatient;
-                rowDir2= iop2(1:3);
-                imgPos2= sag.ImagePositions(sagSl, :);
-                dz     = rowDir2(3);
+                sagSl   = max(1, min(size(sag.Volume,3), sagSl));
+                ps2     = sag.SpatialInfo.PixelSpacing(1);
+                iop2    = sag.SpatialInfo.ImageOrientationPatient;
+                colDir2 = iop2(4:6);   % column direction (down the sagittal image)
+                imgPos2 = sag.ImagePositions(sagSl, :);
+                dz      = colDir2(3);
                 if abs(dz) < 1e-6, return; end
                 sagRow = round(1 + (z_mm - imgPos2(3)) / (ps2 * dz));
                 nRows  = size(sag.Volume, 1);
@@ -4223,7 +4347,8 @@ function tf = shouldBypassGlobalHotkeys(app)
 
         function z_mm = corRowToZmm(app, corRow)
             % Convert a coronal row index to patient Z coordinate (mm, LPS).
-            % Positive = Superior, Negative = Inferior.
+            % Moving down a coronal image (increasing row) moves in the
+            % COLUMN direction (iop(4:6)), NOT the row direction (iop(1:3)).
             z_mm = NaN;
             if isnan(corRow), return; end
             loc = app.AppData.Localizer;
@@ -4232,18 +4357,19 @@ function tf = shouldBypassGlobalHotkeys(app)
                 cor    = loc.Coronal;
                 corSl  = app.AppData.CorSlice;
                 corSl  = max(1, min(size(cor.Volume,3), corSl));
-                ps     = cor.SpatialInfo.PixelSpacing(1);
+                ps     = cor.SpatialInfo.PixelSpacing(1);   % row spacing (mm per row step)
                 iop    = cor.SpatialInfo.ImageOrientationPatient;
-                rowDir = iop(1:3);
+                colDir = iop(4:6);   % column direction cosines (down the image)
                 imgPos = cor.ImagePositions(corSl, :);
-                ptMm   = imgPos + (corRow - 1) * ps * rowDir;
-                z_mm   = round(ptMm(3));
+                ptMm   = imgPos + (corRow - 1) * ps * colDir;
+                z_mm   = ptMm(3);
             catch
             end
         end
 
         function corRow = sagRowToCorRow(app, sagRow, sagSlice)
             % Convert a sagittal row index (on given slice) to a coronal row index.
+            % Both panels use column direction cosines (iop(4:6)) for row→Z.
             corRow = NaN;
             if isnan(sagRow), return; end
             loc = app.AppData.Localizer;
@@ -4255,9 +4381,9 @@ function tf = shouldBypassGlobalHotkeys(app)
                 sagSl  = max(1, min(size(sag.Volume,3), sagSlice));
                 ps     = sag.SpatialInfo.PixelSpacing(1);
                 iop    = sag.SpatialInfo.ImageOrientationPatient;
-                rowDir = iop(1:3);
+                colDir = iop(4:6);   % column direction (down the sagittal image)
                 imgPos = sag.ImagePositions(sagSl, :);
-                ptMm   = imgPos + (sagRow - 1) * ps * rowDir;
+                ptMm   = imgPos + (sagRow - 1) * ps * colDir;
                 z_mm   = ptMm(3);
             catch
                 return
@@ -4268,11 +4394,11 @@ function tf = shouldBypassGlobalHotkeys(app)
                 cor    = loc.Coronal;
                 corSl  = app.AppData.CorSlice;
                 corSl  = max(1, min(size(cor.Volume,3), corSl));
-                ps2    = cor.SpatialInfo.PixelSpacing(1);
-                iop2   = cor.SpatialInfo.ImageOrientationPatient;
-                rowDir2= iop2(1:3);
-                imgPos2= cor.ImagePositions(corSl, :);
-                dz     = rowDir2(3);
+                ps2     = cor.SpatialInfo.PixelSpacing(1);
+                iop2    = cor.SpatialInfo.ImageOrientationPatient;
+                colDir2 = iop2(4:6);   % column direction (down the coronal image)
+                imgPos2 = cor.ImagePositions(corSl, :);
+                dz      = colDir2(3);
                 if abs(dz) < 1e-6, return; end
                 corRow = round(1 + (z_mm - imgPos2(3)) / (ps2 * dz));
                 nRows  = size(cor.Volume, 1);
@@ -5639,4 +5765,21 @@ function grown = enforceCompactness(grown, roughMask)
     clip = false(nR, nC);
     clip(r1:r2, c1:c2) = true;
     grown = grown & clip;
+end
+
+
+function mask = getStoredDixonROIMask(app, roiName, sl)
+% Return the stored binary mask for roiName on slice sl, or [] if none exists.
+    mask = [];
+    key  = sprintf('sl%d', sl);
+    try
+        slices = app.AppData.ROIs.(roiName).Slices;
+        if isfield(slices, key)
+            m = slices.(key);
+            if ~isempty(m) && any(m(:))
+                mask = logical(m);
+            end
+        end
+    catch
+    end
 end
