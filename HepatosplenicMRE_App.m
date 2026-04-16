@@ -2393,26 +2393,90 @@ function I = getMREMagnitudeForROI(app, sl)
         end
 
         function captureSeedAutoDixonROI(app)
+        % Dispatch to organ-specific seed-and-grow strategy:
+        %   LiverDixon / SpleenDixon — user draws rough outline → eroded
+        %     seed core → multi-channel constrained grow.
+        %   SATDixon — fully automatic hard ring geometry (non-negotiable).
+        %   VATDixon / MuscleDixon  — legacy circle seed + generic grow.
             if ~app.isDixonROIWorkflowActive(), return; end
-            axisKey = app.inferCurrentDixonTargetAxis();
-            app.setCurrentDixonTargetAxis(axisKey);
-            ax = app.getDixonAxisByKey(axisKey);
-            sl = app.AppData.DixonROISlice;
-            I = app.getDixonImageForROI(sl, axisKey);
-            if isempty(I), setStatus(app,'No image on selected panel for seeding.'); return; end
-            nR = size(I,1); nC = size(I,2);
-            roiColor = dixonROIColor(app.AppData.DixonROIName);
-            setStatus(app, sprintf('Draw seed circle inside %s on %s. Double-click to finish.', ...
-                lower(app.getDixonOrganLabel()), app.getDixonAxisLabel(axisKey)));
-            app.AppData.DixonROIDrawing = true;
-            seedMask = captureSeedMask(app, ax, nR, nC, roiColor);
-            app.AppData.DixonROIDrawing = false;
-            if ~any(seedMask(:))
-                refreshDixon(app); app.showDixonROIHotkeyHelp();
-                setStatus(app,'Seed circle was empty. Press D to retry or F for freehand.');
-                return
+            roiName = app.AppData.DixonROIName;
+            sl      = app.AppData.DixonROISlice;
+            dix     = app.AppData.Dixon;
+
+            switch roiName
+
+                % ── Liver: rough outline → eroded core → multi-channel grow ──
+                case 'LiverDixon'
+                    axisKey = app.inferCurrentDixonTargetAxis();
+                    app.setCurrentDixonTargetAxis(axisKey);
+                    ax = app.getDixonAxisByKey(axisKey);
+                    I  = app.getDixonImageForROI(sl, axisKey);
+                    if isempty(I)
+                        setStatus(app,'No image on selected panel.'); return;
+                    end
+                    nR = size(I,1); nC = size(I,2);
+                    setStatus(app, ...
+                        'Draw ROUGH liver outline — D auto-refines using liver tissue model. Double-click to finish.');
+                    app.AppData.DixonROIDrawing = true;
+                    roughMask = captureFreehandMask(app, ax, nR, nC, dixonROIColor(roiName));
+                    app.AppData.DixonROIDrawing = false;
+                    if ~any(roughMask(:))
+                        refreshDixon(app); app.showDixonROIHotkeyHelp();
+                        setStatus(app,'Outline empty. Press D to retry or F for freehand.'); return;
+                    end
+                    setStatus(app,'Refining liver contour (multi-channel grow)...');
+                    outerMask = dixonSeedGrowLiver(dix, roughMask, sl);
+
+                % ── Spleen: rough outline → eroded core → compact grow ─────────
+                case 'SpleenDixon'
+                    axisKey = app.inferCurrentDixonTargetAxis();
+                    app.setCurrentDixonTargetAxis(axisKey);
+                    ax = app.getDixonAxisByKey(axisKey);
+                    I  = app.getDixonImageForROI(sl, axisKey);
+                    if isempty(I)
+                        setStatus(app,'No image on selected panel.'); return;
+                    end
+                    nR = size(I,1); nC = size(I,2);
+                    setStatus(app, ...
+                        'Draw ROUGH spleen outline — D auto-refines using compact homogeneous model. Double-click to finish.');
+                    app.AppData.DixonROIDrawing = true;
+                    roughMask = captureFreehandMask(app, ax, nR, nC, dixonROIColor(roiName));
+                    app.AppData.DixonROIDrawing = false;
+                    if ~any(roughMask(:))
+                        refreshDixon(app); app.showDixonROIHotkeyHelp();
+                        setStatus(app,'Outline empty. Press D to retry or F for freehand.'); return;
+                    end
+                    setStatus(app,'Refining spleen contour (compact grow)...');
+                    outerMask = dixonSeedGrowSpleen(dix, roughMask, sl);
+
+                % ── SAT: fully automatic hard ring geometry ────────────────────
+                case 'SATDixon'
+                    setStatus(app,'Computing SAT ring mask (automatic body ring, PDFF-guided)...');
+                    outerMask = dixonSeedGrowSAT(dix, sl);
+
+                % ── VAT / Muscle: legacy circle-seed + generic grow ────────────
+                otherwise
+                    axisKey = app.inferCurrentDixonTargetAxis();
+                    app.setCurrentDixonTargetAxis(axisKey);
+                    ax = app.getDixonAxisByKey(axisKey);
+                    I  = app.getDixonImageForROI(sl, axisKey);
+                    if isempty(I)
+                        setStatus(app,'No image on selected panel for seeding.'); return;
+                    end
+                    nR = size(I,1); nC = size(I,2);
+                    setStatus(app, sprintf( ...
+                        'Draw seed circle inside %s on %s. Double-click to finish.', ...
+                        lower(app.getDixonOrganLabel()), app.getDixonAxisLabel(axisKey)));
+                    app.AppData.DixonROIDrawing = true;
+                    seedMask = captureSeedMask(app, ax, nR, nC, dixonROIColor(roiName));
+                    app.AppData.DixonROIDrawing = false;
+                    if ~any(seedMask(:))
+                        refreshDixon(app); app.showDixonROIHotkeyHelp();
+                        setStatus(app,'Seed circle empty. Press D to retry or F for freehand.'); return;
+                    end
+                    outerMask = autoMaskFromSeedCircleApp(app, I, seedMask);
             end
-            outerMask = autoMaskFromSeedCircleApp(app, I, seedMask);
+
             outerMask = cleanOuterMask(app, outerMask);
             if ~any(outerMask(:))
                 refreshDixon(app); app.showDixonROIHotkeyHelp();
@@ -5217,4 +5281,361 @@ function pts = roiResamplePolyline(pos, nVerts)
     xi = interp1(cumLen, pos(:,1), tq, 'linear');
     yi = interp1(cumLen, pos(:,2), tq, 'linear');
     pts = [xi(:), yi(:)];
+end
+
+
+% =========================================================================
+%  ORGAN-SPECIFIC DIXON SEED-AND-GROW  (module-level helpers)
+% =========================================================================
+
+function outerMask = dixonSeedGrowLiver(dix, roughMask, sl)
+% DIXONSEEDGROWLIVER  Multi-channel liver segmentation from a rough ROI.
+%
+%   ALGORITHM
+%     1. Erode rough freehand mask to a trusted seed core.
+%     2. Build liver tissue model: mean ± 2.5σ from water image,
+%        mean ± 3σ from fat image (if available).
+%     3. Candidate pixels: within tissue model bounds AND within
+%        a spatially expanded bounding box of the rough mask.
+%     4. Keep only connected components that overlap the seed core.
+%     5. Fill holes (vessels appear as small dark holes in liver).
+%     6. Morphological cleanup; return the refined mask.
+
+    outerMask = roughMask;   % safe fallback: return rough mask on failure
+
+    % ── Images ────────────────────────────────────────────────────────────
+    Iw = dixonSliceImg(dix, 'Water', sl);
+    if isempty(Iw), Iw = dixonSliceImg(dix, 'InPhase', sl); end
+    if isempty(Iw), return; end
+
+    If = dixonSliceImg(dix, 'Fat', sl);
+    if isempty(If), If = dixonSliceImg(dix, 'OutPhase', sl); end
+    hasFat = ~isempty(If);
+
+    Iw = normImg(Iw);
+    if hasFat, If = normImg(If); end
+
+    % ── Trusted seed core (progressive erosion) ────────────────────────────
+    coreMask = erodeToCore(roughMask, [5 3 2]);
+
+    % ── Tissue model from core ──────────────────────────────────────────────
+    wVals = Iw(coreMask);
+    wMu   = mean(wVals(:));
+    wSig  = max(0.02, std(wVals(:)));
+
+    SIGMA_W = 2.5;
+    cand = (Iw >= wMu - SIGMA_W*wSig) & (Iw <= wMu + SIGMA_W*wSig);
+
+    if hasFat
+        fVals = If(coreMask);
+        fMu   = mean(fVals(:));
+        fSig  = max(0.02, std(fVals(:)));
+        SIGMA_F = 3.0;   % slightly wider: liver fat varies
+        cand  = cand & (If >= fMu - SIGMA_F*fSig) & (If <= fMu + SIGMA_F*fSig);
+    end
+
+    % Spatial constraint: expanded bounding box of rough mask
+    cand = cand & dilateForGrow(roughMask, 0.15);
+
+    % ── Seed-connected grow ────────────────────────────────────────────────
+    grown = seedConnectedGrow(cand, coreMask);
+    if ~any(grown(:)), grown = roughMask; end
+
+    % Fill holes (vessel lumens appear as small dark holes in liver parenchyma)
+    try, grown = imfill(grown, 'holes'); catch, end
+
+    % ── Morphological cleanup ──────────────────────────────────────────────
+    try, grown = imclose(grown, strel('disk', 2)); catch, end
+    try, grown = imfill(grown, 'holes'); catch, end
+    try, grown = bwareaopen(grown, 50); catch, end
+
+    outerMask = logical(grown);
+end
+
+
+function outerMask = dixonSeedGrowSpleen(dix, roughMask, sl)
+% DIXONSEEDGROWSPLEEN  Compact homogeneous spleen segmentation.
+%
+%   ALGORITHM
+%     1. Erode rough mask to a seed core.
+%     2. Build spleen model from water image (tighter sigma than liver).
+%     3. Candidate pixels within model bounds AND expanded bounding box.
+%     4. Keep seed-connected components.
+%     5. Compactness clip: trim protrusions beyond 20% of rough-mask extent.
+%     6. Morphological cleanup.
+
+    outerMask = roughMask;
+
+    Iw = dixonSliceImg(dix, 'Water', sl);
+    if isempty(Iw), Iw = dixonSliceImg(dix, 'InPhase', sl); end
+    if isempty(Iw), return; end
+
+    Iw = normImg(Iw);
+
+    % ── Trusted seed core ─────────────────────────────────────────────────
+    coreMask = erodeToCore(roughMask, [4 2]);
+
+    % ── Tissue model ──────────────────────────────────────────────────────
+    wVals = Iw(coreMask);
+    wMu   = mean(wVals(:));
+    wSig  = max(0.02, std(wVals(:)));
+
+    SIGMA = 2.0;   % tighter than liver: spleen is more homogeneous
+    cand  = (Iw >= wMu - SIGMA*wSig) & (Iw <= wMu + SIGMA*wSig);
+    cand  = cand & dilateForGrow(roughMask, 0.10);
+
+    % ── Seed-connected grow ────────────────────────────────────────────────
+    grown = seedConnectedGrow(cand, coreMask);
+    if ~any(grown(:)), grown = roughMask; end
+
+    % Compactness: clip to 120% of rough-mask bounding box
+    grown = enforceCompactness(grown, roughMask);
+
+    % ── Cleanup ───────────────────────────────────────────────────────────
+    try, grown = imclose(grown, strel('disk', 2)); catch, end
+    try, grown = imfill(grown, 'holes'); catch, end
+    try, grown = bwareaopen(grown, 50); catch, end
+
+    outerMask = logical(grown);
+end
+
+
+function outerMask = dixonSeedGrowSAT(dix, sl)
+% DIXONSEEDGROWSAT  Subcutaneous adipose tissue segmentation.
+%
+%   Hard ring-mask geometry is NON-NEGOTIABLE per the design specification.
+%
+%   ALGORITHM
+%     1. Build body mask from water/InPhase image (Otsu threshold + fill).
+%     2. Distance transform from body boundary gives inward depth D.
+%     3. Ring mask = body pixels with D ∈ [5 mm, 40 mm].
+%     4. High-confidence PDFF seeds (> 50%) within ring.
+%     5. Grow PDFF > 25% pixels within ring, seeded from step 4.
+%     6. Keep boundary-connected fat: retain only components touching the
+%        skin-proximal layer of the ring (D ≤ dMin + 5 mm).
+%     7. Remove tiny isolated blobs; light morphological smoothing.
+
+    outerMask = false(0);   % empty mask returned if algorithm fails
+
+    % ── Images ────────────────────────────────────────────────────────────
+    Iw = dixonSliceImg(dix, 'Water', sl);
+    if isempty(Iw), Iw = dixonSliceImg(dix, 'InPhase', sl); end
+    if isempty(Iw), return; end
+
+    Ip = dixonSliceImg(dix, 'PDFF', sl);
+    if isempty(Ip)
+        % Fallback: estimate fat fraction from Fat / (Water + Fat)
+        Iff = dixonSliceImg(dix, 'Fat', sl);
+        if isempty(Iff), Iff = dixonSliceImg(dix, 'OutPhase', sl); end
+        if ~isempty(Iff)
+            Ip = double(Iff) ./ max(double(Iw) + double(Iff), eps);
+            Ip(~isfinite(Ip)) = 0;
+        else
+            return;   % no fat quantification available → cannot segment SAT
+        end
+    end
+
+    [nR, nC] = size(Iw);
+    outerMask = false(nR, nC);
+
+    % ── Pixel spacing (mm/pixel) ────────────────────────────────────────────
+    pixSpacing = 1.5;   % nominal fallback
+    if isfield(dix, 'PixelSpacing_mm') && numel(dix.PixelSpacing_mm) >= 1
+        pixSpacing = mean(double(dix.PixelSpacing_mm(1:min(2, end))));
+    elseif isfield(dix, 'SpatialInfo') && isfield(dix.SpatialInfo, 'PixelSpacing')
+        pixSpacing = mean(double(dix.SpatialInfo.PixelSpacing));
+    end
+    pixSpacing = max(0.1, pixSpacing);
+
+    dMin_px = max(1, round( 5 / pixSpacing));   % 5 mm inward from body surface
+    dMax_px =        round(40 / pixSpacing);     % 40 mm inward from body surface
+
+    % ── Step 1: Body mask ──────────────────────────────────────────────────
+    bodyMask = buildBodyMask(double(Iw));
+    if ~any(bodyMask(:)), return; end
+
+    % ── Steps 2–3: Distance transform → ring mask ──────────────────────────
+    % bwdist(~bodyMask) gives each interior pixel its depth from the body surface.
+    D = bwdist(~bodyMask);
+    ringMask = bodyMask & (D >= dMin_px) & (D <= dMax_px);
+    if ~any(ringMask(:)), return; end
+
+    % ── Steps 4–5: Fat seed grow within ring ───────────────────────────────
+    Ip = double(Ip);
+    Ip(~isfinite(Ip)) = 0;
+
+    SEED_PDFF  = 0.50;   % high-confidence fat seeds
+    GROW_PDFF  = 0.25;   % threshold for fat grow candidates
+    fatSeeds = ringMask & (Ip >= SEED_PDFF);
+
+    if ~any(fatSeeds(:))
+        % Relax: accept PDFF > 35% as seeds if no 50% seeds found in ring
+        fatSeeds = ringMask & (Ip >= 0.35);
+    end
+    if ~any(fatSeeds(:)), return; end   % no fat in ring
+
+    fatCand = ringMask & (Ip >= GROW_PDFF);
+    grown   = seedConnectedGrow(fatCand, fatSeeds);
+    if ~any(grown(:)), return; end
+
+    % ── Step 6: Keep only skin-proximal (boundary-connected) fat ───────────
+    % SAT must be anchored to the superficial part of the ring (near skin).
+    % A deep VAT pocket that happens to fall within the ring is excluded here.
+    extraPx       = max(1, round(5 / pixSpacing));   % 5 mm extra buffer
+    skinProxLayer = ringMask & (D <= dMin_px + extraPx);
+    anchoredSeeds = grown & skinProxLayer;
+    if any(anchoredSeeds(:))
+        grown = seedConnectedGrow(grown, anchoredSeeds);
+    end
+    % If no fat touches the skin-proximal layer, return empty (anomalous case)
+    if ~any(grown(:)), return; end
+
+    % ── Step 7: Remove tiny blobs; mild smoothing ──────────────────────────
+    try, grown = bwareaopen(grown, 50); catch, end
+    try, grown = imclose(grown, strel('disk', 2)); catch, end
+    try, grown = bwareaopen(grown, 50); catch, end
+
+    outerMask = logical(grown);
+end
+
+
+% ─── Low-level utilities shared by the organ-grow functions ───────────────
+
+function bodyMask = buildBodyMask(Iw)
+% Build a binary body mask from a water (or in-phase) image using Otsu
+% thresholding followed by hole-fill and largest-component selection.
+    Iw = double(Iw);
+    Iw(~isfinite(Iw)) = 0;
+
+    nzVals = Iw(Iw > 0);
+    if numel(nzVals) < 100
+        bodyMask = false(size(Iw));
+        return;
+    end
+
+    % Otsu threshold on the non-zero histogram
+    try
+        thresh = graythresh(mat2gray(Iw)) * max(Iw(:));
+    catch
+        thresh = prctile(nzVals, 20);
+    end
+    thresh = max(thresh, prctile(nzVals, 5));   % floor at 5th percentile
+
+    bodyMask = Iw > thresh;
+    try, bodyMask = imfill(bodyMask, 'holes'); catch, end
+
+    % Keep largest connected component
+    CC = bwconncomp(bodyMask, 8);
+    if CC.NumObjects > 1
+        sz = cellfun(@numel, CC.PixelIdxList);
+        [~, idx] = max(sz);
+        bodyMask = false(size(bodyMask));
+        bodyMask(CC.PixelIdxList{idx}) = true;
+    end
+
+    try, bodyMask = imfill(bodyMask, 'holes'); catch, end
+    bodyMask = logical(bodyMask);
+end
+
+
+function I = dixonSliceImg(dix, contrast, sl)
+% Extract a double-precision 2-D slice from a Dixon volume struct.
+    I = [];
+    vol = dixonVolume(dix, contrast);
+    if isempty(vol), return; end
+    sl  = max(1, min(sl, size(vol, 3)));
+    I   = double(vol(:,:,sl));
+    I(~isfinite(I)) = 0;
+end
+
+
+function I = normImg(I)
+% Normalize image to [0,1] using robust 1st–99th percentile scaling.
+    I  = double(I);
+    lo = prctile(I(:), 1);
+    hi = prctile(I(:), 99);
+    if ~isfinite(lo) || ~isfinite(hi) || hi <= lo
+        hi = max(I(:));  lo = min(I(:));
+    end
+    if hi > lo
+        I = (I - lo) / (hi - lo);
+        I = min(max(I, 0), 1);
+    else
+        I = zeros(size(I));
+    end
+end
+
+
+function coreMask = erodeToCore(roughMask, erodeList)
+% Erode roughMask with decreasing radii until the core has >= 50 pixels.
+% erodeList is a vector of radii to try in order, e.g. [5 3 2].
+% If all radii produce < 50 pixels, returns the original rough mask.
+    coreMask = logical(roughMask);
+    for ep = erodeList(:)'
+        try
+            cm = imerode(roughMask, strel('disk', ep));
+        catch
+            cm = roughMask;
+        end
+        if nnz(cm) >= 50
+            coreMask = logical(cm);
+            return;
+        end
+    end
+end
+
+
+function grown = seedConnectedGrow(cand, seed)
+% Keep connected components of the candidate mask that overlap the seed.
+% Uses 8-connectivity.
+    grown = false(size(cand));
+    if ~any(seed(:)), return; end
+    CC = bwconncomp(logical(cand), 8);
+    for ii = 1:CC.NumObjects
+        pix = CC.PixelIdxList{ii};
+        if any(seed(pix))
+            grown(pix) = true;
+        end
+    end
+end
+
+
+function spatialMask = dilateForGrow(roughMask, expandFrac)
+% Return a bounding-box mask that is expandFrac larger than roughMask's
+% axis-aligned bounding box on each side.  Used as a spatial constraint
+% to prevent the grow from wandering too far from the manual ROI.
+    [nR, nC] = size(roughMask);
+    [r, c]   = find(roughMask);
+    if isempty(r)
+        spatialMask = false(nR, nC);
+        return;
+    end
+    h   = max(r) - min(r) + 1;
+    w   = max(c) - min(c) + 1;
+    pad = max(5, round(expandFrac * max(h, w)));
+    r1  = max(1,  min(r) - pad);
+    r2  = min(nR, max(r) + pad);
+    c1  = max(1,  min(c) - pad);
+    c2  = min(nC, max(c) + pad);
+    spatialMask = false(nR, nC);
+    spatialMask(r1:r2, c1:c2) = true;
+end
+
+
+function grown = enforceCompactness(grown, roughMask)
+% Clip the grown mask to a bounding box 20% larger than the rough mask.
+% Prevents elongated protrusions beyond the region plausibly spleen-shaped.
+    [nR, nC] = size(grown);
+    [r, c]   = find(roughMask);
+    if isempty(r), return; end
+    h   = max(r) - min(r) + 1;
+    w   = max(c) - min(c) + 1;
+    pad = max(5, round(0.20 * max(h, w)));
+    r1  = max(1,  min(r) - pad);
+    r2  = min(nR, max(r) + pad);
+    c1  = max(1,  min(c) - pad);
+    c2  = min(nC, max(c) + pad);
+    clip = false(nR, nC);
+    clip(r1:r2, c1:c2) = true;
+    grown = grown & clip;
 end
