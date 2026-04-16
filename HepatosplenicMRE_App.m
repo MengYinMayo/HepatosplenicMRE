@@ -1734,8 +1734,20 @@ function drawMREROI(app, roiName)
     app.setMREROIButtonsEnabled(false);
     app.updateMREPlaybackButtonEnabled();
     app.showMREROIHotkeyHelp();
-    refreshMRE(app);
-    setStatus(app, sprintf('%s ROI armed on slice %d. Click any MRE panel, then press F for freehand or D for seed + auto on Magnitude.', app.getMREROIOrganLabel(roiName), app.AppData.MREROISlice));
+
+    % If a ROI already exists on this slice, pre-load it for editing.
+    existMask = getStoredDixonROIMask(app, roiName, app.AppData.MREROISlice);
+    if ~isempty(existMask) && any(existMask(:))
+        app.AppData.MREROIOuterMask = existMask;
+        app.AppData.MREROIFinalMask = existMask;
+        refreshMRE(app);
+        setStatus(app, sprintf('%s ROI loaded for editing (sl %d). R = vertex-edit, F = redraw, Enter = accept.', ...
+            app.getMREROIOrganLabel(roiName), app.AppData.MREROISlice));
+    else
+        refreshMRE(app);
+        setStatus(app, sprintf('%s ROI armed on slice %d. F = freehand  D = seed+auto  R = edit vertices.', ...
+            app.getMREROIOrganLabel(roiName), app.AppData.MREROISlice));
+    end
 end
 
 function tf = isMREROIWorkflowActive(app)
@@ -1878,6 +1890,7 @@ end
 function showMREROIHotkeyHelp(app)
     app.LblMREInfo.Text = sprintf(['MRE ROI workflow hotkeys:' char(10) ...
         'Click a panel first. F = freehand on that panel, D = seed + auto on Magnitude' char(10) ...
+        'R = edit vertices of existing ROI' char(10) ...
         'E = exclude, I = include, +/- = erosion (%d px)' char(10) ...
         'A or Enter = accept ROI, Esc = cancel' char(10) ...
         'Current panel: %s. ROI confidence LapC >= %.2f applies automatically.'], ...
@@ -1919,6 +1932,9 @@ function handled = handleMREROIHotkey(app, event)
         case 'd'
             app.setCurrentMRETargetAxis('mag');
             app.captureSeedAutoMREROI();
+        case 'r'
+            app.setCurrentMRETargetAxis(app.inferCurrentMRETargetAxis());
+            editCurrentMREROIVertices(app);
         case {'e','x'}
             app.setCurrentMRETargetAxis(app.inferCurrentMRETargetAxis());
             app.excludeFromCurrentMREROI();
@@ -1991,6 +2007,69 @@ function captureSeedAutoMREROI(app)
         return
     end
     app.AppData.MREROIOuterMask = outerMask;
+    app.recomputeCurrentMREROI(true);
+end
+
+function editCurrentMREROIVertices(app)
+% Load the current MRE outer mask as an editable drawpolygon so the
+% operator can drag individual vertices to refine the contour.
+    if ~app.isMREROIWorkflowActive(), return; end
+    mask = app.AppData.MREROIOuterMask;
+    if isempty(mask) || ~any(mask(:))
+        % No mask yet — fall back to freehand
+        app.captureManualOuterMREROI(); return;
+    end
+    axisKey = app.inferCurrentMRETargetAxis();
+    app.setCurrentMRETargetAxis(axisKey);
+    ax = app.getMREAxisByKey(axisKey);
+    [nR, nC] = size(mask);
+    roiColor = mreROIColor(app.AppData.MREROIName);
+    nVerts   = max(3, round(app.AppData.ROIVertices));
+
+    % Extract boundary → resample to nVerts polygon vertices
+    bndList = bwboundaries(mask, 'noholes');
+    if isempty(bndList), app.captureManualOuterMREROI(); return; end
+    [~, maxIdx] = max(cellfun(@(b) size(b,1), bndList));
+    bnd  = bndList{maxIdx};          % [row col] pairs
+    pos0 = [bnd(:,2), bnd(:,1)];    % convert to [x y] = [col row]
+    polyPts = roiResamplePolyline(pos0, nVerts);
+
+    % Show editable polygon; block until user double-clicks to confirm
+    hPoly = [];
+    try
+        setStatus(app, 'Vertex edit: drag vertices to refine MRE ROI. Double-click interior to confirm.');
+        app.AppData.MREROIDrawing = true;
+        app.updateMREPlaybackButtonEnabled();
+        hPoly = drawpolygon(ax, ...
+            'Position',  polyPts, ...
+            'Color',     roiColor, ...
+            'LineWidth', 1.8, ...
+            'FaceAlpha', 0.10);
+        wait(hPoly);
+    catch
+        try, delete(hPoly); catch, end
+        app.AppData.MREROIDrawing = false;
+        app.updateMREPlaybackButtonEnabled();
+        return
+    end
+    app.AppData.MREROIDrawing = false;
+    app.updateMREPlaybackButtonEnabled();
+
+    if isempty(hPoly) || ~isvalid(hPoly)
+        return
+    end
+    try, posFinal = hPoly.Position; catch, posFinal = []; end
+    try, delete(hPoly); catch, end
+
+    if isempty(posFinal) || size(posFinal,1) < 3, return; end
+
+    x0 = min(max(posFinal(:,1), 1), nC);
+    y0 = min(max(posFinal(:,2), 1), nR);
+    newMask = logical(poly2mask(x0, y0, nR, nC));
+    newMask = imfill(newMask, 'holes');
+    if ~any(newMask(:)), return; end
+
+    app.AppData.MREROIOuterMask = newMask;
     app.recomputeCurrentMREROI(true);
 end
 
