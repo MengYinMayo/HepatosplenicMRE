@@ -89,17 +89,40 @@ function sinfo = io_extractSpatialInfo(files, info1, nSlices, nPhases)
     sinfo.ImagePositionLast = pos2;
 
     % ── Slice spacing ─────────────────────────────────────────────────
+    % Prefer SpacingBetweenSlices DICOM tag (most reliable for multi-slice 3D).
+    % Fall back to geometric distance between first and last slice.
+    headerSpacing = 0;
+    if isfield(info1,'SpacingBetweenSlices') && ~isempty(info1.SpacingBetweenSlices)
+        headerSpacing = abs(double(info1.SpacingBetweenSlices));
+    end
+    if headerSpacing == 0 && isfield(info1,'SliceThickness') && ~isempty(info1.SliceThickness)
+        headerSpacing = abs(double(info1.SliceThickness));
+    end
+
     if nSlices > 1
         totalDist = norm(pos2 - pos1);
-        sinfo.SliceSpacing = totalDist / (nSlices - 1);
+        geomSpacing = totalDist / (nSlices - 1);
+        % Trust header spacing when geometry gives an implausible result
+        % (e.g. GE IDEAL-IQ where all DICOMs share one SliceLocation so
+        % files{1} and files{nSlices} may be from the same physical slice).
+        if geomSpacing > 0.5 * headerSpacing && geomSpacing < 2.0 * headerSpacing
+            sinfo.SliceSpacing = geomSpacing;   % geometry looks consistent
+        elseif headerSpacing > 0
+            sinfo.SliceSpacing = headerSpacing; % geometry unreliable — use tag
+        else
+            sinfo.SliceSpacing = geomSpacing;
+        end
     else
-        sinfo.SliceSpacing = sinfo.SliceThickness;
+        if headerSpacing > 0
+            sinfo.SliceSpacing = headerSpacing;
+        else
+            sinfo.SliceSpacing = sinfo.SliceThickness;
+        end
     end
     if sinfo.SliceSpacing == 0
         sinfo.SliceSpacing = sinfo.SliceThickness;
     end
     % Final guard: a zero slice-spacing makes the affine matrix singular.
-    % Use a nominal 1 mm fallback for truly 2D series or missing DICOM tags.
     if sinfo.SliceSpacing == 0 || isnan(sinfo.SliceSpacing)
         sinfo.SliceSpacing = 1.0;
     end

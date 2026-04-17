@@ -284,11 +284,15 @@ function dixon = readMultiContrast(series, dixon, opts)
     nFiles = numel(files);
     if nFiles == 0, return; end
 
-    % Read all headers to get TemporalPositionIdentifier and SliceLocation
+    % Read all headers to get TemporalPositionIdentifier, SliceLocation,
+    % ImagePositionPatient, and InStackPositionNumber.
     vprint(opts, '  Reading %d headers...', nFiles);
     tempIds  = ones(1, nFiles);
     sliceLoc = zeros(1, nFiles);
     instNums = zeros(1, nFiles);
+    imgPos   = nan(3, nFiles);   % ImagePositionPatient for each file
+    stackPos = zeros(1, nFiles); % InStackPositionNumber for each file
+    iop_ref  = [];               % ImageOrientationPatient (same for all slices)
 
     for k = 1:nFiles
         try
@@ -301,6 +305,16 @@ function dixon = readMultiContrast(series, dixon, opts)
             end
             if isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
                 instNums(k) = double(info.InstanceNumber);
+            end
+            if isfield(info,'ImagePositionPatient') && numel(info.ImagePositionPatient) == 3
+                imgPos(:,k) = double(info.ImagePositionPatient(:));
+            end
+            if isfield(info,'InStackPositionNumber') && ~isempty(info.InStackPositionNumber)
+                stackPos(k) = double(info.InStackPositionNumber);
+            end
+            if isempty(iop_ref) && isfield(info,'ImageOrientationPatient') && ...
+               numel(info.ImageOrientationPatient) == 6
+                iop_ref = double(info.ImageOrientationPatient(:));
             end
         catch
             instNums(k) = k;
@@ -338,25 +352,66 @@ function dixon = readMultiContrast(series, dixon, opts)
             vprint(opts, '  Defaulting to %d contrasts (GE IDEAL-IQ standard).', nContrasts);
         end
     end
-    % When TemporalPositionIdentifier was unreliable (all 1), assign by
-    % ranking InstanceNumber within each unique SliceLocation.
-    % This works for both contrast-interleaved and all-slices-per-contrast
-    % storage orders used by different GE IDEAL-IQ software versions.
-    if numel(unique(tempIds)) <= 1 && nContrasts > 1
+    nSlices    = round(nFiles / nContrasts);
+    uniqueLocs = unique(sliceLoc);
+    tempIdsReliable = numel(unique(tempIds)) > 1;
+
+    % GE IDEAL-IQ may report the same SliceLocation for every DICOM (all files
+    % show the same value, e.g. 127.8125).  When uniqueLocs has fewer entries
+    % than nSlices, fall back to ImagePositionPatient projected onto the slice
+    % normal — this is reliable even when SliceLocation is unreliable.
+    if numel(uniqueLocs) < nSlices && ~isempty(iop_ref) && ~all(isnan(imgPos(:)))
+        rowDir = iop_ref(1:3); colDir = iop_ref(4:6);
+        sliceNormal = cross(rowDir, colDir);
+        sliceNormal = sliceNormal / max(norm(sliceNormal), 1e-9);
+        % Project each file's position onto the normal to get a scalar z-equivalent
+        zProj = sliceNormal' * imgPos;   % 1×nFiles
+        zProj(isnan(zProj)) = 0;
+        % Round to nearest 0.01mm to merge floating-point duplicates
+        zProjR = round(zProj, 2);
+        uniqueZ = unique(zProjR);
+        if numel(uniqueZ) >= nSlices
+            sliceLoc  = zProjR;
+            uniqueLocs = uniqueZ;
+            vprint(opts, '  SliceLocation unreliable — replaced with %d unique ImagePositionPatient projections.', numel(uniqueZ));
+        end
+    end
+
+    vprint(opts, '  Multi-contrast: %d contrasts × %d slices', nContrasts, nSlices);
+
+    % When TemporalPositionIdentifier was unreliable, assign contrast by
+    % InstanceNumber rank within each unique slice position.  Do this AFTER
+    % sliceLoc has been corrected from ImagePositionPatient (if needed), so
+    % the ranking uses accurate slice groupings.
+    if ~tempIdsReliable && nContrasts > 1
         tempIds = assignContrastBySliceRank(sliceLoc, instNums, nContrasts);
         vprint(opts, '  TemporalPositionIdentifier absent — assigned contrast by within-slice InstanceNumber rank.');
     end
 
-    nSlices    = round(nFiles / nContrasts);
-    uniqueLocs = unique(sliceLoc);
-
-    vprint(opts, '  Multi-contrast: %d contrasts × %d slices', nContrasts, nSlices);
-
-    % Read spatial info from first file
+    % Read spatial info — use the file with InStackPositionNumber==1 (or the
+    % file whose projected z is smallest) as the reference for the first slice.
+    refFileIdx = 1;
     try
-        hdr1 = dicominfo(files{1}, 'UseDictionaryVR', true);
-        dixon.SpatialInfo = io_extractSpatialInfo(files, hdr1, nSlices, nContrasts);
+        if any(stackPos > 0)
+            refFileIdx = find(stackPos == min(stackPos(stackPos > 0)), 1);
+        elseif ~all(isnan(imgPos(:))) && ~isempty(iop_ref)
+            % Use file at minimum z-projection as reference
+            rowDir = iop_ref(1:3); colDir = iop_ref(4:6);
+            sn = cross(rowDir, colDir); sn = sn / max(norm(sn), 1e-9);
+            zp = sn' * imgPos; zp(isnan(zp)) = inf;
+            [~, refFileIdx] = min(zp);
+        end
+    catch, end
+    try
+        hdr1 = dicominfo(files{refFileIdx}, 'UseDictionaryVR', true);
+        % Re-order so reference file is passed as first for io_extractSpatialInfo
+        filesForSinfo = [{files{refFileIdx}}, files(setdiff(1:nFiles, refFileIdx))];
+        dixon.SpatialInfo = io_extractSpatialInfo(filesForSinfo, hdr1, nSlices, nContrasts);
     catch
+        try
+            hdr1 = dicominfo(files{1}, 'UseDictionaryVR', true);
+            dixon.SpatialInfo = io_extractSpatialInfo(files, hdr1, nSlices, nContrasts);
+        catch, end
     end
 
     % Allocate volumes
@@ -379,6 +434,7 @@ function dixon = readMultiContrast(series, dixon, opts)
         sl = find(uniqueLocs == sliceLoc(k), 1);
         tp = tempIds(k);
         if isempty(sl), sl = mod(floor((k-1)/nContrasts), nSlices)+1; end
+        if sl > nSlices, sl = mod(sl-1, nSlices)+1; end  % guard out-of-bounds
         if tp < 1 || tp > nContrasts, tp = mod(k-1, nContrasts)+1; end
         vols(:,:,sl,tp) = pxData;
     end
