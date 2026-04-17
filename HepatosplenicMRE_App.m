@@ -2669,7 +2669,7 @@ function I = getMREMagnitudeForROI(app, sl)
             if ~app.isDixonROIWorkflowActive(), return; end
             % SAT uses guided ellipse → auto-grow ring instead of freehand polygon.
             if strcmp(app.AppData.DixonROIName, 'SATDixon')
-                app.captureSATEllipseDixonROI();
+                app.captureSATFreehandDixonROI();
                 return;
             end
             axisKey = app.inferCurrentDixonTargetAxis();
@@ -2702,15 +2702,16 @@ function I = getMREMagnitudeForROI(app, sl)
             app.acceptCurrentDixonROI();
         end
 
-        function captureSATEllipseDixonROI(app)
-        % User draws an ellipse on the Water panel as a guide along the body
-        % outline. The algorithm grows this ellipse into the SAT ring by
-        % flood-filling through dark pixels (fat), stopping naturally at the
-        % bright skin outer boundary and the bright muscle inner boundary.
+        function captureSATFreehandDixonROI(app)
+        % User draws a freehand line along the subcutaneous fat band on the
+        % Water image. The algorithm grows the line into the full SAT ring by
+        % flood-filling through dark pixels (fat is dark on water images),
+        % stopping naturally at the bright skin outer boundary and the bright
+        % abdominal muscle inner boundary.
             sl  = app.AppData.DixonROISlice;
             dix = app.AppData.Dixon;
 
-            % Prefer Water image for calibration; fallback to InPhase
+            % Get Water image
             Iwater = [];
             try
                 vol = dixonPreferredDisplayVolume(dix, 'InPhase');
@@ -2721,56 +2722,51 @@ function I = getMREMagnitudeForROI(app, sl)
             catch; end
 
             if isempty(Iwater)
-                setStatus(app,'No Water image for SAT ellipse — press Esc to cancel.');
+                setStatus(app,'No Water image for SAT line — press Esc to cancel.');
                 return;
             end
 
-            % Draw on the Water axis; fall back to any available axis
+            % Draw on the Water axis
             ax = app.getDixonAxisByKey('water');
             if isempty(ax) || ~isvalid(ax)
                 ax = app.getDixonAxisByKey(app.inferCurrentDixonTargetAxis());
             end
             if isempty(ax) || ~isvalid(ax)
-                setStatus(app,'No valid axis for SAT ellipse drawing.'); return;
+                setStatus(app,'No valid axis for SAT line drawing.'); return;
             end
             app.setCurrentDixonTargetAxis('water');
 
             [nR, nC] = size(Iwater);
             clr = dixonROIColor('SATDixon');
 
-            setStatus(app, ['Draw ellipse along body outline on Water image — ' ...
-                'system will auto-grow into SAT ring. Double-click to confirm.']);
+            setStatus(app, ['Draw freehand line along subcutaneous fat on Water image — ' ...
+                'system auto-grows into SAT band. Release mouse to finish.']);
             app.AppData.DixonROIDrawing = true;
-            he = [];
+            hf = [];
+            linePts = [];
             try
-                he = drawellipse(ax, 'Color', clr, 'LineWidth', 2, ...
-                    'FaceAlpha', 0, 'InteractionsAllowed', 'all');
-                wait(he);  % blocks until user double-clicks the ellipse
+                hf = drawfreehand(ax, 'Color', clr, 'LineWidth', 2, 'FaceAlpha', 0);
+                if ~isempty(hf) && isvalid(hf)
+                    linePts = hf.Position;   % N×2 [x y] = [col row]
+                end
             catch
             end
+            try, delete(hf); catch, end
             app.AppData.DixonROIDrawing = false;
 
-            if isempty(he) || ~isvalid(he)
+            if isempty(linePts) || size(linePts,1) < 3
                 refreshDixon(app); app.showDixonROIHotkeyHelp();
-                setStatus(app,'SAT ellipse cancelled. Press F to retry or Esc to cancel.');
+                setStatus(app,'SAT line too short. Press F to retry or Esc to cancel.');
                 return;
             end
 
-            ellipseMask = createMask(he, nR, nC);
-            delete(he);
-
-            if ~any(ellipseMask(:))
-                refreshDixon(app); app.showDixonROIHotkeyHelp();
-                setStatus(app,'Ellipse mask was empty. Press F to retry or Esc to cancel.');
-                return;
-            end
-
-            setStatus(app,'Growing SAT ring from ellipse guide...');
-            satMask = growSATFromEllipse(Iwater, ellipseMask);
+            setStatus(app,'Growing SAT band from freehand line...');
+            satMask = growSATFromLine(Iwater, linePts);
 
             if ~any(satMask(:))
-                satMask = ellipseMask;  % fallback: use filled ellipse
-                setStatus(app,'Auto-grow produced empty result — using ellipse region. Press A to accept.');
+                % Fallback: just dilate the line path
+                satMask = satLineToThickMask(linePts, nR, nC, 12);
+                setStatus(app,'Auto-grow produced empty result — using dilated line. Press A to accept.');
             end
 
             app.AppData.DixonROIOuterMask = satMask;
@@ -6640,56 +6636,72 @@ function mask = getStoredDixonROIMask(app, roiName, sl)
 end
 
 
-function satMask = growSATFromEllipse(Iwater, ellipseMask)
-% Grow a user-drawn ellipse into the SAT ring on the Water image.
+function lineMask = satLineToThickMask(linePts, nR, nC, radius)
+% Convert freehand line [x y] points to a dilated binary mask.
+    lineMask = false(nR, nC);
+    for k = 1:size(linePts,1)
+        r = round(linePts(k,2));  c = round(linePts(k,1));
+        if r >= 1 && r <= nR && c >= 1 && c <= nC
+            lineMask(r,c) = true;
+        end
+    end
+    if radius > 0
+        lineMask = imdilate(lineMask, strel('disk', radius));
+    end
+end
+
+
+function satMask = growSATFromLine(Iwater, linePts)
+% Grow a freehand line drawn through the SAT band into the full SAT ring.
 %
-% Strategy: flood-fill outward from the ellipse boundary through dark pixels
-% (fat appears dark on water images), stopping at the bright skin outer wall
-% and the bright abdominal muscle inner wall. Body exterior air is removed by
-% identifying dark pixels connected to the image border.
+% Strategy:
+%   1. Rasterise the freehand path and dilate it into a seed band.
+%   2. Calibrate a dark-pixel threshold from the pixels under the line.
+%   3. Flood-fill from the seed band through dark pixels (fat is dark on
+%      water images), stopping at bright skin (outer) and bright muscle
+%      (inner wall).
+%   4. Remove body exterior air (dark pixels connected to image border).
+%   5. Clip to a generous neighbourhood around the drawn line.
 %
-%   Iwater      — 2-D double water image (any scale)
-%   ellipseMask — logical mask of the user-drawn ellipse interior
-%   satMask     — logical binary SAT ring mask
+%   Iwater   — 2-D double water image (any scale)
+%   linePts  — N×2 [x y] = [col row] freehand path from drawfreehand
+%   satMask  — logical binary SAT band mask
 
     satMask = false(size(Iwater));
     try
         [nR, nC] = size(Iwater);
 
-        % Normalize to [0,1] using 98th-percentile
+        % Normalise to [0,1] using 98th-percentile
         Inorm = double(Iwater);
         p98 = prctile(Inorm(:), 98);
         if p98 > 0, Inorm = Inorm / p98; end
         Inorm = min(max(Inorm, 0), 1);
 
-        % Ellipse boundary strip (~3 px thick)
-        se3 = strel('disk', 3);
-        ellipseInner = imerode(ellipseMask, se3);
-        ellipseBnd   = ellipseMask & ~ellipseInner;
+        % Rasterise path — thin 1-px skeleton of the drawn line
+        thinLine = satLineToThickMask(linePts, nR, nC, 0);
 
-        % Dark threshold: calibrate from boundary pixels; clamp to [0.15, 0.55]
-        bndVals = Inorm(ellipseBnd(:));
-        if isempty(bndVals)
-            return;
-        end
-        darkThresh = prctile(bndVals, 60);
+        % Calibrate dark threshold from the pixels directly under the line
+        lineVals = Inorm(thinLine(:));
+        if isempty(lineVals), return; end
+        darkThresh = prctile(lineVals, 70);          % most line pixels should be dark fat
         darkThresh = max(0.15, min(0.55, darkThresh));
 
-        % Dark-pixel mask (fat / background)
+        % Dark-pixel mask (fat + background air)
         darkMask = Inorm < darkThresh;
 
-        % Seed = ellipse boundary pixels that are dark
-        seedMask = ellipseBnd & darkMask;
+        % Seed = line path dilated to ~6px, intersected with dark mask
+        seedBand = satLineToThickMask(linePts, nR, nC, 6);
+        seedMask = seedBand & darkMask;
+
         if ~any(seedMask(:))
-            % Boundary pixels are not dark — likely ellipse placed over muscle.
-            % Widen the threshold slightly and retry.
-            darkThresh2 = min(darkThresh * 1.4, 0.65);
+            % Line may have been placed over a bright region — relax threshold
+            darkThresh2 = min(darkThresh * 1.5, 0.65);
             darkMask    = Inorm < darkThresh2;
-            seedMask    = ellipseBnd & darkMask;
+            seedMask    = seedBand & darkMask;
         end
         if ~any(seedMask(:)), return; end
 
-        % Grow seed through dark mask (connected dark region = SAT + exterior air)
+        % Flood-fill from seed through connected dark pixels
         grown = imreconstruct(seedMask, darkMask);
 
         % Remove body exterior air: dark pixels connected to image border
@@ -6702,9 +6714,9 @@ function satMask = growSATFromEllipse(Iwater, ellipseMask)
             grown    = grown & ~exterior;
         end
 
-        % Limit to a generous band around the ellipse (2x expanded outward)
-        se_out = strel('disk', round(0.15 * sqrt(sum(ellipseMask(:))))); % ~15% of ellipse radius
-        outerBound = imdilate(ellipseMask, se_out);
+        % Clip to a band around the drawn line (large dilation ~15% of image height)
+        clipRadius = max(20, round(0.12 * nR));
+        outerBound = satLineToThickMask(linePts, nR, nC, clipRadius);
         grown = grown & outerBound;
 
         % Remove tiny blobs (< 50 px)
