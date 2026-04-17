@@ -1320,6 +1320,15 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                             app.LblPatientInfo.Text = sprintf('%s  |  %s  |  %s', pid, dt, tp);
                         catch
                         end
+                        % Warn if the saved file predates image storage
+                        if isempty(app.AppData.Dixon)
+                            uialert(app.UIFigure, ...
+                                ['pdff.mat does not contain Dixon images (saved with an older version).' ...
+                                 newline newline ...
+                                 'Click OK, then use "Re-select from DICOM" to rebuild pdff.mat ' ...
+                                 'with images included. Your ROIs and landmarks are still loaded.'], ...
+                                'Dixon Images Missing', 'Icon','warning');
+                        end
                     end
 
                     if hasMreMat
@@ -1382,12 +1391,15 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                         app.AppData.Dixon = seg_buildDixonVolume( ...
                             selection.DixonGroup, struct('verbose',false));
                         populateDixonTab(app);
-                        % Restore any previously saved landmarks from pdff.mat
-                        % (ROIs are intentionally NOT loaded here since the user
-                        %  chose to rebuild — they will draw fresh ROIs)
-                        if hasPdff
-                            loadPDFFMat(app, folderPath);
-                        end
+                    end
+
+                    % Save pdff.mat now (with Dixon images + Localizer) so the
+                    % fast-path reload works even before any ROI is accepted.
+                    % Then re-apply any previously saved landmarks/ROIs on top.
+                    dlg.Message = 'Saving pdff.mat...';
+                    app.savePDFFMat();
+                    if hasPdff
+                        loadPDFFMat(app, folderPath);
                     end
 
                     if ~isempty(matPath) && isfile(matPath)
@@ -3602,13 +3614,15 @@ function setStiffScale(app, newClim)
                         end
                     end
                 end
-                % Restore full Dixon image volumes (v2.1+)
-                if isfield(p,'DixonData') && ~isempty(p.DixonData)
+                % Restore full Dixon image volumes (saved since the session that
+                % first loaded this exam after code update).
+                hasDixon = isfield(p,'DixonData') && ~isempty(p.DixonData);
+                hasLoc   = isfield(p,'LocalizerData') && ~isempty(p.LocalizerData);
+                if hasDixon
                     app.AppData.Dixon = p.DixonData;
                     populateDixonTab(app);
                 end
-                % Restore Localizer scout images (v2.1+)
-                if isfield(p,'LocalizerData') && ~isempty(p.LocalizerData)
+                if hasLoc
                     app.AppData.Localizer = p.LocalizerData;
                     populateLocalizerTab(app);
                 end
@@ -3616,7 +3630,13 @@ function setStiffScale(app, newClim)
                 app.refreshLocCoronal(); app.refreshLocSagittal();
                 updateDixonJumpButtons(app);
                 updateAllDixonStats(app);
-                setStatus(app,'Loaded saved session data from pdff.mat.');
+                if hasDixon && hasLoc
+                    setStatus(app,'Loaded saved session data from pdff.mat.');
+                elseif hasDixon
+                    setStatus(app,'Loaded pdff.mat — Dixon restored; no scout images (re-select from DICOM to add them).');
+                else
+                    setStatus(app,'Loaded pdff.mat — ROIs and landmarks restored; no Dixon images (re-select from DICOM to rebuild).');
+                end
             catch ME
                 warning('loadPDFFMat:fail','Could not load pdff.mat: %s', ME.message);
             end
