@@ -1152,7 +1152,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.RightPanel.Layout.Column = 3;
 
             app.RightGrid = uigridlayout(app.RightPanel,[3 1]);
-            app.RightGrid.RowHeight   = {110,165,'1x'};
+            app.RightGrid.RowHeight   = {110,220,'1x'};
             app.RightGrid.ColumnWidth = {'1x'};
             app.RightGrid.Padding     = [2 2 2 2];
             app.RightGrid.RowSpacing  = 2;
@@ -1571,40 +1571,63 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 end
             end
 
-            % Propagate to Dixon
-            dixSinfo = [];
+            % Propagate to Dixon — prefer SliceLocations (always present) over AffineMatrix
+            dixSliceZ = [];
             try
-                if ~isempty(app.AppData.Dixon) && ~isempty(app.AppData.Dixon.SpatialInfo) && ...
-                   isfield(app.AppData.Dixon.SpatialInfo,'AffineMatrix')
-                    dixSinfo = app.AppData.Dixon.SpatialInfo;
+                dix = app.AppData.Dixon;
+                if ~isempty(dix) && isfield(dix,'SliceLocations') && ~isempty(dix.SliceLocations)
+                    dixSliceZ = double(dix.SliceLocations(:));
+                elseif ~isempty(dix) && isfield(dix,'SpatialInfo') && ...
+                       isfield(dix.SpatialInfo,'AffineMatrix')
+                    dixSliceZ = buildSliceZFromSinfo(dix.SpatialInfo);
                 end
             catch, end
             for ki = 1:5
                 n = lmNames{ki};
                 app.AppData.LM_Dixon.(n).SliceIdx = NaN;
                 app.AppData.LM_Dixon.(n).Dist_mm  = NaN;
-                if ~isnan(lmZ.(n)) && ~isempty(dixSinfo)
-                    [si, dm] = propagateLandmarkMm(lmZ.(n), dixSinfo);
+                if ~isnan(lmZ.(n)) && ~isempty(dixSliceZ)
+                    [dm, si] = min(abs(dixSliceZ - lmZ.(n)));
                     app.AppData.LM_Dixon.(n).SliceIdx = si;
                     app.AppData.LM_Dixon.(n).Dist_mm  = dm;
                 end
             end
 
-            % Propagate to MRE
-            mreSinfo = [];
+            % Propagate to MRE — try SpatialInfo, fall back to H header
+            mreSliceZ = [];
             try
-                if ~isempty(app.AppData.MRE) && isfield(app.AppData.MRE,'SpatialInfo') && ...
-                   ~isempty(app.AppData.MRE.SpatialInfo) && ...
-                   isfield(app.AppData.MRE.SpatialInfo,'AffineMatrix')
-                    mreSinfo = app.AppData.MRE.SpatialInfo;
+                mre = app.AppData.MRE;
+                if ~isempty(mre)
+                    if isfield(mre,'SpatialInfo') && ~isempty(mre.SpatialInfo) && ...
+                       isfield(mre.SpatialInfo,'AffineMatrix')
+                        mreSliceZ = buildSliceZFromSinfo(mre.SpatialInfo);
+                    end
+                    if isempty(mreSliceZ) && isfield(mre,'H') && isstruct(mre.H) && ...
+                       isfield(mre.H,'ImagePositionPatient') && ...
+                       isfield(mre.H,'ImageOrientationPatient')
+                        % Compute slice Z positions from DICOM header geometry
+                        nZ  = size(mre.M, 3);
+                        ipp = double(mre.H.ImagePositionPatient(:));
+                        iop = double(mre.H.ImageOrientationPatient(:));
+                        normalDir = cross(iop(1:3), iop(4:6));
+                        dz = 0;
+                        if isfield(mre.H,'SpacingBetweenSlices') && ~isempty(mre.H.SpacingBetweenSlices)
+                            dz = double(mre.H.SpacingBetweenSlices) * sign(normalDir(3));
+                        elseif isfield(mre.H,'SliceThickness') && ~isempty(mre.H.SliceThickness)
+                            dz = double(mre.H.SliceThickness) * sign(normalDir(3));
+                        end
+                        if dz ~= 0 && nZ >= 1
+                            mreSliceZ = ipp(3) + (0:nZ-1)' * dz;
+                        end
+                    end
                 end
             catch, end
             for ki = 1:5
                 n = lmNames{ki};
                 app.AppData.LM_MRE.(n).SliceIdx = NaN;
                 app.AppData.LM_MRE.(n).Dist_mm  = NaN;
-                if ~isnan(lmZ.(n)) && ~isempty(mreSinfo)
-                    [si, dm] = propagateLandmarkMm(lmZ.(n), mreSinfo);
+                if ~isnan(lmZ.(n)) && ~isempty(mreSliceZ)
+                    [dm, si] = min(abs(mreSliceZ - lmZ.(n)));
                     app.AppData.LM_MRE.(n).SliceIdx = si;
                     app.AppData.LM_MRE.(n).Dist_mm  = dm;
                 end
@@ -1645,8 +1668,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     parts{end+1} = sprintf('%s→sl%d(%.1fmm)', lbl, si, dm); %#ok<AGROW>
                 end
             end
-            if isempty(parts)
-                setStatus(app,'Landmarks confirmed. Could not map to Dixon slices — check geometry.');
+            allZnan = all(cellfun(@(n) isnan(lmZ.(n)), lmNames));
+            if isempty(parts) && allZnan
+                setStatus(app,'Landmarks confirmed but could not compute Z positions from localizer — check coronal SpatialInfo.');
+            elseif isempty(parts)
+                setStatus(app,'Landmarks confirmed but could not map to Dixon slices — Dixon SliceLocations may be missing.');
             else
                 setStatus(app,['Confirmed.  Dixon: ' strjoin(parts,'  ')]);
             end
@@ -5863,6 +5889,27 @@ function slices = removeSlice(slices, sl)
     key = sprintf('sl%d',sl);
     if isfield(slices,key)
         slices = rmfield(slices,key);
+    end
+end
+
+function sliceZ = buildSliceZFromSinfo(sinfo)
+% Build a column vector of patient Z coordinates (mm) for each slice,
+% using the affine matrix stored in sinfo.
+    sliceZ = [];
+    if isempty(sinfo) || ~isfield(sinfo,'AffineMatrix'), return; end
+    try
+        A  = sinfo.AffineMatrix;
+        nZ = sinfo.NumSlices;
+        if nZ < 1, return; end
+        cC = sinfo.Columns / 2 - 0.5;
+        cR = sinfo.Rows    / 2 - 0.5;
+        sliceZ = zeros(nZ, 1);
+        for sl = 1:nZ
+            p = A * [cC; cR; sl-1; 1];
+            sliceZ(sl) = p(3);
+        end
+    catch
+        sliceZ = [];
     end
 end
 
