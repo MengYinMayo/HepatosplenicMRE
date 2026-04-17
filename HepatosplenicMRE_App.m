@@ -1561,15 +1561,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 end
             end
 
-            % Propagate to Dixon — prefer SliceLocations (always present) over AffineMatrix
+            % Propagate to Dixon — use buildDixonSliceZ which tries all available methods
             dixSliceZ = [];
             try
                 dix = app.AppData.Dixon;
-                if ~isempty(dix) && isfield(dix,'SliceLocations') && ~isempty(dix.SliceLocations)
-                    dixSliceZ = double(dix.SliceLocations(:));
-                elseif ~isempty(dix) && isfield(dix,'SpatialInfo') && ...
-                       isfield(dix.SpatialInfo,'AffineMatrix')
-                    dixSliceZ = buildSliceZFromSinfo(dix.SpatialInfo);
+                if ~isempty(dix)
+                    dixSliceZ = buildDixonSliceZ(dix);
                 end
             catch, end
             for ki = 1:5
@@ -5969,6 +5966,93 @@ function slices = removeSlice(slices, sl)
         slices = rmfield(slices,key);
     end
 end
+
+function sliceZ = buildDixonSliceZ(dix)
+% Build a full Z-coordinate vector (one entry per slice) for the Dixon volume.
+%
+% Tries four methods in order of reliability:
+%   1. dix.SliceLocations — use only if it has nSlices entries (not truncated)
+%   2. SpatialInfo.AffineMatrix — voxel→world transform; needs NumSlices to be set
+%   3. SpatialInfo linear reconstruction — ImagePositionFirst + SliceNormal*SliceSpacing
+%   4. SliceLocations[1] + SliceThickness_mm linear extrapolation (last resort)
+%
+% Returns [] if none of the methods can produce a full vector.
+    sliceZ = [];
+    if isempty(dix), return; end
+
+    nZ = 0;
+    try, nZ = double(dix.nSlices); catch, end
+    if nZ < 1, return; end
+
+    % --- Method 1: SliceLocations if complete ---
+    try
+        locs = double(dix.SliceLocations(:));
+        if numel(locs) == nZ
+            sliceZ = locs;
+            return;
+        end
+    catch, end
+
+    % --- Method 2: AffineMatrix (needs NumSlices, Rows, Columns in sinfo) ---
+    try
+        sinfo = dix.SpatialInfo;
+        if ~isfield(sinfo,'NumSlices') || isempty(sinfo.NumSlices)
+            sinfo.NumSlices = nZ;
+        end
+        if ~isfield(sinfo,'Rows')    || isempty(sinfo.Rows),    sinfo.Rows    = size(dix.Water,1); end
+        if ~isfield(sinfo,'Columns') || isempty(sinfo.Columns), sinfo.Columns = size(dix.Water,2); end
+        if isfield(sinfo,'AffineMatrix') && ~isempty(sinfo.AffineMatrix)
+            z2 = buildSliceZFromSinfo(sinfo);
+            if numel(z2) == nZ
+                sliceZ = z2;
+                return;
+            end
+        end
+    catch, end
+
+    % --- Method 3: ImagePositionFirst + SliceNormal + SliceSpacing ---
+    try
+        sinfo = dix.SpatialInfo;
+        if isfield(sinfo,'ImagePositionFirst') && ~isempty(sinfo.ImagePositionFirst) && ...
+           isfield(sinfo,'SliceNormal')        && ~isempty(sinfo.SliceNormal) && ...
+           isfield(sinfo,'SliceSpacing')       && ~isempty(sinfo.SliceSpacing)
+            pos1   = double(sinfo.ImagePositionFirst(:));
+            normal = double(sinfo.SliceNormal(:));
+            ds     = double(sinfo.SliceSpacing);
+            if ds > 0 && norm(normal) > 0
+                normal = normal / norm(normal);
+                % Z-coordinate of slice i = z-component of (pos1 + (i-1)*ds*normal)
+                sliceZ = pos1(3) + (0:nZ-1)' * ds * normal(3);
+                % If scan is nearly coronal (small Z component), use y instead
+                if abs(normal(3)) < 0.1 && abs(normal(2)) > 0.5
+                    sliceZ = pos1(2) + (0:nZ-1)' * ds * normal(2);
+                end
+                if numel(sliceZ) == nZ
+                    return;
+                end
+            end
+        end
+    catch, end
+    sliceZ = [];
+
+    % --- Method 4: SliceLocations[1] + SliceThickness linear extrapolation ---
+    try
+        locs = double(dix.SliceLocations(:));
+        if ~isempty(locs) && isfield(dix,'SliceThickness_mm') && dix.SliceThickness_mm > 0
+            z0 = locs(1);
+            ds = double(dix.SliceThickness_mm);
+            % Determine direction: assume inferior→superior (positive z for axial)
+            % Check if we can infer from SpatialInfo
+            dirSign = 1;
+            try
+                normal = double(dix.SpatialInfo.SliceNormal(:));
+                if normal(3) < 0, dirSign = -1; end
+            catch, end
+            sliceZ = z0 + (0:nZ-1)' * ds * dirSign;
+        end
+    catch, end
+end
+
 
 function sliceZ = buildSliceZFromSinfo(sinfo)
 % Build a column vector of patient Z coordinates (mm) for each slice,
