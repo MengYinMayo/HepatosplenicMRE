@@ -218,10 +218,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         % Bottom bar
         BottomPanel         matlab.ui.container.Panel
         BottomGrid          matlab.ui.container.GridLayout
-        BtnStepLoc          matlab.ui.control.Button
-        BtnStepDixon        matlab.ui.control.Button
-        BtnStepMRE          matlab.ui.control.Button
-        BtnStepResults      matlab.ui.control.Button
         LblStatusMsg        matlab.ui.control.Label
         LblCursorVal        matlab.ui.control.Label
     end
@@ -1213,37 +1209,19 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BottomPanel.Layout.Row=3; app.BottomPanel.Layout.Column=1;
             app.BottomPanel.BackgroundColor=[0.91 0.91 0.91];
 
-            app.BottomGrid = uigridlayout(app.BottomPanel,[2 6]);
+            app.BottomGrid = uigridlayout(app.BottomPanel,[2 2]);
             app.BottomGrid.RowHeight    = {'1x',18};
-            app.BottomGrid.ColumnWidth  = {'1x','1x','1x','1x',8,'2x'};
+            app.BottomGrid.ColumnWidth  = {'1x',200};
             app.BottomGrid.Padding      = [6 3 6 2]; app.BottomGrid.ColumnSpacing=4;
 
-            stepLabels = {'Localizer / Disc Levels','Dixon + ROIs','MRE + ROIs','Export'};
-            stepProps  = {'BtnStepLoc','BtnStepDixon','BtnStepMRE','BtnStepResults'};
-            stepCBs    = {@(~,~)app.activateTab('loc'), ...
-                          @(~,~)app.activateTab('dixon'), ...
-                          @(~,~)app.activateTab('mre'), ...
-                          @(~,~)app.activateTab('results')};
-            for k=1:4
-                b = uibutton(app.BottomGrid,'push');
-                b.Layout.Row=1; b.Layout.Column=k;
-                b.Text=stepLabels{k}; b.FontSize=12;
-                b.BackgroundColor=[0.80 0.80 0.80];
-                b.ButtonPushedFcn=stepCBs{k};
-                app.(stepProps{k})=b;
-            end
-
-            sep=uilabel(app.BottomGrid); sep.Layout.Row=1; sep.Layout.Column=5;
-            sep.Text='|'; sep.HorizontalAlignment='center'; sep.FontColor=[0.6 0.6 0.6];
-
             app.LblCursorVal = uilabel(app.BottomGrid);
-            app.LblCursorVal.Layout.Row=1; app.LblCursorVal.Layout.Column=6;
+            app.LblCursorVal.Layout.Row=1; app.LblCursorVal.Layout.Column=2;
             app.LblCursorVal.Text='';
             app.LblCursorVal.FontSize=11; app.LblCursorVal.FontColor=[0.25 0.35 0.70];
             app.LblCursorVal.HorizontalAlignment='right';
 
             app.LblStatusMsg = uilabel(app.BottomGrid);
-            app.LblStatusMsg.Layout.Row=2; app.LblStatusMsg.Layout.Column=[1 6];
+            app.LblStatusMsg.Layout.Row=2; app.LblStatusMsg.Layout.Column=[1 2];
             app.LblStatusMsg.Text='Ready — click Load Study to begin.';
             app.LblStatusMsg.FontSize=11; app.LblStatusMsg.FontColor=[0.40 0.40 0.40];
         end
@@ -1690,7 +1668,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             end
             app.LblL12Status.Text = sprintf('%d/5 disc levels confirmed and propagated.', ...
                 sum(~isnan(cellfun(@(n)app.AppData.LM_Dixon.(n).SliceIdx, lmNames))));
-            app.BtnStepDixon.BackgroundColor = [0.70 0.88 0.70];
             activateTab(app,'dixon');
             app.savePDFFMat();   % persist disc marks to pdff.mat
         end
@@ -2688,6 +2665,11 @@ function I = getMREMagnitudeForROI(app, sl)
 
         function captureManualOuterDixonROI(app)
             if ~app.isDixonROIWorkflowActive(), return; end
+            % SAT uses guided ellipse → auto-grow ring instead of freehand polygon.
+            if strcmp(app.AppData.DixonROIName, 'SATDixon')
+                app.captureSATEllipseDixonROI();
+                return;
+            end
             axisKey = app.inferCurrentDixonTargetAxis();
             app.setCurrentDixonTargetAxis(axisKey);
             ax = app.getDixonAxisByKey(axisKey);
@@ -2715,6 +2697,82 @@ function I = getMREMagnitudeForROI(app, sl)
             app.AppData.DixonROIOuterMask = merged;
             app.AppData.DixonROIFinalMask = merged;
             % Double-click = immediate accept (no extra keypress needed).
+            app.acceptCurrentDixonROI();
+        end
+
+        function captureSATEllipseDixonROI(app)
+        % User draws an ellipse on the Water panel as a guide along the body
+        % outline. The algorithm grows this ellipse into the SAT ring by
+        % flood-filling through dark pixels (fat), stopping naturally at the
+        % bright skin outer boundary and the bright muscle inner boundary.
+            sl  = app.AppData.DixonROISlice;
+            dix = app.AppData.Dixon;
+
+            % Prefer Water image for calibration; fallback to InPhase
+            Iwater = [];
+            try
+                vol = dixonPreferredDisplayVolume(dix, 'InPhase');
+                if ~isempty(vol)
+                    sl2 = max(1, min(sl, size(vol,3)));
+                    Iwater = double(vol(:,:,sl2));
+                end
+            catch; end
+
+            if isempty(Iwater)
+                setStatus(app,'No Water image for SAT ellipse — press Esc to cancel.');
+                return;
+            end
+
+            % Draw on the Water axis; fall back to any available axis
+            ax = app.getDixonAxisByKey('water');
+            if isempty(ax) || ~isvalid(ax)
+                ax = app.getDixonAxisByKey(app.inferCurrentDixonTargetAxis());
+            end
+            if isempty(ax) || ~isvalid(ax)
+                setStatus(app,'No valid axis for SAT ellipse drawing.'); return;
+            end
+            app.setCurrentDixonTargetAxis('water');
+
+            [nR, nC] = size(Iwater);
+            clr = dixonROIColor('SATDixon');
+
+            setStatus(app, ['Draw ellipse along body outline on Water image — ' ...
+                'system will auto-grow into SAT ring. Double-click to confirm.']);
+            app.AppData.DixonROIDrawing = true;
+            he = [];
+            try
+                he = drawellipse(ax, 'Color', clr, 'LineWidth', 2, ...
+                    'FaceAlpha', 0, 'InteractionsAllowed', 'all');
+                wait(he);  % blocks until user double-clicks the ellipse
+            catch
+            end
+            app.AppData.DixonROIDrawing = false;
+
+            if isempty(he) || ~isvalid(he)
+                refreshDixon(app); app.showDixonROIHotkeyHelp();
+                setStatus(app,'SAT ellipse cancelled. Press F to retry or Esc to cancel.');
+                return;
+            end
+
+            ellipseMask = createMask(he, nR, nC);
+            delete(he);
+
+            if ~any(ellipseMask(:))
+                refreshDixon(app); app.showDixonROIHotkeyHelp();
+                setStatus(app,'Ellipse mask was empty. Press F to retry or Esc to cancel.');
+                return;
+            end
+
+            setStatus(app,'Growing SAT ring from ellipse guide...');
+            satMask = growSATFromEllipse(Iwater, ellipseMask);
+
+            if ~any(satMask(:))
+                satMask = ellipseMask;  % fallback: use filled ellipse
+                setStatus(app,'Auto-grow produced empty result — using ellipse region. Press A to accept.');
+            end
+
+            app.AppData.DixonROIOuterMask = satMask;
+            app.AppData.DixonROIFinalMask = satMask;
             app.acceptCurrentDixonROI();
         end
 
@@ -6487,6 +6545,82 @@ function mask = getStoredDixonROIMask(app, roiName, sl)
                 mask = logical(m);
             end
         end
+    catch
+    end
+end
+
+
+function satMask = growSATFromEllipse(Iwater, ellipseMask)
+% Grow a user-drawn ellipse into the SAT ring on the Water image.
+%
+% Strategy: flood-fill outward from the ellipse boundary through dark pixels
+% (fat appears dark on water images), stopping at the bright skin outer wall
+% and the bright abdominal muscle inner wall. Body exterior air is removed by
+% identifying dark pixels connected to the image border.
+%
+%   Iwater      — 2-D double water image (any scale)
+%   ellipseMask — logical mask of the user-drawn ellipse interior
+%   satMask     — logical binary SAT ring mask
+
+    satMask = false(size(Iwater));
+    try
+        [nR, nC] = size(Iwater);
+
+        % Normalize to [0,1] using 98th-percentile
+        Inorm = double(Iwater);
+        p98 = prctile(Inorm(:), 98);
+        if p98 > 0, Inorm = Inorm / p98; end
+        Inorm = min(max(Inorm, 0), 1);
+
+        % Ellipse boundary strip (~3 px thick)
+        se3 = strel('disk', 3);
+        ellipseInner = imerode(ellipseMask, se3);
+        ellipseBnd   = ellipseMask & ~ellipseInner;
+
+        % Dark threshold: calibrate from boundary pixels; clamp to [0.15, 0.55]
+        bndVals = Inorm(ellipseBnd(:));
+        if isempty(bndVals)
+            return;
+        end
+        darkThresh = prctile(bndVals, 60);
+        darkThresh = max(0.15, min(0.55, darkThresh));
+
+        % Dark-pixel mask (fat / background)
+        darkMask = Inorm < darkThresh;
+
+        % Seed = ellipse boundary pixels that are dark
+        seedMask = ellipseBnd & darkMask;
+        if ~any(seedMask(:))
+            % Boundary pixels are not dark — likely ellipse placed over muscle.
+            % Widen the threshold slightly and retry.
+            darkThresh2 = min(darkThresh * 1.4, 0.65);
+            darkMask    = Inorm < darkThresh2;
+            seedMask    = ellipseBnd & darkMask;
+        end
+        if ~any(seedMask(:)), return; end
+
+        % Grow seed through dark mask (connected dark region = SAT + exterior air)
+        grown = imreconstruct(seedMask, darkMask);
+
+        % Remove body exterior air: dark pixels connected to image border
+        borderSeed = false(nR, nC);
+        borderSeed([1 end], :) = true;
+        borderSeed(:, [1 end]) = true;
+        borderSeed = borderSeed & darkMask;
+        if any(borderSeed(:))
+            exterior = imreconstruct(borderSeed, darkMask);
+            grown    = grown & ~exterior;
+        end
+
+        % Limit to a generous band around the ellipse (2x expanded outward)
+        se_out = strel('disk', round(0.15 * sqrt(sum(ellipseMask(:))))); % ~15% of ellipse radius
+        outerBound = imdilate(ellipseMask, se_out);
+        grown = grown & outerBound;
+
+        % Remove tiny blobs (< 50 px)
+        grown = bwareaopen(grown, 50);
+
+        satMask = grown;
     catch
     end
 end
