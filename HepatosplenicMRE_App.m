@@ -70,7 +70,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnPlaceL2          matlab.ui.control.Button   % legacy (L3)
         BtnClearL12         matlab.ui.control.Button
         LblL12Status        matlab.ui.control.Label
-        % Five disc-level mark buttons (T10/11 → L3/4)
+        % Seven disc-level mark buttons (T9/10 → L3/4)
+        BtnMarkLM_T9T10     matlab.ui.control.Button
         BtnMarkLM_T10T11    matlab.ui.control.Button
         BtnMarkLM_T11T12    matlab.ui.control.Button
         BtnMarkLM_T12L1     matlab.ui.control.Button
@@ -78,6 +79,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnMarkLM_L2L3      matlab.ui.control.Button
         BtnMarkLM_L3L4      matlab.ui.control.Button
         % Dixon landmark jump buttons (one per disc level)
+        BtnJumpLM_T9T10     matlab.ui.control.Button
         BtnJumpLM_T10T11    matlab.ui.control.Button
         BtnJumpLM_T11T12    matlab.ui.control.Button
         BtnJumpLM_T12L1     matlab.ui.control.Button
@@ -244,6 +246,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'L1_SagRow',    NaN, ...  % legacy
             'L2_SagRow',    NaN, ...  % legacy
             'LM', struct( ...
+                'T9T10',  struct('CorRow',NaN,'SagRow',NaN), ...
                 'T10T11', struct('CorRow',NaN,'SagRow',NaN), ...
                 'T11T12', struct('CorRow',NaN,'SagRow',NaN), ...
                 'T12L1',  struct('CorRow',NaN,'SagRow',NaN), ...
@@ -251,6 +254,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'L2L3',   struct('CorRow',NaN,'SagRow',NaN), ...
                 'L3L4',   struct('CorRow',NaN,'SagRow',NaN)), ...
             'LM_Dixon', struct( ...   % slice indices after confirmLandmarks
+                'T9T10',  struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T10T11', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T11T12', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T12L1',  struct('SliceIdx',NaN,'Dist_mm',NaN), ...
@@ -258,6 +262,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'L2L3',   struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'L3L4',   struct('SliceIdx',NaN,'Dist_mm',NaN)), ...
             'LM_MRE', struct( ...
+                'T9T10',  struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T10T11', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T11T12', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T12L1',  struct('SliceIdx',NaN,'Dist_mm',NaN), ...
@@ -584,18 +589,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblLocSag.HorizontalAlignment='center';
 
             % ── Landmark buttons row (row 4, spanning both columns) ───────
-            % Six disc levels: T10/11, T11/12, T12/L1, L1/2, L2/3, L3/4
-            lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmLabels = {'T10/11','T11/12','T12/L1','L1/2','L2/3','L3/4'};
-            lmColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
-            lmBtnProps = {'BtnMarkLM_T10T11','BtnMarkLM_T11T12','BtnMarkLM_T12L1','BtnMarkLM_L1L2','BtnMarkLM_L2L3','BtnMarkLM_L3L4'};
+            % Seven disc levels: T9/10, T10/11, T11/12, T12/L1, L1/2, L2/3, L3/4
+            lmNames  = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmLabels = {'T9/10','T10/11','T11/12','T12/L1','L1/2','L2/3','L3/4'};
+            lmColors = {[0.55 0.05 0.05],[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            lmBtnProps = {'BtnMarkLM_T9T10','BtnMarkLM_T10T11','BtnMarkLM_T11T12','BtnMarkLM_T12L1','BtnMarkLM_L1L2','BtnMarkLM_L2L3','BtnMarkLM_L3L4'};
 
-            btnGrid = uigridlayout(app.LocGrid,[1 9]);
+            btnGrid = uigridlayout(app.LocGrid,[1 10]);
             btnGrid.Layout.Row=4; btnGrid.Layout.Column=[1 2];
-            btnGrid.ColumnWidth = {88,88,88,88,88,88,80,'1x',80};
+            btnGrid.ColumnWidth = {80,80,80,80,80,80,80,80,'1x',80};
             btnGrid.Padding=[0 2 0 2]; btnGrid.ColumnSpacing=4;
 
-            for ki = 1:6
+            for ki = 1:7
                 b = uibutton(btnGrid,'push');
                 b.Layout.Column = ki;
                 b.Text = lmLabels{ki};
@@ -609,7 +614,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             end
 
             app.BtnClearL12 = uibutton(btnGrid,'push');
-            app.BtnClearL12.Layout.Column = 7;
+            app.BtnClearL12.Layout.Column = 8;
             app.BtnClearL12.Text = 'Clear all';
             app.BtnClearL12.FontSize = 11;
             app.BtnClearL12.ButtonPushedFcn = @(~,~)app.clearLandmarks();
@@ -639,7 +644,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             imgArea = uipanel(app.DixonGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
             imgG = uigridlayout(imgArea,[4 1]);
-            imgG.RowHeight   = {28,30,'1x',26};
+            imgG.RowHeight   = {28,30,'1x',42};
             imgG.ColumnWidth = {'1x'};
             imgG.Padding     = [0 0 0 0];
             imgG.RowSpacing  = 3;
@@ -806,18 +811,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxDixon = app.AxDixonPDFF;
 
             % ── Row 4: Landmark jump bar ─────────────────────────────────
-            lmJumpGrid = uigridlayout(imgG,[1 8]);
+            lmJumpGrid = uigridlayout(imgG,[1 9]);
             lmJumpGrid.Layout.Row = 4;
             lmJumpGrid.Padding = [0 1 0 1]; lmJumpGrid.ColumnSpacing = 3;
-            lmJumpGrid.ColumnWidth = {60,75,75,75,75,75,75,'1x'};
+            lmJumpGrid.ColumnWidth = {55,62,62,62,62,62,62,62,'1x'};
             ljLabel = uilabel(lmJumpGrid,'Text','Jump to:','FontSize',10, ...
                 'FontColor',[0.45 0.45 0.45],'HorizontalAlignment','right');
             ljLabel.Layout.Column = 1;
-            lmJNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmJLabels = {'T10/11','T11/12','T12/L1','L1/2','L2/3','L3/4'};
-            lmJColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
-            lmJProps  = {'BtnJumpLM_T10T11','BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
-            for ki = 1:6
+            lmJNames  = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmJLabels = {'T9/10','T10/11','T11/12','T12/L1','L1/2','L2/3','L3/4'};
+            lmJColors = {[0.55 0.05 0.05],[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            lmJProps  = {'BtnJumpLM_T9T10','BtnJumpLM_T10T11','BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
+            for ki = 1:7
                 jb = uibutton(lmJumpGrid,'push');
                 jb.Layout.Column = ki + 1;
                 jb.Text = lmJLabels{ki};
@@ -1478,9 +1483,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             try; app.AxLocSagittal.ButtonDownFcn = ''; catch; end
             app.AppData.AwaitingClick = '';
             app.AppData.ActiveLM = '';
-            lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
-            for ki = 1:6
+            lmNames  = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmColors = {[0.55 0.05 0.05],[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            for ki = 1:7
                 try
                     app.(['BtnMarkLM_' lmNames{ki}]).BackgroundColor = lmColors{ki};
                 catch, end
@@ -1491,10 +1496,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function clearLandmarks(app)
-        % Clear all 6 disc landmark positions.
+        % Clear all 7 disc landmark positions.
             cancelPendingClick(app);
-            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-            for ki = 1:6
+            lmNames = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            for ki = 1:7
                 app.AppData.LM.(lmNames{ki}).CorRow = NaN;
                 app.AppData.LM.(lmNames{ki}).SagRow = NaN;
             end
@@ -1514,19 +1519,19 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         function updateLandmarkStatus(app)
         % Update the status label and enable Confirm button when enough landmarks are set.
-            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmNames = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
             nPlaced = 0;
-            for ki = 1:6
+            for ki = 1:7
                 if ~isnan(app.AppData.LM.(lmNames{ki}).CorRow)
                     nPlaced = nPlaced + 1;
                 end
             end
             if nPlaced == 0
                 app.LblL12Status.Text = 'No disc landmarks placed yet.  Click a disc button above.';
-            elseif nPlaced < 5
-                app.LblL12Status.Text = sprintf('%d/6 disc levels placed.  Press Confirm when done.', nPlaced);
+            elseif nPlaced < 2
+                app.LblL12Status.Text = sprintf('%d/7 disc levels placed.  Press Confirm when done.', nPlaced);
             else
-                app.LblL12Status.Text = 'All 6 disc levels placed — press Confirm Levels in toolbar.';
+                app.LblL12Status.Text = sprintf('%d/7 disc levels placed — press Confirm Levels in toolbar.', nPlaced);
             end
             if nPlaced >= 2
                 try, app.BtnConfirmL12.Enable = 'on'; catch, end
@@ -1542,9 +1547,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             if isempty(loc)
                 uialert(app.UIFigure,'No localizer loaded.','Missing Data'); return
             end
-            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmNames = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
             anyPlaced = false;
-            for ki = 1:6
+            for ki = 1:7
                 if ~isnan(app.AppData.LM.(lmNames{ki}).CorRow)
                     anyPlaced = true; break
                 end
@@ -1557,7 +1562,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Convert coronal row → patient Z (mm) for each landmark
             sinfo = loc.Coronal.SpatialInfo;
             lmZ   = struct();
-            for ki = 1:6
+            for ki = 1:7
                 n = lmNames{ki};
                 lmZ.(n) = NaN;
                 row = app.AppData.LM.(n).CorRow;
@@ -1574,7 +1579,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     dixSliceZ = buildDixonSliceZ(dix);
                 end
             catch, end
-            for ki = 1:6
+            for ki = 1:7
                 n = lmNames{ki};
                 app.AppData.LM_Dixon.(n).SliceIdx = NaN;
                 app.AppData.LM_Dixon.(n).Dist_mm  = NaN;
@@ -1614,7 +1619,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     end
                 end
             catch, end
-            for ki = 1:6
+            for ki = 1:7
                 n = lmNames{ki};
                 app.AppData.LM_MRE.(n).SliceIdx = NaN;
                 app.AppData.LM_MRE.(n).Dist_mm  = NaN;
@@ -1637,9 +1642,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Enable Dixon jump buttons for placed landmarks
             updateDixonJumpButtons(app);
 
-            % Jump Dixon to L1/2 disc level (or first available)
+            % Jump Dixon to first available confirmed landmark
             jumpSl = NaN;
-            for ki = 1:6
+            for ki = 1:7
                 si = app.AppData.LM_Dixon.(lmNames{ki}).SliceIdx;
                 if ~isnan(si), jumpSl = si; break; end
             end
@@ -1651,7 +1656,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             % Build status summary
             parts = {};
-            for ki = 1:6
+            for ki = 1:7
                 n = lmNames{ki};
                 lbl = locLandmarkLabel(n);
                 si  = app.AppData.LM_Dixon.(n).SliceIdx;
@@ -1668,7 +1673,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             else
                 setStatus(app,['Confirmed.  Dixon: ' strjoin(parts,'  ')]);
             end
-            app.LblL12Status.Text = sprintf('%d/6 disc levels confirmed and propagated.', ...
+            app.LblL12Status.Text = sprintf('%d/7 disc levels confirmed and propagated.', ...
                 sum(~isnan(cellfun(@(n)app.AppData.LM_Dixon.(n).SliceIdx, lmNames))));
             activateTab(app,'dixon');
             app.savePDFFMat();   % persist disc marks to pdff.mat
@@ -1679,9 +1684,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         function updateDixonJumpButtons(app)
         % Enable/disable Dixon jump buttons based on propagated slice indices.
-            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmProps = {'BtnJumpLM_T10T11','BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
-            for ki = 1:6
+            lmNames = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmProps = {'BtnJumpLM_T9T10','BtnJumpLM_T10T11','BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
+            for ki = 1:7
                 try
                     si = app.AppData.LM_Dixon.(lmNames{ki}).SliceIdx;
                     dm = app.AppData.LM_Dixon.(lmNames{ki}).Dist_mm;
@@ -2667,11 +2672,6 @@ function I = getMREMagnitudeForROI(app, sl)
 
         function captureManualOuterDixonROI(app)
             if ~app.isDixonROIWorkflowActive(), return; end
-            % SAT uses guided ellipse → auto-grow ring instead of freehand polygon.
-            if strcmp(app.AppData.DixonROIName, 'SATDixon')
-                app.captureSATFreehandDixonROI();
-                return;
-            end
             axisKey = app.inferCurrentDixonTargetAxis();
             app.setCurrentDixonTargetAxis(axisKey);
             ax = app.getDixonAxisByKey(axisKey);
@@ -2703,75 +2703,8 @@ function I = getMREMagnitudeForROI(app, sl)
         end
 
         function captureSATFreehandDixonROI(app)
-        % User draws a freehand line along the subcutaneous fat band on the
-        % Water image. The algorithm grows the line into the full SAT ring by
-        % flood-filling through dark pixels (fat is dark on water images),
-        % stopping naturally at the bright skin outer boundary and the bright
-        % abdominal muscle inner boundary.
-            sl  = app.AppData.DixonROISlice;
-            dix = app.AppData.Dixon;
-
-            % Get Water image
-            Iwater = [];
-            try
-                vol = dixonPreferredDisplayVolume(dix, 'InPhase');
-                if ~isempty(vol)
-                    sl2 = max(1, min(sl, size(vol,3)));
-                    Iwater = double(vol(:,:,sl2));
-                end
-            catch; end
-
-            if isempty(Iwater)
-                setStatus(app,'No Water image for SAT line — press Esc to cancel.');
-                return;
-            end
-
-            % Draw on the Water axis
-            ax = app.getDixonAxisByKey('water');
-            if isempty(ax) || ~isvalid(ax)
-                ax = app.getDixonAxisByKey(app.inferCurrentDixonTargetAxis());
-            end
-            if isempty(ax) || ~isvalid(ax)
-                setStatus(app,'No valid axis for SAT line drawing.'); return;
-            end
-            app.setCurrentDixonTargetAxis('water');
-
-            [nR, nC] = size(Iwater);
-            clr = dixonROIColor('SATDixon');
-
-            setStatus(app, ['Draw freehand line along subcutaneous fat on Water image — ' ...
-                'system auto-grows into SAT band. Release mouse to finish.']);
-            app.AppData.DixonROIDrawing = true;
-            hf = [];
-            linePts = [];
-            try
-                hf = drawfreehand(ax, 'Color', clr, 'LineWidth', 2, 'FaceAlpha', 0);
-                if ~isempty(hf) && isvalid(hf)
-                    linePts = hf.Position;   % N×2 [x y] = [col row]
-                end
-            catch
-            end
-            try, delete(hf); catch, end
-            app.AppData.DixonROIDrawing = false;
-
-            if isempty(linePts) || size(linePts,1) < 3
-                refreshDixon(app); app.showDixonROIHotkeyHelp();
-                setStatus(app,'SAT line too short. Press F to retry or Esc to cancel.');
-                return;
-            end
-
-            setStatus(app,'Growing SAT band from freehand line...');
-            satMask = growSATFromLine(Iwater, linePts);
-
-            if ~any(satMask(:))
-                % Fallback: just dilate the line path
-                satMask = satLineToThickMask(linePts, nR, nC, 12);
-                setStatus(app,'Auto-grow produced empty result — using dilated line. Press A to accept.');
-            end
-
-            app.AppData.DixonROIOuterMask = satMask;
-            app.AppData.DixonROIFinalMask = satMask;
-            app.acceptCurrentDixonROI();
+        % Legacy stub — SAT now uses the same freehand polygon as other organs.
+            app.captureManualOuterDixonROI();
         end
 
         function captureSeedAutoDixonROI(app)
@@ -3560,7 +3493,7 @@ function setStiffScale(app, newClim)
         end
         function resetExamAppData(app)
         % Clear all per-exam data so a new exam starts fresh.
-            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmNames = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
             for ki = 1:numel(lmNames)
                 n = lmNames{ki};
                 app.AppData.LM.(n).CorRow = NaN;
@@ -3638,7 +3571,7 @@ function setStiffScale(app, newClim)
                 S = load(matFile, 'pdff');
                 if ~isfield(S,'pdff'), return; end
                 p = S.pdff;
-                lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+                lmNames = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
                 if isfield(p,'LM')
                     for ki = 1:numel(lmNames)
                         n = lmNames{ki};
@@ -3736,7 +3669,7 @@ function setStiffScale(app, newClim)
                     end
                 end
                 if isfield(S,'mreLM')
-                    lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+                    lmNames = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
                     for ki = 1:numel(lmNames)
                         n = lmNames{ki};
                         if isfield(S.mreLM, n)
@@ -4075,10 +4008,10 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         function drawLocLines(app, ax, nC, plane, sl)
-        % Draw all 6 disc landmark lines on a localizer axes.
-            lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
-            for ki = 1:6
+        % Draw all 7 disc landmark lines on a localizer axes.
+            lmNames  = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmColors = {[0.55 0.05 0.05],[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            for ki = 1:7
                 n   = lmNames{ki};
                 clr = lmColors{ki};
                 corRow = app.AppData.LM.(n).CorRow;
@@ -5268,8 +5201,8 @@ function overlayDixonLevelMarkers(app, ax, img, sl)
 % A dashed line + label is shown when the current slice is within 5 mm of
 % a confirmed landmark.  The distance is shown in the label if > 1 mm.
     THRESH_MM = 5.0;   % show marker when closer than this
-    lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-    lmColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+    lmNames  = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+    lmColors = {[0.55 0.05 0.05],[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
 
     nC = size(img, 2);
     nR = size(img, 1);
@@ -5283,7 +5216,7 @@ function overlayDixonLevelMarkers(app, ax, img, sl)
 
     hold(ax,'on');
     textRow = 8;   % y offset for successive labels so they don't overlap
-    for ki = 1:6
+    for ki = 1:7
         n   = lmNames{ki};
         clr = lmColors{ki};
         try
@@ -6102,6 +6035,7 @@ end
 function lbl = locLandmarkLabel(lmName)
 % Return the human-readable label for a landmark name string.
     switch lmName
+        case 'T9T10',  lbl = 'T9/10';
         case 'T10T11', lbl = 'T10/11';
         case 'T11T12', lbl = 'T11/12';
         case 'T12L1',  lbl = 'T12/L1';
@@ -6636,93 +6570,3 @@ function mask = getStoredDixonROIMask(app, roiName, sl)
 end
 
 
-function lineMask = satLineToThickMask(linePts, nR, nC, radius)
-% Convert freehand line [x y] points to a dilated binary mask.
-    lineMask = false(nR, nC);
-    for k = 1:size(linePts,1)
-        r = round(linePts(k,2));  c = round(linePts(k,1));
-        if r >= 1 && r <= nR && c >= 1 && c <= nC
-            lineMask(r,c) = true;
-        end
-    end
-    if radius > 0
-        lineMask = imdilate(lineMask, strel('disk', radius));
-    end
-end
-
-
-function satMask = growSATFromLine(Iwater, linePts)
-% Grow a freehand line drawn through the SAT band into the full SAT ring.
-%
-% Strategy:
-%   1. Rasterise the freehand path and dilate it into a seed band.
-%   2. Calibrate a dark-pixel threshold from the pixels under the line.
-%   3. Flood-fill from the seed band through dark pixels (fat is dark on
-%      water images), stopping at bright skin (outer) and bright muscle
-%      (inner wall).
-%   4. Remove body exterior air (dark pixels connected to image border).
-%   5. Clip to a generous neighbourhood around the drawn line.
-%
-%   Iwater   — 2-D double water image (any scale)
-%   linePts  — N×2 [x y] = [col row] freehand path from drawfreehand
-%   satMask  — logical binary SAT band mask
-
-    satMask = false(size(Iwater));
-    try
-        [nR, nC] = size(Iwater);
-
-        % Normalise to [0,1] using 98th-percentile
-        Inorm = double(Iwater);
-        p98 = prctile(Inorm(:), 98);
-        if p98 > 0, Inorm = Inorm / p98; end
-        Inorm = min(max(Inorm, 0), 1);
-
-        % Rasterise path — thin 1-px skeleton of the drawn line
-        thinLine = satLineToThickMask(linePts, nR, nC, 0);
-
-        % Calibrate dark threshold from the pixels directly under the line
-        lineVals = Inorm(thinLine(:));
-        if isempty(lineVals), return; end
-        darkThresh = prctile(lineVals, 70);          % most line pixels should be dark fat
-        darkThresh = max(0.15, min(0.55, darkThresh));
-
-        % Dark-pixel mask (fat + background air)
-        darkMask = Inorm < darkThresh;
-
-        % Seed = line path dilated to ~6px, intersected with dark mask
-        seedBand = satLineToThickMask(linePts, nR, nC, 6);
-        seedMask = seedBand & darkMask;
-
-        if ~any(seedMask(:))
-            % Line may have been placed over a bright region — relax threshold
-            darkThresh2 = min(darkThresh * 1.5, 0.65);
-            darkMask    = Inorm < darkThresh2;
-            seedMask    = seedBand & darkMask;
-        end
-        if ~any(seedMask(:)), return; end
-
-        % Flood-fill from seed through connected dark pixels
-        grown = imreconstruct(seedMask, darkMask);
-
-        % Remove body exterior air: dark pixels connected to image border
-        borderSeed = false(nR, nC);
-        borderSeed([1 end], :) = true;
-        borderSeed(:, [1 end]) = true;
-        borderSeed = borderSeed & darkMask;
-        if any(borderSeed(:))
-            exterior = imreconstruct(borderSeed, darkMask);
-            grown    = grown & ~exterior;
-        end
-
-        % Clip to a band around the drawn line (large dilation ~15% of image height)
-        clipRadius = max(20, round(0.12 * nR));
-        outerBound = satLineToThickMask(linePts, nR, nC, clipRadius);
-        grown = grown & outerBound;
-
-        % Remove tiny blobs (< 50 px)
-        grown = bwareaopen(grown, 50);
-
-        satMask = grown;
-    catch
-    end
-end
