@@ -70,13 +70,15 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnPlaceL2          matlab.ui.control.Button   % legacy (L3)
         BtnClearL12         matlab.ui.control.Button
         LblL12Status        matlab.ui.control.Label
-        % Five landmark buttons (T11/12 → L3/4 discs)
+        % Five disc-level mark buttons (T10/11 → L3/4)
+        BtnMarkLM_T10T11    matlab.ui.control.Button
         BtnMarkLM_T11T12    matlab.ui.control.Button
         BtnMarkLM_T12L1     matlab.ui.control.Button
         BtnMarkLM_L1L2      matlab.ui.control.Button
         BtnMarkLM_L2L3      matlab.ui.control.Button
         BtnMarkLM_L3L4      matlab.ui.control.Button
         % Dixon landmark jump buttons (one per disc level)
+        BtnJumpLM_T10T11    matlab.ui.control.Button
         BtnJumpLM_T11T12    matlab.ui.control.Button
         BtnJumpLM_T12L1     matlab.ui.control.Button
         BtnJumpLM_L1L2      matlab.ui.control.Button
@@ -242,18 +244,21 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'L1_SagRow',    NaN, ...  % legacy
             'L2_SagRow',    NaN, ...  % legacy
             'LM', struct( ...
+                'T10T11', struct('CorRow',NaN,'SagRow',NaN), ...
                 'T11T12', struct('CorRow',NaN,'SagRow',NaN), ...
                 'T12L1',  struct('CorRow',NaN,'SagRow',NaN), ...
                 'L1L2',   struct('CorRow',NaN,'SagRow',NaN), ...
                 'L2L3',   struct('CorRow',NaN,'SagRow',NaN), ...
                 'L3L4',   struct('CorRow',NaN,'SagRow',NaN)), ...
             'LM_Dixon', struct( ...   % slice indices after confirmLandmarks
+                'T10T11', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T11T12', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T12L1',  struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'L1L2',   struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'L2L3',   struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'L3L4',   struct('SliceIdx',NaN,'Dist_mm',NaN)), ...
             'LM_MRE', struct( ...
+                'T10T11', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T11T12', struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'T12L1',  struct('SliceIdx',NaN,'Dist_mm',NaN), ...
                 'L1L2',   struct('SliceIdx',NaN,'Dist_mm',NaN), ...
@@ -579,18 +584,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblLocSag.HorizontalAlignment='center';
 
             % ── Landmark buttons row (row 4, spanning both columns) ───────
-            % Five disc levels: T11/12, T12/L1, L1/2, L2/3, L3/4
-            lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmLabels = {'T11/12','T12/L1','L1/2','L2/3','L3/4'};
-            lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
-            lmBtnProps = {'BtnMarkLM_T11T12','BtnMarkLM_T12L1','BtnMarkLM_L1L2','BtnMarkLM_L2L3','BtnMarkLM_L3L4'};
+            % Six disc levels: T10/11, T11/12, T12/L1, L1/2, L2/3, L3/4
+            lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmLabels = {'T10/11','T11/12','T12/L1','L1/2','L2/3','L3/4'};
+            lmColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            lmBtnProps = {'BtnMarkLM_T10T11','BtnMarkLM_T11T12','BtnMarkLM_T12L1','BtnMarkLM_L1L2','BtnMarkLM_L2L3','BtnMarkLM_L3L4'};
 
-            btnGrid = uigridlayout(app.LocGrid,[1 8]);
+            btnGrid = uigridlayout(app.LocGrid,[1 9]);
             btnGrid.Layout.Row=4; btnGrid.Layout.Column=[1 2];
-            btnGrid.ColumnWidth = {100,100,100,100,100,88,'1x',88};
+            btnGrid.ColumnWidth = {88,88,88,88,88,88,80,'1x',80};
             btnGrid.Padding=[0 2 0 2]; btnGrid.ColumnSpacing=4;
 
-            for ki = 1:5
+            for ki = 1:6
                 b = uibutton(btnGrid,'push');
                 b.Layout.Column = ki;
                 b.Text = lmLabels{ki};
@@ -604,7 +609,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             end
 
             app.BtnClearL12 = uibutton(btnGrid,'push');
-            app.BtnClearL12.Layout.Column = 6;
+            app.BtnClearL12.Layout.Column = 7;
             app.BtnClearL12.Text = 'Clear all';
             app.BtnClearL12.FontSize = 11;
             app.BtnClearL12.ButtonPushedFcn = @(~,~)app.clearLandmarks();
@@ -801,18 +806,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxDixon = app.AxDixonPDFF;
 
             % ── Row 4: Landmark jump bar ─────────────────────────────────
-            lmJumpGrid = uigridlayout(imgG,[1 7]);
+            lmJumpGrid = uigridlayout(imgG,[1 8]);
             lmJumpGrid.Layout.Row = 4;
             lmJumpGrid.Padding = [0 1 0 1]; lmJumpGrid.ColumnSpacing = 3;
-            lmJumpGrid.ColumnWidth = {60,82,82,82,82,82,'1x'};
+            lmJumpGrid.ColumnWidth = {60,75,75,75,75,75,75,'1x'};
             ljLabel = uilabel(lmJumpGrid,'Text','Jump to:','FontSize',10, ...
                 'FontColor',[0.45 0.45 0.45],'HorizontalAlignment','right');
             ljLabel.Layout.Column = 1;
-            lmJNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmJLabels = {'T11/12','T12/L1','L1/2','L2/3','L3/4'};
-            lmJColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
-            lmJProps  = {'BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
-            for ki = 1:5
+            lmJNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmJLabels = {'T10/11','T11/12','T12/L1','L1/2','L2/3','L3/4'};
+            lmJColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            lmJProps  = {'BtnJumpLM_T10T11','BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
+            for ki = 1:6
                 jb = uibutton(lmJumpGrid,'push');
                 jb.Layout.Column = ki + 1;
                 jb.Text = lmJLabels{ki};
@@ -1473,9 +1478,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             try; app.AxLocSagittal.ButtonDownFcn = ''; catch; end
             app.AppData.AwaitingClick = '';
             app.AppData.ActiveLM = '';
-            lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
-            for ki = 1:5
+            lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            for ki = 1:6
                 try
                     app.(['BtnMarkLM_' lmNames{ki}]).BackgroundColor = lmColors{ki};
                 catch, end
@@ -1486,10 +1491,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         end
 
         function clearLandmarks(app)
-        % Clear all 5 disc landmark positions.
+        % Clear all 6 disc landmark positions.
             cancelPendingClick(app);
-            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
-            for ki = 1:5
+            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            for ki = 1:6
                 app.AppData.LM.(lmNames{ki}).CorRow = NaN;
                 app.AppData.LM.(lmNames{ki}).SagRow = NaN;
             end
@@ -1509,9 +1514,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         function updateLandmarkStatus(app)
         % Update the status label and enable Confirm button when enough landmarks are set.
-            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
             nPlaced = 0;
-            for ki = 1:5
+            for ki = 1:6
                 if ~isnan(app.AppData.LM.(lmNames{ki}).CorRow)
                     nPlaced = nPlaced + 1;
                 end
@@ -1519,9 +1524,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             if nPlaced == 0
                 app.LblL12Status.Text = 'No disc landmarks placed yet.  Click a disc button above.';
             elseif nPlaced < 5
-                app.LblL12Status.Text = sprintf('%d/5 disc levels placed.  Press Confirm when done.', nPlaced);
+                app.LblL12Status.Text = sprintf('%d/6 disc levels placed.  Press Confirm when done.', nPlaced);
             else
-                app.LblL12Status.Text = 'All 5 disc levels placed — press Confirm Levels in toolbar.';
+                app.LblL12Status.Text = 'All 6 disc levels placed — press Confirm Levels in toolbar.';
             end
             if nPlaced >= 2
                 try, app.BtnConfirmL12.Enable = 'on'; catch, end
@@ -1537,9 +1542,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             if isempty(loc)
                 uialert(app.UIFigure,'No localizer loaded.','Missing Data'); return
             end
-            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
             anyPlaced = false;
-            for ki = 1:5
+            for ki = 1:6
                 if ~isnan(app.AppData.LM.(lmNames{ki}).CorRow)
                     anyPlaced = true; break
                 end
@@ -1552,7 +1557,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % Convert coronal row → patient Z (mm) for each landmark
             sinfo = loc.Coronal.SpatialInfo;
             lmZ   = struct();
-            for ki = 1:5
+            for ki = 1:6
                 n = lmNames{ki};
                 lmZ.(n) = NaN;
                 row = app.AppData.LM.(n).CorRow;
@@ -1569,7 +1574,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     dixSliceZ = buildDixonSliceZ(dix);
                 end
             catch, end
-            for ki = 1:5
+            for ki = 1:6
                 n = lmNames{ki};
                 app.AppData.LM_Dixon.(n).SliceIdx = NaN;
                 app.AppData.LM_Dixon.(n).Dist_mm  = NaN;
@@ -1609,7 +1614,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     end
                 end
             catch, end
-            for ki = 1:5
+            for ki = 1:6
                 n = lmNames{ki};
                 app.AppData.LM_MRE.(n).SliceIdx = NaN;
                 app.AppData.LM_MRE.(n).Dist_mm  = NaN;
@@ -1634,7 +1639,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             % Jump Dixon to L1/2 disc level (or first available)
             jumpSl = NaN;
-            for ki = 1:5
+            for ki = 1:6
                 si = app.AppData.LM_Dixon.(lmNames{ki}).SliceIdx;
                 if ~isnan(si), jumpSl = si; break; end
             end
@@ -1646,7 +1651,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             % Build status summary
             parts = {};
-            for ki = 1:5
+            for ki = 1:6
                 n = lmNames{ki};
                 lbl = locLandmarkLabel(n);
                 si  = app.AppData.LM_Dixon.(n).SliceIdx;
@@ -1663,7 +1668,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             else
                 setStatus(app,['Confirmed.  Dixon: ' strjoin(parts,'  ')]);
             end
-            app.LblL12Status.Text = sprintf('%d/5 disc levels confirmed and propagated.', ...
+            app.LblL12Status.Text = sprintf('%d/6 disc levels confirmed and propagated.', ...
                 sum(~isnan(cellfun(@(n)app.AppData.LM_Dixon.(n).SliceIdx, lmNames))));
             activateTab(app,'dixon');
             app.savePDFFMat();   % persist disc marks to pdff.mat
@@ -1674,9 +1679,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
         function updateDixonJumpButtons(app)
         % Enable/disable Dixon jump buttons based on propagated slice indices.
-            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmProps = {'BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
-            for ki = 1:5
+            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmProps = {'BtnJumpLM_T10T11','BtnJumpLM_T11T12','BtnJumpLM_T12L1','BtnJumpLM_L1L2','BtnJumpLM_L2L3','BtnJumpLM_L3L4'};
+            for ki = 1:6
                 try
                     si = app.AppData.LM_Dixon.(lmNames{ki}).SliceIdx;
                     dm = app.AppData.LM_Dixon.(lmNames{ki}).Dist_mm;
@@ -3559,7 +3564,7 @@ function setStiffScale(app, newClim)
         end
         function resetExamAppData(app)
         % Clear all per-exam data so a new exam starts fresh.
-            lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+            lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
             for ki = 1:numel(lmNames)
                 n = lmNames{ki};
                 app.AppData.LM.(n).CorRow = NaN;
@@ -3637,7 +3642,7 @@ function setStiffScale(app, newClim)
                 S = load(matFile, 'pdff');
                 if ~isfield(S,'pdff'), return; end
                 p = S.pdff;
-                lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+                lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
                 if isfield(p,'LM')
                     for ki = 1:numel(lmNames)
                         n = lmNames{ki};
@@ -3735,7 +3740,7 @@ function setStiffScale(app, newClim)
                     end
                 end
                 if isfield(S,'mreLM')
-                    lmNames = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+                    lmNames = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
                     for ki = 1:numel(lmNames)
                         n = lmNames{ki};
                         if isfield(S.mreLM, n)
@@ -4074,10 +4079,10 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         function drawLocLines(app, ax, nC, plane, sl)
-        % Draw all 5 disc landmark lines on a localizer axes.
-            lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+        % Draw all 6 disc landmark lines on a localizer axes.
+            lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
             lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
-            for ki = 1:5
+            for ki = 1:6
                 n   = lmNames{ki};
                 clr = lmColors{ki};
                 corRow = app.AppData.LM.(n).CorRow;
@@ -5267,7 +5272,7 @@ function overlayDixonLevelMarkers(app, ax, img, sl)
 % A dashed line + label is shown when the current slice is within 5 mm of
 % a confirmed landmark.  The distance is shown in the label if > 1 mm.
     THRESH_MM = 5.0;   % show marker when closer than this
-    lmNames  = {'T11T12','T12L1','L1L2','L2L3','L3L4'};
+    lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
     lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
 
     nC = size(img, 2);
@@ -5282,7 +5287,7 @@ function overlayDixonLevelMarkers(app, ax, img, sl)
 
     hold(ax,'on');
     textRow = 8;   % y offset for successive labels so they don't overlap
-    for ki = 1:5
+    for ki = 1:6
         n   = lmNames{ki};
         clr = lmColors{ki};
         try
@@ -6101,6 +6106,7 @@ end
 function lbl = locLandmarkLabel(lmName)
 % Return the human-readable label for a landmark name string.
     switch lmName
+        case 'T10T11', lbl = 'T10/11';
         case 'T11T12', lbl = 'T11/12';
         case 'T12L1',  lbl = 'T12/L1';
         case 'L1L2',   lbl = 'L1/2';
