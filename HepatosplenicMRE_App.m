@@ -5904,13 +5904,19 @@ end
 function sliceZ = buildDixonSliceZ(dix)
 % Build a full Z-coordinate vector (one entry per slice) for the Dixon volume.
 %
-% Tries four methods in order of reliability:
-%   1. dix.SliceLocations — use only if it has nSlices entries (not truncated)
-%   2. SpatialInfo.AffineMatrix — voxel→world transform; needs NumSlices to be set
-%   3. SpatialInfo linear reconstruction — ImagePositionFirst + SliceNormal*SliceSpacing
-%   4. SliceLocations[1] + SliceThickness_mm linear extrapolation (last resort)
+% Tries five methods in order, accepting a result only when it has nZ distinct
+% values (guards against the GE IDEAL-IQ SliceLocation-all-same quirk, where
+% earlier methods can return a degenerate constant array that maps every
+% landmark to sl1).
 %
-% Returns [] if none of the methods can produce a full vector.
+%   1. dix.SliceLocations — complete AND non-degenerate
+%   2. SpatialInfo.AffineMatrix — voxel→world transform
+%   3. SpatialInfo linear: ImagePositionFirst + SliceNormal*SliceSpacing
+%   3b. Direct: ImagePositionFirst(z) + SliceSpacing*(0:nZ-1)*dirSign
+%       (implements the user-requested "use SliceThickness from DICOM" approach)
+%   4. SliceLocations[1] or ImagePositionFirst(z) + SliceThickness_mm*(0:nZ-1)
+%
+% Returns [] if none of the methods can produce a valid vector.
     sliceZ = [];
     if isempty(dix), return; end
 
@@ -5918,10 +5924,13 @@ function sliceZ = buildDixonSliceZ(dix)
     try, nZ = double(dix.nSlices); catch, end
     if nZ < 1, return; end
 
-    % --- Method 1: SliceLocations if complete ---
+    % Helper: accept only if nZ entries with >1 distinct value
+    isGood = @(z) numel(z) == nZ && numel(unique(round(double(z(:)), 1))) > 1;
+
+    % --- Method 1: SliceLocations if complete AND non-degenerate ---
     try
         locs = double(dix.SliceLocations(:));
-        if numel(locs) == nZ
+        if isGood(locs)
             sliceZ = locs;
             return;
         end
@@ -5937,53 +5946,79 @@ function sliceZ = buildDixonSliceZ(dix)
         if ~isfield(sinfo,'Columns') || isempty(sinfo.Columns), sinfo.Columns = size(dix.Water,2); end
         if isfield(sinfo,'AffineMatrix') && ~isempty(sinfo.AffineMatrix)
             z2 = buildSliceZFromSinfo(sinfo);
-            if numel(z2) == nZ
+            if isGood(z2)
                 sliceZ = z2;
                 return;
             end
         end
     catch, end
 
-    % --- Method 3: ImagePositionFirst + SliceNormal + SliceSpacing ---
+    % --- Method 3: ImagePositionFirst + SliceNormal*SliceSpacing ---
     try
         sinfo = dix.SpatialInfo;
         if isfield(sinfo,'ImagePositionFirst') && ~isempty(sinfo.ImagePositionFirst) && ...
            isfield(sinfo,'SliceNormal')        && ~isempty(sinfo.SliceNormal) && ...
-           isfield(sinfo,'SliceSpacing')       && ~isempty(sinfo.SliceSpacing)
+           isfield(sinfo,'SliceSpacing')       && sinfo.SliceSpacing > 0
             pos1   = double(sinfo.ImagePositionFirst(:));
             normal = double(sinfo.SliceNormal(:));
             ds     = double(sinfo.SliceSpacing);
-            if ds > 0 && norm(normal) > 0
+            if norm(normal) > 0
                 normal = normal / norm(normal);
-                % Z-coordinate of slice i = z-component of (pos1 + (i-1)*ds*normal)
-                sliceZ = pos1(3) + (0:nZ-1)' * ds * normal(3);
-                % If scan is nearly coronal (small Z component), use y instead
+                z3 = pos1(3) + (0:nZ-1)' * ds * normal(3);
                 if abs(normal(3)) < 0.1 && abs(normal(2)) > 0.5
-                    sliceZ = pos1(2) + (0:nZ-1)' * ds * normal(2);
+                    z3 = pos1(2) + (0:nZ-1)' * ds * normal(2);
                 end
-                if numel(sliceZ) == nZ
-                    return;
-                end
+                if isGood(z3), sliceZ = z3; return; end
             end
         end
     catch, end
-    sliceZ = [];
 
-    % --- Method 4: SliceLocations[1] + SliceThickness linear extrapolation ---
+    % --- Method 3b: ImagePositionFirst(z) + SliceSpacing*(0:nZ-1)*dirSign ---
+    % Directly implements "use DICOM SliceThickness/SpacingBetweenSlices to
+    % reconstruct slice positions" regardless of SliceNormal z-component.
     try
-        locs = double(dix.SliceLocations(:));
-        if ~isempty(locs) && isfield(dix,'SliceThickness_mm') && dix.SliceThickness_mm > 0
-            z0 = locs(1);
-            ds = double(dix.SliceThickness_mm);
-            % Determine direction: assume inferior→superior (positive z for axial)
-            % Check if we can infer from SpatialInfo
+        sinfo = dix.SpatialInfo;
+        if isfield(sinfo,'ImagePositionFirst') && ~isempty(sinfo.ImagePositionFirst) && ...
+           isfield(sinfo,'SliceSpacing')       && sinfo.SliceSpacing > 0
+            z0 = double(sinfo.ImagePositionFirst(3));
+            ds = double(sinfo.SliceSpacing);
             dirSign = 1;
             try
-                normal = double(dix.SpatialInfo.SliceNormal(:));
-                if normal(3) < 0, dirSign = -1; end
+                sn = double(sinfo.SliceNormal(:));
+                if sn(3) < 0, dirSign = -1; end
             catch, end
-            sliceZ = z0 + (0:nZ-1)' * ds * dirSign;
+            z3b = z0 + (0:nZ-1)' * ds * dirSign;
+            if isGood(z3b), sliceZ = z3b; return; end
         end
+    catch, end
+
+    % --- Method 4: any known z0 + SliceThickness_mm extrapolation ---
+    try
+        ds = 0;
+        if isfield(dix,'SliceThickness_mm') && dix.SliceThickness_mm > 0
+            ds = double(dix.SliceThickness_mm);
+        end
+        if ds <= 0
+            try, ds = double(dix.SpatialInfo.SliceSpacing); catch, end
+        end
+        if ds <= 0, ds = 10; end   % anatomically reasonable default
+
+        z0 = NaN;
+        try
+            locs = double(dix.SliceLocations(:));
+            if ~isempty(locs), z0 = locs(1); end
+        catch, end
+        if isnan(z0)
+            try, z0 = double(dix.SpatialInfo.ImagePositionFirst(3)); catch, end
+        end
+        if isnan(z0), return; end
+
+        dirSign = 1;
+        try
+            sn = double(dix.SpatialInfo.SliceNormal(:));
+            if sn(3) < 0, dirSign = -1; end
+        catch, end
+        sliceZ = z0 + (0:nZ-1)' * ds * dirSign;
     catch, end
 end
 

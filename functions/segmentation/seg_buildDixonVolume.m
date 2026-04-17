@@ -544,6 +544,8 @@ function vol = readSingleContrast(files, opts)
     if nFiles == 0, vol = []; return; end
 
     sliceLocs = zeros(1, nFiles);
+    imgPos    = nan(3, nFiles);
+    iop_ref   = [];
     for k = 1:nFiles
         try
             info = dicominfo(files{k}, 'UseDictionaryVR', true);
@@ -552,8 +554,32 @@ function vol = readSingleContrast(files, opts)
             else
                 sliceLocs(k) = k;
             end
+            if isfield(info,'ImagePositionPatient') && numel(info.ImagePositionPatient)==3
+                imgPos(:,k) = double(info.ImagePositionPatient(:));
+            end
+            if isempty(iop_ref) && isfield(info,'ImageOrientationPatient') && ...
+               numel(info.ImageOrientationPatient)==6
+                iop_ref = double(info.ImageOrientationPatient(:));
+            end
         catch
             sliceLocs(k) = k;
+        end
+    end
+
+    % GE IDEAL-IQ sometimes reports the same SliceLocation for every file in a
+    % single-contrast series (the same bug as in readMultiContrast).  Fall back
+    % to ImagePositionPatient projected onto the slice normal for sorting.
+    if numel(unique(round(sliceLocs, 2))) == 1 && ...
+       ~isempty(iop_ref) && ~all(isnan(imgPos(:)))
+        rowDir = iop_ref(1:3); colDir = iop_ref(4:6);
+        sn = cross(rowDir, colDir);
+        sn = sn / max(norm(sn), 1e-9);
+        zp = sn' * imgPos;
+        zp(isnan(zp)) = 0;
+        zpr = round(zp, 2);
+        if numel(unique(zpr)) > 1
+            sliceLocs = zpr;
+            vprint(opts, '  readSingleContrast: SliceLocation degenerate — using %d unique IPP projections.', numel(unique(zpr)));
         end
     end
 
