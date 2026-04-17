@@ -4077,7 +4077,7 @@ function tf = shouldBypassGlobalHotkeys(app)
         function drawLocLines(app, ax, nC, plane, sl)
         % Draw all 6 disc landmark lines on a localizer axes.
             lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-            lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+            lmColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
             for ki = 1:6
                 n   = lmNames{ki};
                 clr = lmColors{ki};
@@ -5269,7 +5269,7 @@ function overlayDixonLevelMarkers(app, ax, img, sl)
 % a confirmed landmark.  The distance is shown in the label if > 1 mm.
     THRESH_MM = 5.0;   % show marker when closer than this
     lmNames  = {'T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
-    lmColors = {[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
+    lmColors = {[0.75 0.10 0.10],[0.88 0.35 0.08],[0.92 0.65 0.05],[0.30 0.72 0.30],[0.15 0.58 0.88],[0.50 0.20 0.85]};
 
     nC = size(img, 2);
     nR = size(img, 1);
