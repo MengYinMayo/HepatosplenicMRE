@@ -388,18 +388,22 @@ function dixon = readMultiContrast(series, dixon, opts)
         vprint(opts, '  TemporalPositionIdentifier absent — assigned contrast by within-slice InstanceNumber rank.');
     end
 
-    % Read spatial info — use the file with InStackPositionNumber==1 (or the
-    % file whose projected z is smallest) as the reference for the first slice.
+    % Read spatial info — use the inferior-most slice as reference (sl1 in the
+    % ascending-sorted volume).  Prefer IPP z-projection (reliable on all
+    % scanners) over InStackPositionNumber, which on GE IDEAL-IQ equals the
+    % first *acquired* slice — often the superior-most — and would make
+    % SpatialInfo.ImagePositionFirst point to the wrong end of the volume,
+    % causing every landmark to snap to sl1.
     refFileIdx = 1;
     try
-        if any(stackPos > 0)
-            refFileIdx = find(stackPos == min(stackPos(stackPos > 0)), 1);
-        elseif ~all(isnan(imgPos(:))) && ~isempty(iop_ref)
-            % Use file at minimum z-projection as reference
+        if ~all(isnan(imgPos(:))) && ~isempty(iop_ref)
+            % Always prefer IPP: minimum z-projection = inferior-most = true sl1
             rowDir = iop_ref(1:3); colDir = iop_ref(4:6);
             sn = cross(rowDir, colDir); sn = sn / max(norm(sn), 1e-9);
             zp = sn' * imgPos; zp(isnan(zp)) = inf;
             [~, refFileIdx] = min(zp);
+        elseif any(stackPos > 0)
+            refFileIdx = find(stackPos == min(stackPos(stackPos > 0)), 1);
         end
     catch, end
     try

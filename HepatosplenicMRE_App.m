@@ -5973,21 +5973,18 @@ function sliceZ = buildDixonSliceZ(dix)
         end
     catch, end
 
-    % --- Method 3b: ImagePositionFirst(z) + SliceSpacing*(0:nZ-1)*dirSign ---
+    % --- Method 3b: ImagePositionFirst(z) + SliceSpacing*(0:nZ-1) ---
     % Directly implements "use DICOM SliceThickness/SpacingBetweenSlices to
     % reconstruct slice positions" regardless of SliceNormal z-component.
+    % Always +1 direction: ImagePositionFirst is the inferior-most slice
+    % (IPP-priority reference in readMultiContrast), volume sorted ascending.
     try
         sinfo = dix.SpatialInfo;
         if isfield(sinfo,'ImagePositionFirst') && ~isempty(sinfo.ImagePositionFirst) && ...
            isfield(sinfo,'SliceSpacing')       && sinfo.SliceSpacing > 0
             z0 = double(sinfo.ImagePositionFirst(3));
             ds = double(sinfo.SliceSpacing);
-            dirSign = 1;
-            try
-                sn = double(sinfo.SliceNormal(:));
-                if sn(3) < 0, dirSign = -1; end
-            catch, end
-            z3b = z0 + (0:nZ-1)' * ds * dirSign;
+            z3b = z0 + (0:nZ-1)' * ds;
             if isGood(z3b), sliceZ = z3b; return; end
         end
     catch, end
@@ -6013,12 +6010,7 @@ function sliceZ = buildDixonSliceZ(dix)
         end
         if isnan(z0), return; end
 
-        dirSign = 1;
-        try
-            sn = double(dix.SpatialInfo.SliceNormal(:));
-            if sn(3) < 0, dirSign = -1; end
-        catch, end
-        sliceZ = z0 + (0:nZ-1)' * ds * dirSign;
+        sliceZ = z0 + (0:nZ-1)' * ds;
     catch, end
 end
 
