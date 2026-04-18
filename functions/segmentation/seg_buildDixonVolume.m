@@ -343,14 +343,50 @@ function dixon = readMultiContrast(series, dixon, opts)
         catch
         end
     end
-    % Last resort: infer from unique slice locations
+    % Last resort: infer nContrasts from unique slice locations or GE private
+    % slab geometry.  GE IDEAL-IQ SIGNA Premier stores the same SliceLocation
+    % (= slab superior extent) for every DICOM, so unique slice count = 1 and
+    % the standard inference fails.  Read Private_0019_1018/1019/101a/101b to
+    % determine the true nSlices from the acquisition geometry.
+    geSuperiorZ = NaN; geInferiorZ = NaN; geSpacing = 0;
     if nContrasts <= 1
         nSlicesEst = numel(unique(sliceLoc));
         if nSlicesEst > 1 && mod(nFiles, nSlicesEst) == 0
             nContrasts = nFiles / nSlicesEst;
             vprint(opts, '  Inferred %d contrasts from %d unique slices.', nContrasts, nSlicesEst);
         else
-            % GE IDEAL-IQ default: 6 contrasts
+            % Try GE private slab extent tags to derive nSlices from geometry
+            try
+                hdrSlab = dicominfo(files{1}, 'UseDictionaryVR', true);
+                for tagPair = {{'Private_0019_1018','Private_0019_1019'}, ...
+                               {'Private_0019_101a','Private_0019_101b'}}
+                    dtag = tagPair{1}{1}; vtag = tagPair{1}{2};
+                    if isfield(hdrSlab,dtag) && isfield(hdrSlab,vtag) && ...
+                       ~isempty(hdrSlab.(vtag))
+                        ds = upper(strtrim(char(hdrSlab.(dtag))));
+                        vv = double(hdrSlab.(vtag));
+                        if contains(ds,'S'), geSuperiorZ = vv; end
+                        if contains(ds,'I'), geInferiorZ = vv; end
+                    end
+                end
+                if isfield(hdrSlab,'SpacingBetweenSlices') && ...
+                   double(hdrSlab.SpacingBetweenSlices) > 0
+                    geSpacing = double(hdrSlab.SpacingBetweenSlices);
+                elseif isfield(hdrSlab,'SliceThickness') && ...
+                       double(hdrSlab.SliceThickness) > 0
+                    geSpacing = double(hdrSlab.SliceThickness);
+                end
+                if ~isnan(geSuperiorZ) && ~isnan(geInferiorZ) && geSpacing > 0
+                    geNSlices = round(abs(geSuperiorZ - geInferiorZ) / geSpacing) + 1;
+                    if geNSlices > 1 && mod(nFiles, geNSlices) == 0
+                        nContrasts = nFiles / geNSlices;
+                        vprint(opts, '  GE slab extent: nSlices=%d, nContrasts=%d.', ...
+                            geNSlices, nContrasts);
+                    end
+                end
+            catch, end
+        end
+        if nContrasts <= 1
             nContrasts = 6;
             vprint(opts, '  Defaulting to %d contrasts (GE IDEAL-IQ standard).', nContrasts);
         end
@@ -380,6 +416,33 @@ function dixon = readMultiContrast(series, dixon, opts)
         end
     end
 
+    % GE IDEAL-IQ SIGNA Premier: when SliceLocation AND ImagePositionPatient
+    % are both the same constant for every file (degenerate 3D acquisition),
+    % reconstruct per-slice z positions from GE private slab extent tags and
+    % InStackPositionNumber.
+    % Convention on this scanner: InStackPositionNumber=1 = first acquired =
+    % superior-most slice; incrementing InStackPositionNumber goes inferior.
+    usedGESlabFallback = false;
+    if numel(uniqueLocs) < nSlices && any(stackPos > 0) && ...
+       ~isnan(geSuperiorZ) && ~isnan(geInferiorZ) && geSpacing > 0
+        try
+            zFromStack    = geSuperiorZ - (stackPos - 1) * geSpacing;
+            zFromStack(stackPos <= 0) = NaN;
+            zFromStackR   = round(zFromStack, 2);
+            uniqueZ       = sort(unique(zFromStackR(~isnan(zFromStackR))));
+            if numel(uniqueZ) >= nSlices
+                sliceLoc(stackPos > 0) = zFromStackR(stackPos > 0);
+                sliceLoc(stackPos <= 0) = uniqueZ(1);
+                uniqueLocs          = uniqueZ;
+                geInferiorZ         = uniqueZ(1);  % min z = inferior-most
+                usedGESlabFallback  = true;
+                vprint(opts, ['  GE slab extent + InStackPositionNumber: ' ...
+                    '%d positions (z: %.1f to %.1f mm).'], ...
+                    numel(uniqueZ), uniqueZ(1), uniqueZ(end));
+            end
+        catch, end
+    end
+
     vprint(opts, '  Multi-contrast: %d contrasts × %d slices', nContrasts, nSlices);
 
     % When TemporalPositionIdentifier was unreliable, assign contrast by
@@ -391,22 +454,22 @@ function dixon = readMultiContrast(series, dixon, opts)
         vprint(opts, '  TemporalPositionIdentifier absent — assigned contrast by within-slice InstanceNumber rank.');
     end
 
-    % Read spatial info — use the inferior-most slice as reference (sl1 in the
-    % ascending-sorted volume).  Prefer IPP z-projection (reliable on all
-    % scanners) over InStackPositionNumber, which on GE IDEAL-IQ equals the
-    % first *acquired* slice — often the superior-most — and would make
-    % SpatialInfo.ImagePositionFirst point to the wrong end of the volume,
-    % causing every landmark to snap to sl1.
+    % Select reference file = inferior-most slice (sl1 in the ascending-sorted
+    % volume).  Priority:
+    %   1. GE slab fallback active → use minimum sliceLoc (= geInferiorZ)
+    %   2. IPP z-projection → minimum = true inferior
+    %   3. InStackPositionNumber max → inferior-most (GE: 1=superior, n=inferior)
     refFileIdx = 1;
     try
-        if ~all(isnan(imgPos(:))) && ~isempty(iop_ref)
-            % Always prefer IPP: minimum z-projection = inferior-most = true sl1
+        if usedGESlabFallback
+            [~, refFileIdx] = min(sliceLoc);
+        elseif ~all(isnan(imgPos(:))) && ~isempty(iop_ref)
             rowDir = iop_ref(1:3); colDir = iop_ref(4:6);
             sn = cross(rowDir, colDir); sn = sn / max(norm(sn), 1e-9);
             zp = sn' * imgPos; zp(isnan(zp)) = inf;
             [~, refFileIdx] = min(zp);
         elseif any(stackPos > 0)
-            refFileIdx = find(stackPos == min(stackPos(stackPos > 0)), 1);
+            refFileIdx = find(stackPos == max(stackPos(stackPos > 0)), 1);
         end
     catch, end
     try
@@ -420,6 +483,28 @@ function dixon = readMultiContrast(series, dixon, opts)
             dixon.SpatialInfo = io_extractSpatialInfo(files, hdr1, nSlices, nContrasts);
         catch, end
     end
+
+    % When the GE slab fallback was used, ImagePositionPatient is the same
+    % constant for every file (GE 3D degenerate).  io_extractSpatialInfo will
+    % therefore produce an AffineMatrix whose z-origin equals that constant IPP
+    % z (= the slab superior extent, e.g. +127.8 mm) rather than the true
+    % inferior-most slice z.  Patch the z-component of the AffineMatrix origin
+    % (column 4) and ImagePositionFirst with the correct inferior z so that
+    % loc_propagateToSpace computes correct slice positions for landmark matching.
+    if usedGESlabFallback && ~isnan(geInferiorZ) && ...
+       ~isempty(dixon.SpatialInfo) && isfield(dixon.SpatialInfo,'AffineMatrix')
+        A = dixon.SpatialInfo.AffineMatrix;
+        if size(A,1) >= 3 && size(A,2) >= 4
+            A(3,4) = geInferiorZ;
+            dixon.SpatialInfo.AffineMatrix = A;
+        end
+        if isfield(dixon.SpatialInfo,'ImagePositionFirst') && ...
+           numel(dixon.SpatialInfo.ImagePositionFirst) >= 3
+            dixon.SpatialInfo.ImagePositionFirst(3) = geInferiorZ;
+        end
+        vprint(opts, '  Patched AffineMatrix z-origin to %.2f mm (inferior-most slice).', geInferiorZ);
+    end
+
 
     % Allocate volumes
     try
@@ -552,6 +637,7 @@ function vol = readSingleContrast(files, opts)
 
     sliceLocs = zeros(1, nFiles);
     imgPos    = nan(3, nFiles);
+    stackPos  = zeros(1, nFiles);
     iop_ref   = [];
     for k = 1:nFiles
         try
@@ -568,14 +654,16 @@ function vol = readSingleContrast(files, opts)
                numel(info.ImageOrientationPatient)==6
                 iop_ref = double(info.ImageOrientationPatient(:));
             end
+            if isfield(info,'InStackPositionNumber') && ~isempty(info.InStackPositionNumber)
+                stackPos(k) = double(info.InStackPositionNumber);
+            end
         catch
             sliceLocs(k) = k;
         end
     end
 
-    % GE IDEAL-IQ sometimes reports the same SliceLocation for every file in a
-    % single-contrast series (the same bug as in readMultiContrast).  Fall back
-    % to ImagePositionPatient projected onto the slice normal for sorting.
+    % GE IDEAL-IQ sometimes reports the same SliceLocation for every file.
+    % Fallback 1: ImagePositionPatient projected onto the slice normal.
     if numel(unique(round(sliceLocs, 2))) == 1 && ...
        ~isempty(iop_ref) && ~all(isnan(imgPos(:)))
         rowDir = iop_ref(1:3); colDir = iop_ref(4:6);
@@ -588,6 +676,40 @@ function vol = readSingleContrast(files, opts)
             sliceLocs = zpr;
             vprint(opts, '  readSingleContrast: SliceLocation degenerate — using %d unique IPP projections.', numel(unique(zpr)));
         end
+    end
+
+    % Fallback 2: GE IDEAL-IQ private slab extent tags + InStackPositionNumber.
+    % Used when both SliceLocation and IPP are constant (degenerate 3D acq).
+    % InStackPositionNumber=1 = superior-most; incrementing = going inferior.
+    if numel(unique(round(sliceLocs, 2))) == 1 && any(stackPos > 0)
+        try
+            h = dicominfo(files{1}, 'UseDictionaryVR', true);
+            gS = NaN; gI = NaN; gDs = 0;
+            for tagPair = {{'Private_0019_1018','Private_0019_1019'}, ...
+                           {'Private_0019_101a','Private_0019_101b'}}
+                dtag = tagPair{1}{1}; vtag = tagPair{1}{2};
+                if isfield(h,dtag) && isfield(h,vtag) && ~isempty(h.(vtag))
+                    ds = upper(strtrim(char(h.(dtag)))); vv = double(h.(vtag));
+                    if contains(ds,'S'), gS = vv; end
+                    if contains(ds,'I'), gI = vv; end
+                end
+            end
+            if isfield(h,'SpacingBetweenSlices') && double(h.SpacingBetweenSlices) > 0
+                gDs = double(h.SpacingBetweenSlices);
+            elseif isfield(h,'SliceThickness') && double(h.SliceThickness) > 0
+                gDs = double(h.SliceThickness);
+            end
+            if ~isnan(gS) && ~isnan(gI) && gDs > 0 && all(stackPos > 0)
+                zFromStack  = gS - (stackPos - 1) * gDs;
+                zFromStackR = round(zFromStack, 2);
+                if numel(unique(zFromStackR)) > 1
+                    sliceLocs = zFromStackR;
+                    vprint(opts, ['  readSingleContrast: GE slab extent + InStackPositionNumber' ...
+                        ' → %d positions (%.1f to %.1f mm).'], ...
+                        numel(unique(sliceLocs)), min(sliceLocs), max(sliceLocs));
+                end
+            end
+        catch, end
     end
 
     [sortedLocs, idx] = sort(sliceLocs);
