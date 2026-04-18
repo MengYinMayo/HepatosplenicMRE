@@ -412,10 +412,16 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'MenuSelectedFcn',@(~,~)app.exportROIs());
             uimenu(app.ExportMenu,'Text','Export Report (PDF)...', ...
                 'MenuSelectedFcn',@(~,~)app.exportPDF());
+            uimenu(app.ExportMenu,'Text','Export PDFF Radiomics CSV...','Separator','on', ...
+                'MenuSelectedFcn',@(~,~)app.exportPDFFRadiomicsCSV());
+            uimenu(app.ExportMenu,'Text','Export MRE Radiomics CSV...', ...
+                'MenuSelectedFcn',@(~,~)app.exportMRERadiomicsCSV());
 
             app.HelpMenu = uimenu(app.UIFigure,'Text','Help');
             uimenu(app.HelpMenu,'Text','About', ...
                 'MenuSelectedFcn',@(~,~)app.showAbout());
+            uimenu(app.HelpMenu,'Text','Radiomic Features Reference...','Separator','on', ...
+                'MenuSelectedFcn',@(~,~)app.showRadiomicsHelp());
         end
 
         % -----------------------------------------------------------------
@@ -4945,26 +4951,21 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         function exportPDFFRadiomicsCSV(app)
-        % Export first-order radiomics features for all PDFF ROI organs to CSV.
             dix = app.AppData.Dixon;
             if isempty(dix) || isempty(dix.PDFF)
                 uialert(app.UIFigure,'No PDFF data loaded.','Export'); return
             end
-            [fname, fpath] = uiputfile('*.csv','Export PDFF Radiomics CSV', ...
-                'pdff_radiomics.csv');
+            [fname, fpath] = uiputfile('*.csv','Export PDFF Radiomics CSV','pdff_radiomics.csv');
             if isequal(fname,0), return; end
             try
-                setStatus(app,'Computing PDFF radiomics features...');
+                setStatus(app,'Computing PDFF radiomics features (this may take a moment)...');
+                drawnow;
                 dx = dix.PixelSpacing_mm(1); dy = dix.PixelSpacing_mm(2);
                 dz = dix.SliceThickness_mm;
                 dixSliceZ = [];
                 try, dixSliceZ = buildDixonSliceZ(dix); catch, end
-                organs = {'LiverDixon','SpleenDixon','PsoasDixon', ...
-                          'TrunkDixon','SATDixon','VATDixon'};
-                hdr = ['OrganROI,SliceIndex,SliceLocation_mm,' ...
-                    'VoxelCount,Volume_mm3,Mean,Median,StdDev,' ...
-                    'Skewness,Kurtosis,Energy,Entropy,Min,Max,Range,IQR,' ...
-                    'P10,P25,P75,P90'];
+                organs = {'LiverDixon','SpleenDixon','PsoasDixon','TrunkDixon','SATDixon','VATDixon'};
+                hdr = radiomicsCSVHeader();
                 lines = {hdr};
                 for oi = 1:numel(organs)
                     rn = organs{oi};
@@ -4975,18 +4976,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                         sl   = str2double(strrep(key,'sl',''));
                         mask = logical(app.AppData.ROIs.(rn).Slices.(key));
                         if ~any(mask(:)) || sl < 1 || sl > size(dix.PDFF,3), continue; end
-                        vals = double(dix.PDFF(:,:,sl));
-                        vals = vals(mask(:));
-                        slZ  = NaN;
-                        if ~isempty(dixSliceZ) && sl <= numel(dixSliceZ)
-                            slZ = dixSliceZ(sl);
-                        end
-                        feat = computeFirstOrderRadiomics(vals, dx*dy*dz);
-                        lines{end+1} = sprintf('%s,%d,%.2f,%d,%.1f,%.3f,%.3f,%.3f,%.4f,%.4f,%.6f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f', ...
-                            rn, sl, slZ, feat.n, feat.vol, feat.mean, feat.median, feat.std, ...
-                            feat.skew, feat.kurt, feat.energy, feat.entropy, ...
-                            feat.mn, feat.mx, feat.range, feat.iqr, ...
-                            feat.p10, feat.p25, feat.p75, feat.p90); %#ok<AGROW>
+                        img2d = double(dix.PDFF(:,:,sl));
+                        vals  = img2d(mask(:));
+                        slZ   = NaN;
+                        if ~isempty(dixSliceZ) && sl <= numel(dixSliceZ), slZ = dixSliceZ(sl); end
+                        row = buildRadiomicsRow(rn, sl, slZ, vals, mask, img2d, dx, dy, dz);
+                        lines{end+1} = row; %#ok<AGROW>
                     end
                 end
                 fid = fopen(fullfile(fpath,fname),'w');
@@ -5000,26 +4995,22 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         function exportMRERadiomicsCSV(app)
-        % Export first-order radiomics features for all MRE stiffness ROIs to CSV.
             mre = app.AppData.MRE;
             if isempty(mre) || ~isfield(mre,'S') || isempty(mre.S)
                 uialert(app.UIFigure,'No MRE stiffness data loaded.','Export'); return
             end
-            [fname, fpath] = uiputfile('*.csv','Export MRE Radiomics CSV', ...
-                'mre_radiomics.csv');
+            [fname, fpath] = uiputfile('*.csv','Export MRE Radiomics CSV','mre_radiomics.csv');
             if isequal(fname,0), return; end
             try
-                setStatus(app,'Computing MRE radiomics features...');
+                setStatus(app,'Computing MRE radiomics features (this may take a moment)...');
+                drawnow;
                 mreDx = 1; mreDy = 1; mreDz = 5;
                 try, mreDx = mre.PixelSpacing_mm(1); mreDy = mre.PixelSpacing_mm(2); catch, end
                 try, mreDz = mre.SliceThickness_mm; catch, end
                 mreSliceZ = [];
                 try, mreSliceZ = buildSliceZFromSinfo(mre.SpatialInfo); catch, end
                 organs = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
-                hdr = ['OrganROI,SliceIndex,SliceLocation_mm,' ...
-                    'VoxelCount,Volume_mm3,Mean,Median,StdDev,' ...
-                    'Skewness,Kurtosis,Energy,Entropy,Min,Max,Range,IQR,' ...
-                    'P10,P25,P75,P90'];
+                hdr = radiomicsCSVHeader();
                 lines = {hdr};
                 for oi = 1:numel(organs)
                     rn = organs{oi};
@@ -5030,18 +5021,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                         sl   = str2double(strrep(key,'sl',''));
                         mask = logical(app.AppData.ROIs.(rn).Slices.(key));
                         if ~any(mask(:)) || sl < 1 || sl > size(mre.S,3), continue; end
-                        vals = double(mre.S(:,:,sl));
-                        vals = vals(mask(:));
-                        slZ  = NaN;
-                        if ~isempty(mreSliceZ) && sl <= numel(mreSliceZ)
-                            slZ = mreSliceZ(sl);
-                        end
-                        feat = computeFirstOrderRadiomics(vals, mreDx*mreDy*mreDz);
-                        lines{end+1} = sprintf('%s,%d,%.2f,%d,%.1f,%.3f,%.3f,%.3f,%.4f,%.4f,%.6f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f', ...
-                            rn, sl, slZ, feat.n, feat.vol, feat.mean, feat.median, feat.std, ...
-                            feat.skew, feat.kurt, feat.energy, feat.entropy, ...
-                            feat.mn, feat.mx, feat.range, feat.iqr, ...
-                            feat.p10, feat.p25, feat.p75, feat.p90); %#ok<AGROW>
+                        img2d = double(mre.S(:,:,sl));
+                        vals  = img2d(mask(:));
+                        slZ   = NaN;
+                        if ~isempty(mreSliceZ) && sl <= numel(mreSliceZ), slZ = mreSliceZ(sl); end
+                        row = buildRadiomicsRow(rn, sl, slZ, vals, mask, img2d, mreDx, mreDy, mreDz);
+                        lines{end+1} = row; %#ok<AGROW>
                     end
                 end
                 fid = fopen(fullfile(fpath,fname),'w');
@@ -5052,6 +5037,10 @@ function tf = shouldBypassGlobalHotkeys(app)
                 uialert(app.UIFigure, ME.message,'Export Error','Icon','error');
                 setStatus(app,['MRE radiomics export failed: ' ME.message]);
             end
+        end
+
+        function showRadiomicsHelp(app)
+            showRadiomicsHelpDialog(app.UIFigure);
         end
 
         function setStatus(app, msg)
@@ -6558,6 +6547,400 @@ function feat = computeFirstOrderRadiomics(vals, voxVol)
     catch
         feat.entropy = NaN;
     end
+end
+
+% =========================================================================
+%  RADIOMICS HELPERS
+% =========================================================================
+
+function hdr = radiomicsCSVHeader()
+% Return the 67-column CSV header for full radiomics export.
+hdr = ['OrganROI,SliceIndex,SliceLocation_mm,' ...
+    'VoxelCount,Volume_mm3,' ...
+    'Mean,Median,Mode,Variance,StdDev,Skewness,Kurtosis,' ...
+    'Energy,Entropy,Uniformity,RMS,MAD,Min,Max,Range,IQR,' ...
+    'P10,P25,P75,P90,' ...
+    'Area_mm2,Perimeter_mm,Sphericity,Compactness,Eccentricity,' ...
+    'MajorAxis_mm,MinorAxis_mm,Elongation,Solidity,MaxDiameter_mm,' ...
+    'GLCM_Contrast,GLCM_Correlation,GLCM_Energy,GLCM_Homogeneity,' ...
+    'GLCM_Entropy,GLCM_Dissimilarity,GLCM_Autocorrelation,' ...
+    'GLCM_ClusterShade,GLCM_ClusterProminence,GLCM_MaxProbability,' ...
+    'GLRLM_SRE,GLRLM_LRE,GLRLM_GLNU,GLRLM_RLNU,GLRLM_RunPct,' ...
+    'GLRLM_LGLRE,GLRLM_HGLRE,GLRLM_SRLGLE,GLRLM_SRHGLE,' ...
+    'GLRLM_LRLGLE,GLRLM_LRHGLE,' ...
+    'GLSZM_SAE,GLSZM_LAE,GLSZM_GLNU,GLSZM_SZNU,GLSZM_ZonePct,' ...
+    'GLSZM_LGLZE,GLSZM_HGLZE,GLSZM_SALGLE,GLSZM_SAHGLE,' ...
+    'GLSZM_LALGLE,GLSZM_LAHGLE'];
+end
+
+function row = buildRadiomicsRow(organ, sl, slZ, vals, mask, img2d, dx, dy, dz)
+% Assemble one CSV data row with all radiomics categories.
+    nLevels = 32;
+    voxVol  = dx * dy * dz;
+    I  = computeIntensityFeatures(vals, voxVol);
+    Sh = computeShapeFeatures(mask, dx, dy);
+    GL = computeGLCMFeatures(img2d, mask, nLevels);
+    RL = computeGLRLMFeatures(img2d, mask, nLevels);
+    SZ = computeGLSZMFeatures(img2d, mask, nLevels);
+    f = @(x) num2fmtstr(x);
+    row = sprintf('%s,%d,%s,%s', organ, sl, f(slZ), ...
+        strjoin({ ...
+            f(I.n),      f(I.vol), ...
+            f(I.mean),   f(I.median), f(I.mode),  f(I.variance), f(I.std), ...
+            f(I.skew),   f(I.kurt), ...
+            f(I.energy), f(I.entropy), f(I.uniformity), f(I.rms), f(I.mad), ...
+            f(I.mn),     f(I.mx),  f(I.range), f(I.iqr), ...
+            f(I.p10),    f(I.p25), f(I.p75),   f(I.p90), ...
+            f(Sh.area_mm2),      f(Sh.perimeter_mm),  f(Sh.sphericity), ...
+            f(Sh.compactness),   f(Sh.eccentricity),  f(Sh.major_axis_mm), ...
+            f(Sh.minor_axis_mm), f(Sh.elongation),    f(Sh.solidity), ...
+            f(Sh.max_diameter_mm), ...
+            f(GL.contrast),      f(GL.correlation),   f(GL.energy), ...
+            f(GL.homogeneity),   f(GL.entropy),       f(GL.dissimilarity), ...
+            f(GL.autocorrelation), f(GL.cluster_shade), f(GL.cluster_prominence), ...
+            f(GL.max_prob), ...
+            f(RL.sre),    f(RL.lre),    f(RL.glnu),   f(RL.rlnu), f(RL.run_pct), ...
+            f(RL.lglre),  f(RL.hglre), ...
+            f(RL.srlgle), f(RL.srhgle), f(RL.lrlgle), f(RL.lrhgle), ...
+            f(SZ.sae),    f(SZ.lae),    f(SZ.glnu),   f(SZ.sznu), f(SZ.zone_pct), ...
+            f(SZ.lglze),  f(SZ.hglze), ...
+            f(SZ.salgle), f(SZ.sahgle), f(SZ.lalgle), f(SZ.lahgle) ...
+        }, ','));
+end
+
+function s = num2fmtstr(x)
+    if isnan(x) || isinf(x), s = 'NaN'; else, s = sprintf('%.6g', x); end
+end
+
+% ── Intensity features ────────────────────────────────────────────────────
+function feat = computeIntensityFeatures(vals, voxVol)
+% 22 first-order (intensity) radiomic features.
+    vals = vals(isfinite(vals));
+    feat.n = numel(vals);
+    feat.vol = feat.n * voxVol;
+    nanFields = {'mean','median','mode','variance','std','skew','kurt', ...
+                 'energy','entropy','uniformity','rms','mad', ...
+                 'mn','mx','range','iqr','p10','p25','p75','p90'};
+    if isempty(vals)
+        for f = nanFields, feat.(f{1}) = NaN; end
+        return
+    end
+    feat.mean     = mean(vals);
+    feat.median   = median(vals);
+    feat.mn       = min(vals);
+    feat.mx       = max(vals);
+    feat.range    = feat.mx - feat.mn;
+    feat.variance = var(vals);
+    feat.std      = sqrt(feat.variance);
+    feat.iqr      = iqr(vals);
+    feat.p10      = prctile(vals, 10);
+    feat.p25      = prctile(vals, 25);
+    feat.p75      = prctile(vals, 75);
+    feat.p90      = prctile(vals, 90);
+    feat.rms      = sqrt(mean(vals.^2));
+    feat.mad      = mean(abs(vals - feat.mean));
+    try, feat.skew = skewness(vals); catch, feat.skew = NaN; end
+    try, feat.kurt = kurtosis(vals); catch, feat.kurt = NaN; end
+    feat.energy   = sum(vals.^2) / max(feat.n, 1);
+    try
+        edges = linspace(feat.mn - eps, feat.mx + eps, 65);
+        counts = histcounts(vals, edges);
+        p = counts / max(sum(counts), 1);
+        pp = p(p > 0);
+        feat.entropy    = -sum(pp .* log2(pp));
+        feat.uniformity = sum(p .^ 2);
+    catch
+        feat.entropy    = NaN;
+        feat.uniformity = NaN;
+    end
+    try
+        edges2 = linspace(feat.mn - eps, feat.mx + eps, 65);
+        [cnt2, ~] = histcounts(vals, edges2);
+        [~, peakBin] = max(cnt2);
+        feat.mode = (edges2(peakBin) + edges2(peakBin+1)) / 2;
+    catch
+        feat.mode = NaN;
+    end
+end
+
+% ── Shape features ────────────────────────────────────────────────────────
+function feat = computeShapeFeatures(mask, dx, dy)
+% 10 shape-based radiomic features from a 2-D binary mask.
+    fields = {'area_mm2','perimeter_mm','sphericity','compactness', ...
+              'eccentricity','major_axis_mm','minor_axis_mm','elongation', ...
+              'solidity','max_diameter_mm'};
+    for f = fields, feat.(f{1}) = NaN; end
+    if ~any(mask(:)), return; end
+    try
+        mask = logical(mask);
+        rp = regionprops(mask, 'Area','Perimeter','MajorAxisLength', ...
+            'MinorAxisLength','Eccentricity','Solidity');
+        if isempty(rp), return; end
+        rp = rp(1);
+        pixSize = (dx + dy) / 2;
+        feat.area_mm2      = rp.Area * dx * dy;
+        feat.perimeter_mm  = rp.Perimeter * pixSize;
+        if feat.perimeter_mm > 0
+            feat.sphericity  = 4 * pi * feat.area_mm2 / (feat.perimeter_mm^2);
+            feat.compactness = feat.perimeter_mm^2 / (4 * pi * feat.area_mm2);
+        end
+        feat.eccentricity  = rp.Eccentricity;
+        feat.major_axis_mm = rp.MajorAxisLength * pixSize;
+        feat.minor_axis_mm = rp.MinorAxisLength * pixSize;
+        if feat.major_axis_mm > 0
+            feat.elongation = feat.minor_axis_mm / feat.major_axis_mm;
+        end
+        feat.solidity = rp.Solidity;
+        try
+            bnd = bwperim(mask);
+            [ry, cx] = find(bnd);
+            pts = [ry * dx, cx * dy];
+            if size(pts,1) > 1
+                if size(pts,1) > 500
+                    idx = round(linspace(1, size(pts,1), 500));
+                    pts = pts(idx,:);
+                end
+                feat.max_diameter_mm = max(pdist(pts, 'euclidean'));
+            end
+        catch, end
+    catch, end
+end
+
+% ── GLCM texture features ─────────────────────────────────────────────────
+function feat = computeGLCMFeatures(img2d, mask, nLevels)
+% 10 GLCM texture features, averaged over 4 directions (0°,45°,90°,135°).
+    fields = {'contrast','correlation','energy','homogeneity','entropy', ...
+              'dissimilarity','autocorrelation','cluster_shade', ...
+              'cluster_prominence','max_prob'};
+    for f = fields, feat.(f{1}) = NaN; end
+    try
+        img2d = double(img2d);
+        mask  = logical(mask);
+        if ~any(mask(:)), return; end
+        v = img2d(mask);
+        vmin = min(v); vmax = max(v);
+        if vmax <= vmin, return; end
+        qImg = zeros(size(img2d), 'uint8');
+        qImg(mask) = uint8(max(1, min(nLevels, ...
+            round(1 + (nLevels-1) * (img2d(mask) - vmin) / (vmax - vmin)))));
+        glcm = graycomatrix(qImg, 'NumLevels', nLevels, ...
+            'GrayLimits', [0, nLevels], ...
+            'Offset', [0 1; -1 1; -1 0; -1 -1], 'Symmetric', true);
+        gcp = graycoprops(glcm, {'Contrast','Correlation','Energy','Homogeneity'});
+        feat.contrast     = mean(gcp.Contrast);
+        feat.correlation  = mean(gcp.Correlation);
+        feat.energy       = mean(gcp.Energy);
+        feat.homogeneity  = mean(gcp.Homogeneity);
+        P = mean(glcm, 3);
+        S = max(sum(P(:)), eps);
+        P = P / S;
+        n = nLevels;
+        [I, J] = meshgrid(1:n, 1:n);
+        I = I'; J = J';
+        pp = P(P > 0);
+        feat.entropy        = -sum(pp .* log2(pp));
+        feat.dissimilarity  = sum(sum(abs(I - J) .* P));
+        feat.autocorrelation = sum(sum(I .* J .* P));
+        feat.max_prob       = max(P(:));
+        mu_i = sum(sum(I .* P));
+        mu_j = sum(sum(J .* P));
+        c_ij = (I - mu_i) + (J - mu_j);
+        feat.cluster_shade      = sum(sum(c_ij.^3 .* P));
+        feat.cluster_prominence = sum(sum(c_ij.^4 .* P));
+    catch, end
+end
+
+% ── GLRLM texture features ────────────────────────────────────────────────
+function feat = computeGLRLMFeatures(img2d, mask, nLevels)
+% 11 GLRLM texture features, averaged over 0° and 90° directions.
+    emptyFeat = struct('sre',NaN,'lre',NaN,'glnu',NaN,'rlnu',NaN,'run_pct',NaN, ...
+        'lglre',NaN,'hglre',NaN,'srlgle',NaN,'srhgle',NaN,'lrlgle',NaN,'lrhgle',NaN);
+    feat = emptyFeat;
+    try
+        img2d = double(img2d);
+        mask  = logical(mask);
+        if ~any(mask(:)), return; end
+        v = img2d(mask);
+        vmin = min(v); vmax = max(v);
+        if vmax <= vmin, return; end
+        qImg = zeros(size(img2d));
+        qImg(mask) = max(1, min(nLevels, ...
+            round(1 + (nLevels-1) * (img2d(mask) - vmin) / (vmax - vmin))));
+        [nR, nC] = size(qImg);
+        maxRun = max(nR, nC);
+        rlm = buildGLRLM(qImg, mask, nLevels, maxRun, [0,1]) + ...
+              buildGLRLM(qImg, mask, nLevels, maxRun, [1,0]);
+        feat = glrlmFeatures(rlm, sum(mask(:)));
+    catch, end
+end
+
+function rlm = buildGLRLM(qImg, mask, nG, maxRun, offset)
+    [nR, nC] = size(qImg);
+    rlm = zeros(nG, maxRun);
+    dy = offset(1); dx = offset(2);
+    visited = false(nR, nC);
+    for r = 1:nR
+        for c = 1:nC
+            if ~mask(r,c) || visited(r,c), continue; end
+            g = qImg(r,c);
+            if g < 1, continue; end
+            runLen = 1; rr = r+dy; cc = c+dx;
+            while rr>=1 && rr<=nR && cc>=1 && cc<=nC && mask(rr,cc) && qImg(rr,cc)==g
+                runLen = runLen+1;
+                visited(rr,cc) = true;
+                rr = rr+dy; cc = cc+dx;
+            end
+            if runLen <= maxRun
+                rlm(g, runLen) = rlm(g, runLen) + 1;
+            end
+        end
+    end
+end
+
+function feat = glrlmFeatures(rlm, nVoxels)
+    nRuns = sum(rlm(:));
+    if nRuns == 0
+        feat = struct('sre',NaN,'lre',NaN,'glnu',NaN,'rlnu',NaN,'run_pct',NaN, ...
+            'lglre',NaN,'hglre',NaN,'srlgle',NaN,'srhgle',NaN,'lrlgle',NaN,'lrhgle',NaN);
+        return
+    end
+    [nG, maxRun] = size(rlm);
+    [G, R] = meshgrid(1:nG, 1:maxRun);
+    G = G'; R = R';
+    feat.sre     = sum(sum(rlm ./ R.^2))  / nRuns;
+    feat.lre     = sum(sum(rlm .* R.^2))  / nRuns;
+    feat.glnu    = sum(sum(rlm,2).^2)     / nRuns;
+    feat.rlnu    = sum(sum(rlm,1).^2)     / nRuns;
+    feat.run_pct = nRuns / max(nVoxels, 1);
+    feat.lglre   = sum(sum(rlm ./ G.^2))  / nRuns;
+    feat.hglre   = sum(sum(rlm .* G.^2))  / nRuns;
+    feat.srlgle  = sum(sum(rlm ./ (G.^2 .* R.^2))) / nRuns;
+    feat.srhgle  = sum(sum(rlm .* G.^2 ./ R.^2))   / nRuns;
+    feat.lrlgle  = sum(sum(rlm .* R.^2 ./ G.^2))   / nRuns;
+    feat.lrhgle  = sum(sum(rlm .* G.^2 .* R.^2))   / nRuns;
+end
+
+% ── GLSZM texture features ────────────────────────────────────────────────
+function feat = computeGLSZMFeatures(img2d, mask, nLevels)
+% 11 GLSZM texture features using bwconncomp per gray level.
+    emptyFeat = struct('sae',NaN,'lae',NaN,'glnu',NaN,'sznu',NaN,'zone_pct',NaN, ...
+        'lglze',NaN,'hglze',NaN,'salgle',NaN,'sahgle',NaN,'lalgle',NaN,'lahgle',NaN);
+    feat = emptyFeat;
+    try
+        img2d = double(img2d);
+        mask  = logical(mask);
+        if ~any(mask(:)), return; end
+        v = img2d(mask);
+        vmin = min(v); vmax = max(v);
+        if vmax <= vmin, return; end
+        qImg = zeros(size(img2d));
+        qImg(mask) = max(1, min(nLevels, ...
+            round(1 + (nLevels-1) * (img2d(mask) - vmin) / (vmax - vmin))));
+        nVox = sum(mask(:));
+        maxSz = min(nVox, 512);
+        szm = zeros(nLevels, maxSz);
+        for g = 1:nLevels
+            gMask = (qImg == g) & mask;
+            if ~any(gMask(:)), continue; end
+            CC = bwconncomp(gMask, 4);
+            for ci = 1:CC.NumObjects
+                sz = min(numel(CC.PixelIdxList{ci}), maxSz);
+                szm(g, sz) = szm(g, sz) + 1;
+            end
+        end
+        nZones = sum(szm(:));
+        if nZones == 0, return; end
+        [G, S] = meshgrid(1:nLevels, 1:maxSz);
+        G = G'; S = S';
+        feat.sae      = sum(sum(szm ./ S.^2))             / nZones;
+        feat.lae      = sum(sum(szm .* S.^2))             / nZones;
+        feat.glnu     = sum(sum(szm,2).^2)                / nZones;
+        feat.sznu     = sum(sum(szm,1).^2)                / nZones;
+        feat.zone_pct = nZones / max(nVox, 1);
+        feat.lglze    = sum(sum(szm ./ G.^2))             / nZones;
+        feat.hglze    = sum(sum(szm .* G.^2))             / nZones;
+        feat.salgle   = sum(sum(szm ./ (G.^2 .* S.^2)))  / nZones;
+        feat.sahgle   = sum(sum(szm .* G.^2 ./ S.^2))    / nZones;
+        feat.lalgle   = sum(sum(szm .* S.^2 ./ G.^2))    / nZones;
+        feat.lahgle   = sum(sum(szm .* G.^2 .* S.^2))    / nZones;
+    catch, end
+end
+
+% ── Radiomics help dialog ─────────────────────────────────────────────────
+function showRadiomicsHelpDialog(~)
+% Open a non-modal window with a scrollable feature reference table.
+    f = uifigure('Name','Radiomic Features Reference', ...
+        'Position',[100 80 880 680],'Resize','on');
+    t = uitable(f,'Position',[10 10 860 660]);
+    t.ColumnName  = {'Category','Feature','Definition'};
+    t.ColumnWidth = {90, 180, 'auto'};
+    t.RowStriping = 'on';
+    t.Data = { ...
+        'Intensity','VoxelCount',       'Number of voxels inside the ROI'; ...
+        'Intensity','Volume_mm3',       'VoxelCount × voxel volume (mm³)'; ...
+        'Intensity','Mean',             'Average intensity across all ROI voxels'; ...
+        'Intensity','Median',           '50th percentile of the intensity distribution'; ...
+        'Intensity','Mode',             'Centre of the peak bin of a 64-bin intensity histogram'; ...
+        'Intensity','Variance',         'Mean squared deviation from the mean'; ...
+        'Intensity','StdDev',           'Square root of Variance; measures dispersion around the mean'; ...
+        'Intensity','Skewness',         'Asymmetry of intensity histogram: 0=symmetric, >0=right-skewed'; ...
+        'Intensity','Kurtosis',         '"Tailedness"; equals 3 for a Gaussian distribution'; ...
+        'Intensity','Energy',           'Σx²/n — measures overall signal magnitude'; ...
+        'Intensity','Entropy',          '−Σp·log₂p (64 bins) — higher value = more uniform histogram'; ...
+        'Intensity','Uniformity',       'Σp² (64 bins) — higher value = fewer dominant intensity bins'; ...
+        'Intensity','RMS',              'Root Mean Square = √(mean(x²)); combines mean and spread'; ...
+        'Intensity','MAD',              'Mean Absolute Deviation from mean = mean|xᵢ−μ|; robust to outliers'; ...
+        'Intensity','Min',              'Minimum intensity in the ROI'; ...
+        'Intensity','Max',              'Maximum intensity in the ROI'; ...
+        'Intensity','Range',            'Max − Min'; ...
+        'Intensity','IQR',              'Interquartile Range = P75 − P25; robust measure of spread'; ...
+        'Intensity','P10',              '10th percentile intensity'; ...
+        'Intensity','P25',              '25th percentile (1st quartile)'; ...
+        'Intensity','P75',              '75th percentile (3rd quartile)'; ...
+        'Intensity','P90',              '90th percentile intensity'; ...
+        'Shape','Area_mm2',             'Cross-sectional ROI area in the slice plane (mm²)'; ...
+        'Shape','Perimeter_mm',         'Length of the ROI boundary (mm)'; ...
+        'Shape','Sphericity',           '4π·Area/Perimeter²; equals 1 for a perfect circle, <1 for complex shapes'; ...
+        'Shape','Compactness',          'Perimeter²/(4π·Area); inverse of Sphericity; 1 = circle'; ...
+        'Shape','Eccentricity',         'Eccentricity of equivalent ellipse: 0 = circle, 1 = line segment'; ...
+        'Shape','MajorAxis_mm',         'Length of the major axis of the equivalent ellipse (mm)'; ...
+        'Shape','MinorAxis_mm',         'Length of the minor axis of the equivalent ellipse (mm)'; ...
+        'Shape','Elongation',           'MinorAxisLength / MajorAxisLength; 1 = equidimensional'; ...
+        'Shape','Solidity',             'Area / ConvexHullArea; measures convexity (1 = fully convex shape)'; ...
+        'Shape','MaxDiameter_mm',       'Maximum Feret diameter: largest distance between boundary points (mm)'; ...
+        'GLCM','GLCM_Contrast',         'Σ|i−j|²·P(i,j): measures local intensity variation'; ...
+        'GLCM','GLCM_Correlation',      'Linear dependency of gray levels across neighbouring voxels (−1 to 1)'; ...
+        'GLCM','GLCM_Energy',           'Angular Second Moment = Σ P(i,j)²: measures textural uniformity'; ...
+        'GLCM','GLCM_Homogeneity',      'Inverse Difference Moment = Σ P/(1+|i−j|): high = similar neighbours'; ...
+        'GLCM','GLCM_Entropy',          '−Σ P·log₂P: high value = many equally probable co-occurrence pairs'; ...
+        'GLCM','GLCM_Dissimilarity',    'Σ |i−j|·P(i,j): linear contrast penalty (less sensitive than Contrast)'; ...
+        'GLCM','GLCM_Autocorrelation',  'Σ i·j·P(i,j): related to the fineness of image texture'; ...
+        'GLCM','GLCM_ClusterShade',     'Σ(i+j−μᵢ−μⱼ)³·P: skewness of the GLCM; sensitive to asymmetry'; ...
+        'GLCM','GLCM_ClusterProminence','Σ(i+j−μᵢ−μⱼ)⁴·P: higher-order cluster variation; less sensitive to mean'; ...
+        'GLCM','GLCM_MaxProbability',   'Maximum single entry of the GLCM; dominant co-occurrence pair frequency'; ...
+        'GLRLM','GLRLM_SRE',            'Short Run Emphasis = Σ rlm/r²/N; high = many short runs (fine texture)'; ...
+        'GLRLM','GLRLM_LRE',            'Long Run Emphasis = Σ rlm·r²/N; high = many long runs (coarse texture)'; ...
+        'GLRLM','GLRLM_GLNU',           'Gray Level Non-Uniformity = Σ row_sums²/N; low = uniform gray distribution'; ...
+        'GLRLM','GLRLM_RLNU',           'Run Length Non-Uniformity = Σ col_sums²/N; low = uniform run-length distribution'; ...
+        'GLRLM','GLRLM_RunPct',         'Run Percentage = nRuns/nVoxels; high = many short runs, low = few long runs'; ...
+        'GLRLM','GLRLM_LGLRE',          'Low Gray Level Run Emphasis = Σ rlm/g²/N; high = many low-intensity runs'; ...
+        'GLRLM','GLRLM_HGLRE',          'High Gray Level Run Emphasis = Σ rlm·g²/N; high = many high-intensity runs'; ...
+        'GLRLM','GLRLM_SRLGLE',         'Short Run Low Gray Level Emphasis: combined short run + low intensity'; ...
+        'GLRLM','GLRLM_SRHGLE',         'Short Run High Gray Level Emphasis: combined short run + high intensity'; ...
+        'GLRLM','GLRLM_LRLGLE',         'Long Run Low Gray Level Emphasis: combined long run + low intensity'; ...
+        'GLRLM','GLRLM_LRHGLE',         'Long Run High Gray Level Emphasis: combined long run + high intensity'; ...
+        'GLSZM','GLSZM_SAE',            'Small Area Emphasis = Σ P(g,s)/s²/N; high = many small connected zones'; ...
+        'GLSZM','GLSZM_LAE',            'Large Area Emphasis = Σ P(g,s)·s²/N; high = few large zones'; ...
+        'GLSZM','GLSZM_GLNU',           'GLSZM Gray Level Non-Uniformity; low = uniform gray across zones'; ...
+        'GLSZM','GLSZM_SZNU',           'Size Zone Non-Uniformity; low = uniform zone-size distribution'; ...
+        'GLSZM','GLSZM_ZonePct',        'Zone Percentage = nZones/nVoxels; high = heterogeneous, many small zones'; ...
+        'GLSZM','GLSZM_LGLZE',          'Low Gray Level Zone Emphasis; high = many low-intensity connected zones'; ...
+        'GLSZM','GLSZM_HGLZE',          'High Gray Level Zone Emphasis; high = many high-intensity connected zones'; ...
+        'GLSZM','GLSZM_SALGLE',         'Small Area Low Gray Level Emphasis: combined small zone + low intensity'; ...
+        'GLSZM','GLSZM_SAHGLE',         'Small Area High Gray Level Emphasis: combined small zone + high intensity'; ...
+        'GLSZM','GLSZM_LALGLE',         'Large Area Low Gray Level Emphasis: combined large zone + low intensity'; ...
+        'GLSZM','GLSZM_LAHGLE',         'Large Area High Gray Level Emphasis: combined large zone + high intensity'; ...
+    };
 end
 
 function pts = roiResamplePolyline(pos, nVerts)
