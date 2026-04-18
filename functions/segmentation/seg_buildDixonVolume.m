@@ -484,25 +484,55 @@ function dixon = readMultiContrast(series, dixon, opts)
         catch, end
     end
 
-    % When the GE slab fallback was used, ImagePositionPatient is the same
-    % constant for every file (GE 3D degenerate).  io_extractSpatialInfo will
-    % therefore produce an AffineMatrix whose z-origin equals that constant IPP
-    % z (= the slab superior extent, e.g. +127.8 mm) rather than the true
-    % inferior-most slice z.  Patch the z-component of the AffineMatrix origin
-    % (column 4) and ImagePositionFirst with the correct inferior z so that
-    % loc_propagateToSpace computes correct slice positions for landmark matching.
-    if usedGESlabFallback && ~isnan(geInferiorZ) && ...
-       ~isempty(dixon.SpatialInfo) && isfield(dixon.SpatialInfo,'AffineMatrix')
-        A = dixon.SpatialInfo.AffineMatrix;
-        if size(A,1) >= 3 && size(A,2) >= 4
-            A(3,4) = geInferiorZ;
-            dixon.SpatialInfo.AffineMatrix = A;
+    % When ImagePositionPatient is the same constant for every file (GE 3D
+    % degenerate acquisition, e.g. IDEAL-IQ on SIGNA Premier), io_extractSpatialInfo
+    % produces an AffineMatrix whose z-origin equals that constant IPP z
+    % (~ scanner isocenter) rather than the true inferior-most slice z.
+    % Detect degenerate IPP by projecting all IPPs onto the slice normal and
+    % checking the range.  When degenerate, patch the z-component of the
+    % AffineMatrix origin (column 4) and ImagePositionFirst with the correct
+    % inferior-most slice z so loc_propagateToSpace maps landmarks correctly.
+    ippDegenerate = false;
+    if ~all(isnan(imgPos(:))) && ~isempty(iop_ref)
+        try
+            rd = iop_ref(1:3); cd_ = iop_ref(4:6);
+            sn = cross(rd, cd_); sn = sn / max(norm(sn), 1e-9);
+            zp = sn' * imgPos;
+            zpv = zp(~isnan(zp));
+            if ~isempty(zpv)
+                ippDegenerate = (max(zpv) - min(zpv)) < 0.5;
+            end
+        catch, end
+    end
+    if (usedGESlabFallback || ippDegenerate) && ~isempty(dixon.SpatialInfo) && ...
+       isfield(dixon.SpatialInfo,'AffineMatrix')
+        if usedGESlabFallback && ~isnan(geInferiorZ)
+            inferiorZ = geInferiorZ;
+        elseif ~isempty(uniqueLocs) && all(~isnan(uniqueLocs))
+            inferiorZ = min(uniqueLocs);
+        else
+            inferiorZ = NaN;
         end
-        if isfield(dixon.SpatialInfo,'ImagePositionFirst') && ...
-           numel(dixon.SpatialInfo.ImagePositionFirst) >= 3
-            dixon.SpatialInfo.ImagePositionFirst(3) = geInferiorZ;
+        if ~isnan(inferiorZ)
+            A = dixon.SpatialInfo.AffineMatrix;
+            if size(A,1) >= 3 && size(A,2) >= 4
+                A(3,4) = inferiorZ;
+                dixon.SpatialInfo.AffineMatrix = A;
+                M = A(1:3,1:3);
+                if rcond(M) > 1e-10
+                    dixon.SpatialInfo.AffineMatrixInv  = inv(A);
+                    dixon.SpatialInfo.AffineIsSingular = false;
+                else
+                    dixon.SpatialInfo.AffineMatrixInv  = pinv(A);
+                    dixon.SpatialInfo.AffineIsSingular = true;
+                end
+            end
+            if isfield(dixon.SpatialInfo,'ImagePositionFirst') && ...
+               numel(dixon.SpatialInfo.ImagePositionFirst) >= 3
+                dixon.SpatialInfo.ImagePositionFirst(3) = inferiorZ;
+            end
+            vprint(opts, '  Patched AffineMatrix z-origin to %.2f mm (degenerate IPP).', inferiorZ);
         end
-        vprint(opts, '  Patched AffineMatrix z-origin to %.2f mm (inferior-most slice).', geInferiorZ);
     end
 
 
