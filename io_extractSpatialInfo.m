@@ -34,6 +34,7 @@ function sinfo = io_extractSpatialInfo(files, info1, nSlices, nPhases)
 %   AUTHOR  Meng Yin, PhD
 %           Department of Radiology, Mayo Clinic
 %           Email: Yin.Meng@mayo.edu
+%   DATE    April 17, 2026
 
     if nargin < 3, nSlices = numel(files); end
     if nargin < 4, nPhases = 1; end

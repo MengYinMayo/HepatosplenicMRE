@@ -36,6 +36,7 @@ function localizer = loc_loadLocalizer(localizerSeries, opts)
 %   AUTHOR  Meng Yin, PhD
 %           Department of Radiology, Mayo Clinic
 %           Email: Yin.Meng@mayo.edu
+%   DATE    April 17, 2026
 
     if nargin < 2, opts = struct(); end
     opts = applyDefaults(opts, struct('verbose', true));

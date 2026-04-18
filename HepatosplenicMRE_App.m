@@ -26,6 +26,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %   AUTHOR  Meng Yin, PhD
 %           Department of Radiology, Mayo Clinic
 %           Email: Yin.Meng@mayo.edu
+%   DATE    April 17, 2026
 
     % =====================================================================
     %  UI PROPERTIES

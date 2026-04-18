@@ -37,6 +37,7 @@ function W_interp = mre_interpolatePhases(W_raw, nPhasesOut, opts)
 %   AUTHOR  Meng Yin, PhD
 %           Department of Radiology, Mayo Clinic
 %           Email: Yin.Meng@mayo.edu
+%   DATE    April 17, 2026
 
     if nargin < 2 || isempty(nPhasesOut), nPhasesOut = 8; end
     if nargin < 3, opts = struct(); end

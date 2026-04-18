@@ -28,7 +28,7 @@ function selection = mre_selectSeriesGUI(exam)
 %   AUTHOR  Meng Yin, PhD
 %           Department of Radiology, Mayo Clinic
 %           Email: Yin.Meng@mayo.edu
-%   DATE    2026-04
+%   DATE    April 17, 2026
 
     % Default return on cancel
     selection = struct('Localizer',[],'Dixon',[],'DixonGroup',[], ...
