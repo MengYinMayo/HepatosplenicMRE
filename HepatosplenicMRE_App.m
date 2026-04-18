@@ -161,9 +161,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         BtnClearMREROIs     matlab.ui.control.Button
 
         % Results tab
-        ResultsTab          matlab.ui.container.Tab
-        ResultsGrid         matlab.ui.container.GridLayout
-        ResultsTable        matlab.ui.control.Table
+        ResultsTab              matlab.ui.container.Tab
+        ResultsGrid             matlab.ui.container.GridLayout
+        ResultsTable            matlab.ui.control.Table
+        ResultsBtnGrid          matlab.ui.container.GridLayout
+        BtnExportPDFFRadiomics  matlab.ui.control.Button
+        BtnExportMRERadiomics   matlab.ui.control.Button
 
         % ── RIGHT: Feature results ──
         RightPanel          matlab.ui.container.Panel
@@ -1143,15 +1146,39 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         % ── RESULTS TAB ──────────────────────────────────────────────────
         function createResultsTab(app)
             app.ResultsTab = uitab(app.ImageTabGroup,'Title','Results');
-            app.ResultsGrid = uigridlayout(app.ResultsTab,[1 1]);
-            app.ResultsGrid.Padding=[8 8 8 8];
+            app.ResultsGrid = uigridlayout(app.ResultsTab,[2 1]);
+            app.ResultsGrid.Padding    = [8 8 8 8];
+            app.ResultsGrid.RowHeight  = {'1x', 44};
+            app.ResultsGrid.RowSpacing = 6;
 
             app.ResultsTable = uitable(app.ResultsGrid);
-            app.ResultsTable.Layout.Row=1; app.ResultsTable.Layout.Column=1;
-            app.ResultsTable.FontSize=12;
-            app.ResultsTable.ColumnName = {'Measurement','Value','Unit','Notes'};
-            app.ResultsTable.Data       = {'No data yet','—','—','Load a study first'};
-            app.ResultsTable.ColumnWidth= {220,120,80,250};
+            app.ResultsTable.Layout.Row    = 1;
+            app.ResultsTable.Layout.Column = 1;
+            app.ResultsTable.FontSize      = 11;
+            app.ResultsTable.ColumnName    = {'Slice Location','Measurement', ...
+                'Volume (mm³)','Mean Value','Unit','Notes'};
+            app.ResultsTable.Data          = {'—','—','—','—','—', ...
+                'Load a study and draw ROIs first'};
+            app.ResultsTable.ColumnWidth   = {120, 160, 110, 100, 60, 250};
+
+            % Export buttons row
+            app.ResultsBtnGrid = uigridlayout(app.ResultsGrid,[1 3]);
+            app.ResultsBtnGrid.Layout.Row    = 2;
+            app.ResultsBtnGrid.Layout.Column = 1;
+            app.ResultsBtnGrid.Padding       = [0 0 0 0];
+            app.ResultsBtnGrid.ColumnWidth   = {220, 220, '1x'};
+
+            app.BtnExportPDFFRadiomics = uibutton(app.ResultsBtnGrid, ...
+                'Text','Export PDFF Radiomics CSV');
+            app.BtnExportPDFFRadiomics.Layout.Column = 1;
+            app.BtnExportPDFFRadiomics.FontSize      = 12;
+            app.BtnExportPDFFRadiomics.ButtonPushedFcn = @(~,~)app.exportPDFFRadiomicsCSV();
+
+            app.BtnExportMRERadiomics = uibutton(app.ResultsBtnGrid, ...
+                'Text','Export MRE Radiomics CSV');
+            app.BtnExportMRERadiomics.Layout.Column = 2;
+            app.BtnExportMRERadiomics.FontSize      = 12;
+            app.BtnExportMRERadiomics.ButtonPushedFcn = @(~,~)app.exportMRERadiomicsCSV();
         end
 
         % -----------------------------------------------------------------
@@ -1733,6 +1760,15 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AppData.DixonROIFinalMask = [];
             app.AppData.DixonROIErodePx = 2;
             app.AppData.DixonROIDrawing = false;
+            % Set organ-specific default vertex count and sync edit fields.
+            dixonVtxDefaults = struct('LiverDixon',58,'SpleenDixon',58, ...
+                'PsoasDixon',27,'TrunkDixon',58,'SATDixon',100,'VATDixon',58);
+            if isfield(dixonVtxDefaults, roiName)
+                nv = dixonVtxDefaults.(roiName);
+                app.AppData.ROIVertices = nv;
+                try, app.EdtROIVerticesDixon.Value = nv; catch, end
+                try, app.EdtROIVerticesMRE.Value   = nv; catch, end
+            end
             app.setCurrentDixonTargetAxis(app.inferCurrentDixonTargetAxis());
             app.setDixonROIButtonsEnabled(false);
 
@@ -1939,6 +1975,14 @@ function drawMREROI(app, roiName)
     app.AppData.MREROIFinalMask = [];
     app.AppData.MREROIErodePx = 2;
     app.AppData.MREROIDrawing = false;
+    % Set organ-specific default vertex count and sync edit fields.
+    mreVtxDefaults = struct('LiverMRE',58,'SpleenMRE',58,'MuscleMRE',58,'FatMRE',100);
+    if isfield(mreVtxDefaults, roiName)
+        nv = mreVtxDefaults.(roiName);
+        app.AppData.ROIVertices = nv;
+        try, app.EdtROIVerticesDixon.Value = nv; catch, end
+        try, app.EdtROIVerticesMRE.Value   = nv; catch, end
+    end
     app.setCurrentMRETargetAxis(app.inferCurrentMRETargetAxis());
     app.setMREROIButtonsEnabled(false);
     app.updateMREPlaybackButtonEnabled();
@@ -2242,6 +2286,9 @@ function editCurrentMREROIVertices(app)
     bnd  = bndList{maxIdx};          % [row col] pairs
     pos0 = [bnd(:,2), bnd(:,1)];    % convert to [x y] = [col row]
     polyPts = roiResamplePolyline(pos0, nVerts);
+    % Clip to image bounds so no vertex starts outside the visible area.
+    polyPts(:,1) = min(max(polyPts(:,1), 1), nC);
+    polyPts(:,2) = min(max(polyPts(:,2), 1), nR);
 
     % Show editable polygon; block until user double-clicks to confirm
     hPoly = [];
@@ -2468,6 +2515,7 @@ function acceptCurrentMREROI(app)
         setStatus(app, sprintf('%s ROI saved on slice %d, but the stats update failed: %s', app.getMREROIOrganLabel(roiName), sl, strtrim(ME.message)));
         return
     end
+    try, app.updateResultsTable(); catch, end
     refreshMRE(app);
     setStatus(app, sprintf('%s ROI saved on slice %d.', app.getMREROIOrganLabel(roiName), sl));
     app.saveMREROIsToMat();   % persist MRE ROI to exam mat file
@@ -2879,6 +2927,9 @@ function I = getMREMagnitudeForROI(app, sl)
             bnd  = bndList{maxIdx};          % [row col] pairs
             pos0 = [bnd(:,2), bnd(:,1)];     % convert to [x y] = [col row]
             polyPts = roiResamplePolyline(pos0, nVerts);
+            % Clip to image bounds so no vertex starts outside the visible area.
+            polyPts(:,1) = min(max(polyPts(:,1), 1), nC);
+            polyPts(:,2) = min(max(polyPts(:,2), 1), nR);
 
             % Show editable polygon
             hPoly = [];
@@ -2950,6 +3001,7 @@ function I = getMREMagnitudeForROI(app, sl)
                 computeAggregatedDixonROIStats(app, roiName);
             end
             app.cancelDixonROIWorkflow(false);
+            try, app.updateResultsTable(); catch, end
             refreshDixon(app);
             setStatus(app, sprintf('%s ROI accepted on slice %d.', app.getDixonOrganLabel(roiName), sl));
             app.savePDFFMat();  % persist Dixon ROI to exam folder
@@ -3661,7 +3713,13 @@ function setStiffScale(app, newClim)
         % Load MRE ROIs appended to mre_data.mat.
             if ~isfile(matPath), return; end
             try
-                S = load(matPath, 'mreROIs', 'mreLM');
+                % Use whos to discover which variables exist before loading,
+                % avoiding MATLAB's "Variable not found" warning.
+                ws = whos('-file', matPath);
+                varNames = {ws.name};
+                toLoad = intersect(varNames, {'mreROIs','mreLM'});
+                if isempty(toLoad), return; end
+                S = load(matPath, toLoad{:});
                 if isfield(S,'mreROIs')
                     rnames = fieldnames(S.mreROIs);
                     for ri = 1:numel(rnames)
@@ -4142,6 +4200,11 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         function refreshDixon(app)
+            % Do not redraw axes while an ROI polygon is being drawn/edited —
+            % cla() would destroy the drawpolygon object and crash wait().
+            if isfield(app.AppData,'DixonROIDrawing') && app.AppData.DixonROIDrawing
+                return
+            end
             dix = app.AppData.Dixon;
             if isempty(dix), return; end
             sl  = app.AppData.DixonSlice;
@@ -4751,6 +4814,243 @@ function tf = shouldBypassGlobalHotkeys(app)
             end
             if ~isempty(rows)
                 app.ResultsTable.Data = vertcat(rows{:});
+            end
+        end
+
+        function updateResultsTable(app)
+        % Rebuild the Results tab table from all stored ROI measurements.
+        % Rows: one per (organ, slice) combination, showing PDFF and MRE stiffness.
+        % Notes column flags slices within 15 mm of a confirmed disc marker.
+            try
+                rows = {};
+                dix  = app.AppData.Dixon;
+                mre  = app.AppData.MRE;
+
+                % ── Geometry helpers ──────────────────────────────────────
+                dx = 1; dy = 1; dz = 5;
+                dixSliceZ = [];
+                if ~isempty(dix)
+                    try, dx = dix.PixelSpacing_mm(1); dy = dix.PixelSpacing_mm(2); catch, end
+                    try, dz = dix.SliceThickness_mm; catch, end
+                    try, dixSliceZ = buildDixonSliceZ(dix); catch, end
+                end
+                voxVol = dx * dy * dz;   % mm³ per voxel
+
+                % ── Disc landmark proximity helper ────────────────────────
+                lmNames = {'T9T10','T10T11','T11T12','T12L1','L1L2','L2L3','L3L4'};
+                lmShort = {'T9-10','T10-11','T11-12','T12-L1','L1-2','L2-3','L3-4'};
+                PROX_MM = 15;   % show note when within this distance (mm)
+
+                getNote = @(sliceZ) resultsDiscNote(sliceZ, ...
+                    app.AppData.LM_Dixon, lmNames, lmShort, PROX_MM, dixSliceZ);
+
+                % ── PDFF ROI organs ───────────────────────────────────────
+                dixOrgans = { ...
+                    'LiverDixon',  'Fat fraction (liver)'; ...
+                    'SpleenDixon', 'Fat fraction (spleen)'; ...
+                    'PsoasDixon',  'Fat fraction (psoas)'; ...
+                    'TrunkDixon',  'Fat fraction (trunk muscle)'; ...
+                    'SATDixon',    'Fat fraction (SAT)'; ...
+                    'VATDixon',    'Fat fraction (VAT)'};
+
+                if ~isempty(dix) && ~isempty(dix.PDFF)
+                    for oi = 1:size(dixOrgans,1)
+                        rn    = dixOrgans{oi,1};
+                        label = dixOrgans{oi,2};
+                        if ~isfield(app.AppData.ROIs, rn), continue; end
+                        slKeys = fieldnames(app.AppData.ROIs.(rn).Slices);
+                        for ki = 1:numel(slKeys)
+                            key  = slKeys{ki};
+                            sl   = str2double(strrep(key,'sl',''));
+                            mask = logical(app.AppData.ROIs.(rn).Slices.(key));
+                            if ~any(mask(:)), continue; end
+                            nVox = sum(mask(:));
+                            vol  = nVox * voxVol;
+                            % Mean PDFF in ROI
+                            pdffMean = NaN;
+                            if sl >= 1 && sl <= size(dix.PDFF,3)
+                                ff = double(dix.PDFF(:,:,sl));
+                                pdffMean = mean(ff(mask(:)));
+                            end
+                            % Slice location label
+                            slLocTxt = sprintf('Sl%d', sl);
+                            if ~isempty(dixSliceZ) && sl <= numel(dixSliceZ)
+                                slLocTxt = sprintf('Sl%d (%.1fmm)', sl, dixSliceZ(sl));
+                            end
+                            note = getNote(sl);
+                            rows{end+1} = {slLocTxt, label, ...   %#ok<AGROW>
+                                sprintf('%.0f', vol), ...
+                                sprintf('%.1f', pdffMean), '%', note};
+                        end
+                    end
+                end
+
+                % ── MRE stiffness ROI organs ──────────────────────────────
+                mreOrgans = { ...
+                    'LiverMRE',  'Stiffness (liver)'; ...
+                    'SpleenMRE', 'Stiffness (spleen)'; ...
+                    'MuscleMRE', 'Stiffness (muscle)'; ...
+                    'FatMRE',    'Stiffness (fat)'};
+
+                mreSliceZ = [];
+                mreDx = 1; mreDy = 1; mreDz = 5;
+                if ~isempty(mre)
+                    try
+                        mreSliceZ = buildSliceZFromSinfo(mre.SpatialInfo);
+                    catch, end
+                    try, mreDx = mre.PixelSpacing_mm(1); mreDy = mre.PixelSpacing_mm(2); catch, end
+                    try, mreDz = mre.SliceThickness_mm; catch, end
+                end
+                mreVoxVol = mreDx * mreDy * mreDz;
+                getMRENote = @(sl) resultsDiscNote(sl, ...
+                    app.AppData.LM_MRE, lmNames, lmShort, PROX_MM, mreSliceZ);
+
+                if ~isempty(mre) && isfield(mre,'S') && ~isempty(mre.S)
+                    for oi = 1:size(mreOrgans,1)
+                        rn    = mreOrgans{oi,1};
+                        label = mreOrgans{oi,2};
+                        if ~isfield(app.AppData.ROIs, rn), continue; end
+                        slKeys = fieldnames(app.AppData.ROIs.(rn).Slices);
+                        for ki = 1:numel(slKeys)
+                            key  = slKeys{ki};
+                            sl   = str2double(strrep(key,'sl',''));
+                            mask = logical(app.AppData.ROIs.(rn).Slices.(key));
+                            if ~any(mask(:)), continue; end
+                            nVox = sum(mask(:));
+                            vol  = nVox * mreVoxVol;
+                            stiffMean = NaN;
+                            if sl >= 1 && sl <= size(mre.S,3)
+                                st = double(mre.S(:,:,sl));
+                                stiffMean = mean(st(mask(:)));
+                            end
+                            slLocTxt = sprintf('Sl%d', sl);
+                            if ~isempty(mreSliceZ) && sl <= numel(mreSliceZ)
+                                slLocTxt = sprintf('Sl%d (%.1fmm)', sl, mreSliceZ(sl));
+                            end
+                            note = getMRENote(sl);
+                            rows{end+1} = {slLocTxt, label, ...   %#ok<AGROW>
+                                sprintf('%.0f', vol), ...
+                                sprintf('%.2f', stiffMean), 'kPa', note};
+                        end
+                    end
+                end
+
+                if isempty(rows)
+                    rows = {{'—','—','—','—','—','No ROIs drawn yet'}};
+                end
+                app.ResultsTable.Data = vertcat(rows{:});
+            catch ME
+                warning('updateResultsTable:fail', '%s', ME.message);
+            end
+        end
+
+        function exportPDFFRadiomicsCSV(app)
+        % Export first-order radiomics features for all PDFF ROI organs to CSV.
+            dix = app.AppData.Dixon;
+            if isempty(dix) || isempty(dix.PDFF)
+                uialert(app.UIFigure,'No PDFF data loaded.','Export'); return
+            end
+            [fname, fpath] = uiputfile('*.csv','Export PDFF Radiomics CSV', ...
+                'pdff_radiomics.csv');
+            if isequal(fname,0), return; end
+            try
+                setStatus(app,'Computing PDFF radiomics features...');
+                dx = dix.PixelSpacing_mm(1); dy = dix.PixelSpacing_mm(2);
+                dz = dix.SliceThickness_mm;
+                dixSliceZ = [];
+                try, dixSliceZ = buildDixonSliceZ(dix); catch, end
+                organs = {'LiverDixon','SpleenDixon','PsoasDixon', ...
+                          'TrunkDixon','SATDixon','VATDixon'};
+                hdr = ['OrganROI,SliceIndex,SliceLocation_mm,' ...
+                    'VoxelCount,Volume_mm3,Mean,Median,StdDev,' ...
+                    'Skewness,Kurtosis,Energy,Entropy,Min,Max,Range,IQR,' ...
+                    'P10,P25,P75,P90'];
+                lines = {hdr};
+                for oi = 1:numel(organs)
+                    rn = organs{oi};
+                    if ~isfield(app.AppData.ROIs,rn), continue; end
+                    slKeys = fieldnames(app.AppData.ROIs.(rn).Slices);
+                    for ki = 1:numel(slKeys)
+                        key  = slKeys{ki};
+                        sl   = str2double(strrep(key,'sl',''));
+                        mask = logical(app.AppData.ROIs.(rn).Slices.(key));
+                        if ~any(mask(:)) || sl < 1 || sl > size(dix.PDFF,3), continue; end
+                        vals = double(dix.PDFF(:,:,sl));
+                        vals = vals(mask(:));
+                        slZ  = NaN;
+                        if ~isempty(dixSliceZ) && sl <= numel(dixSliceZ)
+                            slZ = dixSliceZ(sl);
+                        end
+                        feat = computeFirstOrderRadiomics(vals, dx*dy*dz);
+                        lines{end+1} = sprintf('%s,%d,%.2f,%d,%.1f,%.3f,%.3f,%.3f,%.4f,%.4f,%.6f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f', ...
+                            rn, sl, slZ, feat.n, feat.vol, feat.mean, feat.median, feat.std, ...
+                            feat.skew, feat.kurt, feat.energy, feat.entropy, ...
+                            feat.mn, feat.mx, feat.range, feat.iqr, ...
+                            feat.p10, feat.p25, feat.p75, feat.p90); %#ok<AGROW>
+                    end
+                end
+                fid = fopen(fullfile(fpath,fname),'w');
+                fprintf(fid,'%s\n',lines{:});
+                fclose(fid);
+                setStatus(app,sprintf('PDFF radiomics exported → %s',fname));
+            catch ME
+                uialert(app.UIFigure, ME.message,'Export Error','Icon','error');
+                setStatus(app,['PDFF radiomics export failed: ' ME.message]);
+            end
+        end
+
+        function exportMRERadiomicsCSV(app)
+        % Export first-order radiomics features for all MRE stiffness ROIs to CSV.
+            mre = app.AppData.MRE;
+            if isempty(mre) || ~isfield(mre,'S') || isempty(mre.S)
+                uialert(app.UIFigure,'No MRE stiffness data loaded.','Export'); return
+            end
+            [fname, fpath] = uiputfile('*.csv','Export MRE Radiomics CSV', ...
+                'mre_radiomics.csv');
+            if isequal(fname,0), return; end
+            try
+                setStatus(app,'Computing MRE radiomics features...');
+                mreDx = 1; mreDy = 1; mreDz = 5;
+                try, mreDx = mre.PixelSpacing_mm(1); mreDy = mre.PixelSpacing_mm(2); catch, end
+                try, mreDz = mre.SliceThickness_mm; catch, end
+                mreSliceZ = [];
+                try, mreSliceZ = buildSliceZFromSinfo(mre.SpatialInfo); catch, end
+                organs = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
+                hdr = ['OrganROI,SliceIndex,SliceLocation_mm,' ...
+                    'VoxelCount,Volume_mm3,Mean,Median,StdDev,' ...
+                    'Skewness,Kurtosis,Energy,Entropy,Min,Max,Range,IQR,' ...
+                    'P10,P25,P75,P90'];
+                lines = {hdr};
+                for oi = 1:numel(organs)
+                    rn = organs{oi};
+                    if ~isfield(app.AppData.ROIs,rn), continue; end
+                    slKeys = fieldnames(app.AppData.ROIs.(rn).Slices);
+                    for ki = 1:numel(slKeys)
+                        key  = slKeys{ki};
+                        sl   = str2double(strrep(key,'sl',''));
+                        mask = logical(app.AppData.ROIs.(rn).Slices.(key));
+                        if ~any(mask(:)) || sl < 1 || sl > size(mre.S,3), continue; end
+                        vals = double(mre.S(:,:,sl));
+                        vals = vals(mask(:));
+                        slZ  = NaN;
+                        if ~isempty(mreSliceZ) && sl <= numel(mreSliceZ)
+                            slZ = mreSliceZ(sl);
+                        end
+                        feat = computeFirstOrderRadiomics(vals, mreDx*mreDy*mreDz);
+                        lines{end+1} = sprintf('%s,%d,%.2f,%d,%.1f,%.3f,%.3f,%.3f,%.4f,%.4f,%.6f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f', ...
+                            rn, sl, slZ, feat.n, feat.vol, feat.mean, feat.median, feat.std, ...
+                            feat.skew, feat.kurt, feat.energy, feat.entropy, ...
+                            feat.mn, feat.mx, feat.range, feat.iqr, ...
+                            feat.p10, feat.p25, feat.p75, feat.p90); %#ok<AGROW>
+                    end
+                end
+                fid = fopen(fullfile(fpath,fname),'w');
+                fprintf(fid,'%s\n',lines{:});
+                fclose(fid);
+                setStatus(app,sprintf('MRE radiomics exported → %s',fname));
+            catch ME
+                uialert(app.UIFigure, ME.message,'Export Error','Icon','error');
+                setStatus(app,['MRE radiomics export failed: ' ME.message]);
             end
         end
 
@@ -6190,6 +6490,73 @@ function mask = optimizeContourBand(polyPts, imgData, nR, nC)
         if ~any(mask(:)), mask = newMask; end
     else
         mask = newMask;
+    end
+end
+
+function note = resultsDiscNote(sl, lmStruct, lmNames, lmShort, proxMm, sliceZ)
+% Build a Notes string flagging when slice sl is within proxMm of a disc marker.
+    note = '';
+    if isempty(sliceZ) || sl < 1 || sl > numel(sliceZ), return; end
+    slZ = sliceZ(sl);
+    parts = {};
+    for ki = 1:numel(lmNames)
+        n = lmNames{ki};
+        if ~isfield(lmStruct, n), continue; end
+        lmSl  = lmStruct.(n).SliceIdx;
+        lmDst = lmStruct.(n).Dist_mm;
+        if isnan(lmSl) || isnan(lmDst), continue; end
+        % Distance from this slice's Z to the landmark's slice Z
+        if lmSl >= 1 && lmSl <= numel(sliceZ)
+            d = abs(slZ - sliceZ(lmSl));
+        else
+            d = abs(sl - lmSl) * (sliceZ(2) - sliceZ(1));
+        end
+        if d <= proxMm
+            parts{end+1} = sprintf('%s (%.1fmm)', lmShort{ki}, d); %#ok<AGROW>
+        end
+    end
+    if ~isempty(parts)
+        note = ['Near: ' strjoin(parts, ', ')];
+    end
+end
+
+function feat = computeFirstOrderRadiomics(vals, voxVol)
+% Compute first-order radiomics features from a vector of ROI voxel values.
+    vals = vals(isfinite(vals));
+    feat.n      = numel(vals);
+    feat.vol    = feat.n * voxVol;
+    if isempty(vals)
+        feat.mean=NaN; feat.median=NaN; feat.std=NaN;
+        feat.skew=NaN; feat.kurt=NaN; feat.energy=NaN; feat.entropy=NaN;
+        feat.mn=NaN;   feat.mx=NaN;   feat.range=NaN;  feat.iqr=NaN;
+        feat.p10=NaN;  feat.p25=NaN;  feat.p75=NaN;    feat.p90=NaN;
+        return
+    end
+    feat.mean   = mean(vals);
+    feat.median = median(vals);
+    feat.std    = std(vals);
+    feat.mn     = min(vals);
+    feat.mx     = max(vals);
+    feat.range  = feat.mx - feat.mn;
+    feat.iqr    = iqr(vals);
+    feat.p10    = prctile(vals, 10);
+    feat.p25    = prctile(vals, 25);
+    feat.p75    = prctile(vals, 75);
+    feat.p90    = prctile(vals, 90);
+    % Skewness and kurtosis
+    try, feat.skew = skewness(vals); catch, feat.skew = NaN; end
+    try, feat.kurt = kurtosis(vals); catch, feat.kurt = NaN; end
+    % Energy (sum of squares, normalised by n)
+    feat.energy = sum(vals.^2) / max(feat.n, 1);
+    % Entropy (histogram-based, 64 bins)
+    try
+        edges = linspace(feat.mn - eps, feat.mx + eps, 65);
+        counts = histcounts(vals, edges);
+        p = counts / sum(counts);
+        p = p(p > 0);
+        feat.entropy = -sum(p .* log2(p));
+    catch
+        feat.entropy = NaN;
     end
 end
 
