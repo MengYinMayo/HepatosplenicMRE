@@ -33,7 +33,9 @@ function localizer = loc_loadLocalizer(localizerSeries, opts)
 %
 %   SEE ALSO  loc_detectL1L2, loc_propagateToSpace, mre_parseDICOMExam
 %
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3
+%   AUTHOR  Meng Yin, PhD
+%           Department of Radiology, Mayo Clinic
+%           Email: Yin.Meng@mayo.edu
 
     if nargin < 2, opts = struct(); end
     opts = applyDefaults(opts, struct('verbose', true));

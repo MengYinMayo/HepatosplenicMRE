@@ -34,7 +34,9 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
 %
 %   SEE ALSO  mre_selectSeriesGUI, seg_L1L2ROIGui, loc_propagateToSpace
 %
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3
+%   AUTHOR  Meng Yin, PhD
+%           Department of Radiology, Mayo Clinic
+%           Email: Yin.Meng@mayo.edu
 
     if nargin < 2, opts = struct(); end
     opts = applyDefaults(opts, struct('verbose', true));

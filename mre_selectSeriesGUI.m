@@ -25,7 +25,9 @@ function selection = mre_selectSeriesGUI(exam)
 %     contains 'ip','op','in-phase','out') are shown in the Dixon section so
 %     the user can select them for PDFF estimation.
 %
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3
+%   AUTHOR  Meng Yin, PhD
+%           Department of Radiology, Mayo Clinic
+%           Email: Yin.Meng@mayo.edu
 %   DATE    2026-04
 
     % Default return on cancel

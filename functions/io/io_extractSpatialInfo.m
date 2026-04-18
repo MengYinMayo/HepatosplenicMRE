@@ -31,7 +31,9 @@ function sinfo = io_extractSpatialInfo(files, info1, nSlices, nPhases)
 %
 %   SEE ALSO  io_readDICOMSeries, harm_resampleVolume
 %
-%   AUTHOR  HepatosplenicMRE Platform — Phase 2
+%   AUTHOR  Meng Yin, PhD
+%           Department of Radiology, Mayo Clinic
+%           Email: Yin.Meng@mayo.edu
 
     if nargin < 3, nSlices = numel(files); end
     if nargin < 4, nPhases = 1; end

@@ -49,7 +49,9 @@ function matPath = mre_buildMATFile(exam, opts)
 %   SEE ALSO  mre_parseDICOMExam, mre_readWaveMagSeries, mre_interpolatePhases,
 %             mmdi_roi_gui
 %
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3
+%   AUTHOR  Meng Yin, PhD
+%           Department of Radiology, Mayo Clinic
+%           Email: Yin.Meng@mayo.edu
 
     if nargin < 2, opts = struct(); end
     opts = applyDefaults(opts, struct( ...

@@ -34,7 +34,9 @@ function W_interp = mre_interpolatePhases(W_raw, nPhasesOut, opts)
 %
 %   SEE ALSO  mre_buildMATFile, mmdi_roi_gui
 %
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3
+%   AUTHOR  Meng Yin, PhD
+%           Department of Radiology, Mayo Clinic
+%           Email: Yin.Meng@mayo.edu
 
     if nargin < 2 || isempty(nPhasesOut), nPhasesOut = 8; end
     if nargin < 3, opts = struct(); end

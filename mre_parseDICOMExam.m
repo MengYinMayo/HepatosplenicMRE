@@ -36,7 +36,9 @@ function exam = mre_parseDICOMExam(examRootDir, opts)
 %     exam = mre_parseDICOMExam('\\server\share\PatientExam');
 %     exam = mre_parseDICOMExam(path, struct('verbose', true, 'maxDepth', 3));
 %
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3  (network-optimised)
+%   AUTHOR  Meng Yin, PhD
+%           Department of Radiology, Mayo Clinic
+%           Email: Yin.Meng@mayo.edu
 
     if nargin < 2, opts = struct(); end
     opts = applyDefaults(opts, struct( ...

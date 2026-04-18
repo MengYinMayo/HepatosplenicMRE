@@ -42,7 +42,9 @@ function L12out = loc_propagateToSpace(L12, targetSpatialInfo, opts)
 %
 %   SEE ALSO  loc_detectL1L2, loc_loadLocalizer, io_extractSpatialInfo
 %
-%   AUTHOR  HepatosplenicMRE Platform — Phase 3
+%   AUTHOR  Meng Yin, PhD
+%           Department of Radiology, Mayo Clinic
+%           Email: Yin.Meng@mayo.edu
 
     if nargin < 3, opts = struct(); end
     opts = applyDefaults(opts, struct('verbose', true, 'interpolate', true));
