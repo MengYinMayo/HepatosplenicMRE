@@ -254,6 +254,29 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
         end
     end
 
+    % Ensure SliceLocations is populated AND the AffineMatrix z-origin is
+    % patched for degenerate IPP, even when SpatialInfo was filled by a
+    % path that bypasses fillSpatialInfo (e.g. readPDFFSeries directly
+    % assigns its sinfo, or readMultiContrast).  Walk dixonGroup to find a
+    % series whose file count matches the loaded volume's slice count.
+    nZGuess = 0;
+    for kfld = {'Water','Fat','InPhase','OutPhase','PDFF','T2star'}
+        v = dixon.(kfld{1});
+        if ~isempty(v), nZGuess = max(nZGuess, size(v,3)); end
+    end
+    needLocs = isempty(dixon.SliceLocations) || ...
+               numel(unique(round(double(dixon.SliceLocations(:)'),1))) <= 1 || ...
+               (nZGuess > 0 && numel(dixon.SliceLocations) ~= nZGuess);
+    if needLocs && nZGuess > 0
+        for k = 1:numel(dixonGroup)
+            f = dixonGroup(k).Files;
+            if ~isempty(f) && numel(f) == nZGuess
+                dixon = populateLocsAndPatch(dixon, f);
+                if ~isempty(dixon.SliceLocations), break; end
+            end
+        end
+    end
+
     % ── 5.  Summary ───────────────────────────────────────────────────
     if ~isempty(dixon.Water)
         dixon.nSlices = size(dixon.Water, 3);
@@ -793,9 +816,104 @@ end
 
 function dixon = fillSpatialInfo(dixon, files)
     try
+        nFiles = numel(files);
+        if nFiles < 1, return; end
         hdr1 = dicominfo(files{1}, 'UseDictionaryVR', true);
-        nZ   = numel(files);
+        [sliceLocs, imgPos, iop_ref] = readSeriesSliceMeta(files);
+        uniqueLocs = unique(sliceLocs(~isnan(sliceLocs)));
+        nZ = numel(uniqueLocs);
+        if nZ < 1, nZ = nFiles; end
         dixon.SpatialInfo = io_extractSpatialInfo(files, hdr1, nZ, 1);
+        if ~isempty(uniqueLocs) && (isempty(dixon.SliceLocations) || ...
+                                    numel(unique(round(double(dixon.SliceLocations(:)'),1))) <= 1)
+            dixon.SliceLocations = sort(uniqueLocs(:)');
+        end
+        dixon.SpatialInfo = patchSinfoForDegenerateIPP( ...
+            dixon.SpatialInfo, imgPos, iop_ref, uniqueLocs);
+    catch
+    end
+end
+
+function dixon = populateLocsAndPatch(dixon, files)
+% Read SliceLocations from `files` and populate dixon.SliceLocations
+% (without overwriting dixon.SpatialInfo).  Also patch the existing
+% SpatialInfo.AffineMatrix z-origin if ImagePositionPatient is degenerate.
+    try
+        if isempty(files), return; end
+        [sliceLocs, imgPos, iop_ref] = readSeriesSliceMeta(files);
+        uniqueLocs = unique(sliceLocs(~isnan(sliceLocs)));
+        if ~isempty(uniqueLocs) && (isempty(dixon.SliceLocations) || ...
+                                    numel(unique(round(double(dixon.SliceLocations(:)'),1))) <= 1 || ...
+                                    numel(dixon.SliceLocations) ~= numel(uniqueLocs))
+            dixon.SliceLocations = sort(uniqueLocs(:)');
+        end
+        if ~isempty(dixon.SpatialInfo) && isfield(dixon.SpatialInfo,'AffineMatrix')
+            dixon.SpatialInfo = patchSinfoForDegenerateIPP( ...
+                dixon.SpatialInfo, imgPos, iop_ref, uniqueLocs);
+        end
+    catch
+    end
+end
+
+function [sliceLocs, imgPos, iop_ref] = readSeriesSliceMeta(files)
+% Read SliceLocation, ImagePositionPatient and ImageOrientationPatient
+% from every file in a series.
+    nFiles = numel(files);
+    sliceLocs = nan(1, nFiles);
+    imgPos    = nan(3, nFiles);
+    iop_ref   = [];
+    for k = 1:nFiles
+        try
+            inf = dicominfo(files{k}, 'UseDictionaryVR', true);
+            if isfield(inf,'SliceLocation') && ~isempty(inf.SliceLocation)
+                sliceLocs(k) = double(inf.SliceLocation);
+            end
+            if isfield(inf,'ImagePositionPatient') && numel(inf.ImagePositionPatient)==3
+                imgPos(:,k) = double(inf.ImagePositionPatient(:));
+            end
+            if isempty(iop_ref) && isfield(inf,'ImageOrientationPatient') && ...
+               numel(inf.ImageOrientationPatient)==6
+                iop_ref = double(inf.ImageOrientationPatient(:));
+            end
+        catch, end
+    end
+end
+
+function sinfo = patchSinfoForDegenerateIPP(sinfo, imgPos, iop_ref, uniqueLocs)
+% Patch the z-origin of sinfo.AffineMatrix when all ImagePositionPatient
+% values share one constant z (degenerate 3D acquisition).
+    if isempty(sinfo) || ~isfield(sinfo,'AffineMatrix') || ...
+       isempty(imgPos) || all(isnan(imgPos(:))) || isempty(iop_ref) || ...
+       isempty(uniqueLocs)
+        return
+    end
+    try
+        rd = iop_ref(1:3); cd_ = iop_ref(4:6);
+        sn = cross(rd(:), cd_(:)); sn = sn / max(norm(sn), 1e-9);
+        zp = sn(:)' * imgPos;
+        zpv = zp(~isnan(zp));
+        if isempty(zpv) || (max(zpv) - min(zpv)) >= 0.5
+            return
+        end
+        inferiorZ = min(uniqueLocs);
+        if isnan(inferiorZ), return; end
+        A = sinfo.AffineMatrix;
+        if size(A,1) >= 3 && size(A,2) >= 4
+            A(3,4) = inferiorZ;
+            sinfo.AffineMatrix = A;
+            M = A(1:3,1:3);
+            if rcond(M) > 1e-10
+                sinfo.AffineMatrixInv  = inv(A);
+                sinfo.AffineIsSingular = false;
+            else
+                sinfo.AffineMatrixInv  = pinv(A);
+                sinfo.AffineIsSingular = true;
+            end
+        end
+        if isfield(sinfo,'ImagePositionFirst') && ...
+           numel(sinfo.ImagePositionFirst) >= 3
+            sinfo.ImagePositionFirst(3) = inferiorZ;
+        end
     catch
     end
 end
