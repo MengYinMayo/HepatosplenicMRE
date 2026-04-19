@@ -43,9 +43,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         % Toolbar
         ToolbarPanel        matlab.ui.container.Panel
         BtnLoadStudy        matlab.ui.control.Button
-        BtnRunPipeline      matlab.ui.control.Button
         BtnConfirmL12       matlab.ui.control.Button
-        BtnExportCSV        matlab.ui.control.Button
         LblPatientInfo      matlab.ui.control.Label
 
         % Body layout
@@ -406,8 +404,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 'MenuSelectedFcn',@(~,~)app.setStiffScaleCustom());
 
             app.ExportMenu = uimenu(app.UIFigure,'Text','Export');
-            uimenu(app.ExportMenu,'Text','Export Features (CSV)...', ...
-                'Accelerator','E','MenuSelectedFcn',@(~,~)app.exportCSV());
             uimenu(app.ExportMenu,'Text','Export ROI Masks (MAT)...', ...
                 'MenuSelectedFcn',@(~,~)app.exportROIs());
             uimenu(app.ExportMenu,'Text','Export Report (PDF)...', ...
@@ -432,8 +428,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.ToolbarPanel.BorderType    = 'none';
             app.ToolbarPanel.BackgroundColor = [0.93 0.93 0.93];
 
-            tg = uigridlayout(app.ToolbarPanel,[1 6]);
-            tg.ColumnWidth   = {150,150,160,140,8,'1x'};
+            tg = uigridlayout(app.ToolbarPanel,[1 4]);
+            tg.ColumnWidth   = {150,160,8,'1x'};
             tg.RowHeight     = {'1x'};
             tg.Padding       = [8 7 8 7];
             tg.ColumnSpacing = 6;
@@ -443,29 +439,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.BtnLoadStudy.ButtonPushedFcn = @(~,~)app.loadStudy();
             app.BtnLoadStudy.Tooltip = 'Load DICOM exam, select series, build MAT';
 
-            app.BtnRunPipeline = mkBtn(tg,2,'Run Pipeline', ...
-                [0.18 0.60 0.34],[1 1 1],14);
-            app.BtnRunPipeline.ButtonPushedFcn = @(~,~)app.runPipeline();
-            app.BtnRunPipeline.Tooltip = 'Run full analysis pipeline';
-            app.BtnRunPipeline.Enable  = 'off';
-
-            app.BtnConfirmL12 = mkBtn(tg,3,'Confirm T9-L4', ...
+            app.BtnConfirmL12 = mkBtn(tg,2,'Confirm T9-L4', ...
                 [0.58 0.29 0.07],[1 1 1],14);
             app.BtnConfirmL12.ButtonPushedFcn = @(~,~)app.confirmL12();
             app.BtnConfirmL12.Tooltip = 'Confirm T9-L4 levels and propagate to Dixon/MRE';
             app.BtnConfirmL12.Enable  = 'off';
 
-            app.BtnExportCSV = mkBtn(tg,4,'Export CSV', ...
-                [0.88 0.88 0.88],[0.2 0.2 0.2],14);
-            app.BtnExportCSV.ButtonPushedFcn = @(~,~)app.exportCSV();
-            app.BtnExportCSV.Enable = 'off';
-
-            sep = uilabel(tg); sep.Layout.Column=5;
+            sep = uilabel(tg); sep.Layout.Column=3;
             sep.Text='|'; sep.FontColor=[0.7 0.7 0.7];
             sep.HorizontalAlignment='center';
 
             app.LblPatientInfo = uilabel(tg);
-            app.LblPatientInfo.Layout.Column = 6;
+            app.LblPatientInfo.Layout.Column = 4;
             app.LblPatientInfo.Text      = 'No study loaded';
             app.LblPatientInfo.FontSize  = 13;
             app.LblPatientInfo.FontColor = [0.45 0.45 0.45];
@@ -1368,7 +1353,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                         updateAllMREStats(app);
                     end
 
-                    app.BtnRunPipeline.Enable = 'on';
                     app.BtnConfirmL12.Enable  = 'on';
                     setStatus(app, 'Session restored from saved data.');
                     try, app.updateResultsTable(); catch, end
@@ -1441,7 +1425,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
                     app.LblPatientInfo.Text = sprintf('%s  |  %s  |  %s', ...
                         exam.PatientID, exam.StudyDate, exam.MREType);
-                    app.BtnRunPipeline.Enable  = 'on';
                     app.BtnConfirmL12.Enable   = 'on';
 
                     updateStudyBrowser(app, exam, selection);
@@ -1455,22 +1438,6 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 setStatus(app,['ERROR: ' ME.message]);
             end
             if isvalid(dlg), close(dlg); end
-        end
-
-        % ── RUN FULL PIPELINE ─────────────────────────────────────────────
-        function runPipeline(app)
-            if isempty(app.AppData.Exam)
-                uialert(app.UIFigure,'Please load a study first.','No Study');
-                return
-            end
-            uialert(app.UIFigure, ...
-                sprintf(['Full automated pipeline (Phase 4-6) is not yet implemented.\n\n' ...
-                         'Use the manual workflow:\n' ...
-                         '  1. Localizer tab → mark T9 to L4, then Confirm T9-L4\n' ...
-                         '  2. Dixon tab → draw Liver, Spleen, Muscle, SAT ROIs\n' ...
-                         '  3. MRE tab → draw Liver and Spleen stiffness ROIs\n' ...
-                         '  4. Export CSV when done']), ...
-                'Pipeline Not Yet Implemented', 'Icon', 'info');
         end
 
         % ── LOCALIZER / L1-L2 ────────────────────────────────────────────
@@ -3485,9 +3452,6 @@ function setStiffScale(app, newClim)
         end
 
         % ── EXPORT / MISC ─────────────────────────────────────────────────
-        function exportCSV(app)
-            setStatus(app,'[Phase 7] Export CSV — not yet implemented.');
-        end
         function exportROIs(app)
         % Export all accepted ROI binary masks + polygon vertices to a MAT file.
         % Each ROI entry contains:
