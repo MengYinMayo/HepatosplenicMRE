@@ -1,5 +1,5 @@
 classdef HepatosplenicMRE_App < matlab.apps.AppBase
-% HepatosplenicMRE_App  v2.0 — Unified single-window analysis platform.
+% HepatosplenicMRE_App  — Abdominal MRI/MRE Analysis (version 1.0, M.Y. April 17, 2026)
 %
 %   All processing, image viewing, and ROI placement occurs inside this
 %   one window. No separate pop-up figures.
@@ -348,7 +348,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function createComponents(app)
             app.UIFigure = uifigure('Visible','off');
             app.UIFigure.Position  = [20 20 1440 860];
-            app.UIFigure.Name      = 'HepatosplenicMRE Analysis Platform  v2.0';
+            app.UIFigure.Name      = 'Abdominal MRI/MRE Analysis (version 1.0, M.Y. April 17, 2026)';
             app.UIFigure.Resize    = 'on';
             app.UIFigure.CloseRequestFcn = @(~,~) app.onClose();
             app.UIFigure.WindowKeyPressFcn = @(~,e) app.onKeyPress(e);
@@ -3773,7 +3773,8 @@ function setStiffScale(app, newClim)
             % Placeholder
         end
         function showAbout(~)
-            msgbox(sprintf(['HepatosplenicMRE Platform  v2.0\n\n' ...
+            msgbox(sprintf(['Abdominal MRI/MRE Analysis\n' ...
+                '(version 1.0, M.Y. April 17, 2026)\n\n' ...
                 'Mayo Clinic\nPI: Meng Yin, PhD']), ...
                 'About','help');
         end
