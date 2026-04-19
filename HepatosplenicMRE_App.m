@@ -1371,6 +1371,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     app.BtnRunPipeline.Enable = 'on';
                     app.BtnConfirmL12.Enable  = 'on';
                     setStatus(app, 'Session restored from saved data.');
+                    try, app.updateResultsTable(); catch, end
 
                 else
                     % ── Full DICOM load path ─────────────────────────────────
@@ -3680,6 +3681,7 @@ function setStiffScale(app, newClim)
                 app.refreshLocCoronal(); app.refreshLocSagittal();
                 updateDixonJumpButtons(app);
                 updateAllDixonStats(app);
+                try, app.updateResultsTable(); catch, end
                 if hasDixon && hasLoc
                     setStatus(app,'Loaded saved session data from pdff.mat.');
                 elseif hasDixon
@@ -3797,6 +3799,7 @@ function setStiffScale(app, newClim)
                 if ~isempty(app.AppData.MRE)
                     refreshMRE(app); updateAllMREStats(app);
                 end
+                try, app.updateResultsTable(); catch, end
                 setStatus(app, sprintf('Session loaded ← %s', fname));
             catch ME
                 uialert(app.UIFigure, ME.message, 'Load Failed');
