@@ -1288,7 +1288,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.resetExamAppData();
 
             % Check for previously saved session files
-            pdffPath   = fullfile(folderPath, 'pdff.mat');
+            pdffPath   = fullfile(folderPath, 'pdff_data.mat');
             mreMatPath = fullfile(folderPath, 'mre_data.mat');
             hasPdff    = isfile(pdffPath);
             hasMreMat  = isfile(mreMatPath);
@@ -1296,7 +1296,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             if hasPdff || hasMreMat
                 found = {};
-                if hasPdff,   found{end+1} = 'pdff.mat  (Dixon images + landmarks + ROIs)'; end
+                if hasPdff,   found{end+1} = 'pdff_data.mat  (Dixon images + landmarks + ROIs)'; end
                 if hasMreMat, found{end+1} = 'mre_data.mat  (MRE data + ROIs)'; end
                 msg = sprintf('Previous session data found:\n  \x2022 %s\n\nLoad from saved files (fast, ROIs preserved) or re-select series from DICOM (overwrites saved data)?', ...
                     strjoin(found, sprintf('\n  \x2022 ')));
@@ -1316,9 +1316,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     app.AppData.MATPath  = mreMatPath;
 
                     if hasPdff
-                        dlg.Message = 'Loading from pdff.mat...';
+                        dlg.Message = 'Loading from pdff_data.mat...';
                         loadPDFFMat(app, folderPath);   % loads Dixon + Localizer + ROIs + LMs
-                        % Patient info from pdff.mat metadata
+                        % Patient info from pdff_data.mat metadata
                         try
                             S = load(pdffPath, 'pdff');
                             p = S.pdff;
@@ -1332,9 +1332,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                         % Warn if the saved file predates image storage
                         if isempty(app.AppData.Dixon)
                             uialert(app.UIFigure, ...
-                                ['pdff.mat does not contain Dixon images (saved with an older version).' ...
+                                ['pdff_data.mat does not contain Dixon images (saved with an older version).' ...
                                  newline newline ...
-                                 'Click OK, then use "Re-select from DICOM" to rebuild pdff.mat ' ...
+                                 'Click OK, then use "Re-select from DICOM" to rebuild pdff_data.mat ' ...
                                  'with images included. Your ROIs and landmarks are still loaded.'], ...
                                 'Dixon Images Missing', 'Icon','warning');
                         end
@@ -1356,6 +1356,14 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     app.BtnConfirmL12.Enable  = 'on';
                     setStatus(app, 'Session restored from saved data.');
                     try, app.updateResultsTable(); catch, end
+                    % Surface any pre-existing radiomics exports in this folder
+                    csvFound = {};
+                    if isfile(fullfile(folderPath,'pdff_radiomics.csv')), csvFound{end+1}='pdff_radiomics.csv'; end
+                    if isfile(fullfile(folderPath,'mre_radiomics.csv')),  csvFound{end+1}='mre_radiomics.csv';  end
+                    if ~isempty(csvFound)
+                        setStatus(app, sprintf('Session restored. Previous radiomics exports found: %s', ...
+                            strjoin(csvFound,', ')));
+                    end
 
                 else
                     % ── Full DICOM load path ─────────────────────────────────
@@ -1402,10 +1410,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                         populateDixonTab(app);
                     end
 
-                    % Save pdff.mat now (with Dixon images + Localizer) so the
+                    % Save pdff_data.mat now (with Dixon images + Localizer) so the
                     % fast-path reload works even before any ROI is accepted.
                     % Then re-apply any previously saved landmarks/ROIs on top.
-                    dlg.Message = 'Saving pdff.mat...';
+                    dlg.Message = 'Saving pdff_data.mat...';
                     app.savePDFFMat();
                     if hasPdff
                         loadPDFFMat(app, folderPath);
@@ -1680,7 +1688,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblL12Status.Text = sprintf('%d/7 disc levels confirmed and propagated.', ...
                 sum(~isnan(cellfun(@(n)app.AppData.LM_Dixon.(n).SliceIdx, lmNames))));
             activateTab(app,'dixon');
-            app.savePDFFMat();   % persist disc marks to pdff.mat
+            app.savePDFFMat();   % persist disc marks to pdff_data.mat
         end
 
         % Legacy alias
@@ -3546,7 +3554,7 @@ function setStiffScale(app, newClim)
 
         function savePDFFMat(app)
         % Save disc landmarks + Dixon ROIs + Dixon image volumes + Localizer into
-        % pdff.mat so the exam can be fully restored without re-selecting DICOM series.
+        % pdff_data.mat so the exam can be fully restored without re-selecting DICOM series.
             examPath = '';
             try, examPath = app.AppData.ExamPath; catch, end
             if isempty(examPath) || ~isfolder(examPath), return; end
@@ -3581,17 +3589,17 @@ function setStiffScale(app, newClim)
                     n = dixonROINames{ri};
                     if isfield(rois, n), pdff.ROIs.(n) = rois.(n); end
                 end
-                save(fullfile(examPath,'pdff.mat'), 'pdff', '-v7.3');
+                save(fullfile(examPath,'pdff_data.mat'), 'pdff', '-v7.3');
             catch ME
-                warning('savePDFFMat:fail','Could not save pdff.mat: %s', ME.message);
+                warning('savePDFFMat:fail','Could not save pdff_data.mat: %s', ME.message);
             end
         end
 
         function loadPDFFMat(app, examPath)
-        % Load from pdff.mat: landmarks, ROIs, Dixon volumes, Localizer.
+        % Load from pdff_data.mat: landmarks, ROIs, Dixon volumes, Localizer.
         % When DixonData and LocalizerData are present (saved since v2.1),
         % the Dixon and Localizer tabs are fully populated without DICOM access.
-            matFile = fullfile(examPath, 'pdff.mat');
+            matFile = fullfile(examPath, 'pdff_data.mat');
             if ~isfile(matFile), return; end
             try
                 S = load(matFile, 'pdff');
@@ -3647,14 +3655,14 @@ function setStiffScale(app, newClim)
                 updateAllDixonStats(app);
                 try, app.updateResultsTable(); catch, end
                 if hasDixon && hasLoc
-                    setStatus(app,'Loaded saved session data from pdff.mat.');
+                    setStatus(app,'Loaded saved session data from pdff_data.mat.');
                 elseif hasDixon
-                    setStatus(app,'Loaded pdff.mat — Dixon restored; no scout images (re-select from DICOM to add them).');
+                    setStatus(app,'Loaded pdff_data.mat — Dixon restored; no scout images (re-select from DICOM to add them).');
                 else
-                    setStatus(app,'Loaded pdff.mat — ROIs and landmarks restored; no Dixon images (re-select from DICOM to rebuild).');
+                    setStatus(app,'Loaded pdff_data.mat — ROIs and landmarks restored; no Dixon images (re-select from DICOM to rebuild).');
                 end
             catch ME
-                warning('loadPDFFMat:fail','Could not load pdff.mat: %s', ME.message);
+                warning('loadPDFFMat:fail','Could not load pdff_data.mat: %s', ME.message);
             end
         end
 
@@ -4923,8 +4931,12 @@ function tf = shouldBypassGlobalHotkeys(app)
             if isempty(dix) || isempty(dix.PDFF)
                 uialert(app.UIFigure,'No PDFF data loaded.','Export'); return
             end
-            [fname, fpath] = uiputfile('*.csv','Export PDFF Radiomics CSV','pdff_radiomics.csv');
-            if isequal(fname,0), return; end
+            examPath = '';
+            try, examPath = app.AppData.ExamPath; catch, end
+            if isempty(examPath) || ~isfolder(examPath)
+                uialert(app.UIFigure,'No exam folder set — load a study first.','Export'); return
+            end
+            outFile = fullfile(examPath, 'pdff_radiomics.csv');
             try
                 setStatus(app,'Computing PDFF radiomics features (this may take a moment)...');
                 drawnow;
@@ -4952,10 +4964,10 @@ function tf = shouldBypassGlobalHotkeys(app)
                         lines{end+1} = row; %#ok<AGROW>
                     end
                 end
-                fid = fopen(fullfile(fpath,fname),'w');
+                fid = fopen(outFile,'w');
                 fprintf(fid,'%s\n',lines{:});
                 fclose(fid);
-                setStatus(app,sprintf('PDFF radiomics exported → %s',fname));
+                setStatus(app,sprintf('PDFF radiomics saved → %s', outFile));
             catch ME
                 uialert(app.UIFigure, ME.message,'Export Error','Icon','error');
                 setStatus(app,['PDFF radiomics export failed: ' ME.message]);
@@ -4967,8 +4979,12 @@ function tf = shouldBypassGlobalHotkeys(app)
             if isempty(mre) || ~isfield(mre,'S') || isempty(mre.S)
                 uialert(app.UIFigure,'No MRE stiffness data loaded.','Export'); return
             end
-            [fname, fpath] = uiputfile('*.csv','Export MRE Radiomics CSV','mre_radiomics.csv');
-            if isequal(fname,0), return; end
+            examPath = '';
+            try, examPath = app.AppData.ExamPath; catch, end
+            if isempty(examPath) || ~isfolder(examPath)
+                uialert(app.UIFigure,'No exam folder set — load a study first.','Export'); return
+            end
+            outFile = fullfile(examPath, 'mre_radiomics.csv');
             try
                 setStatus(app,'Computing MRE radiomics features (this may take a moment)...');
                 drawnow;
@@ -4997,10 +5013,10 @@ function tf = shouldBypassGlobalHotkeys(app)
                         lines{end+1} = row; %#ok<AGROW>
                     end
                 end
-                fid = fopen(fullfile(fpath,fname),'w');
+                fid = fopen(outFile,'w');
                 fprintf(fid,'%s\n',lines{:});
                 fclose(fid);
-                setStatus(app,sprintf('MRE radiomics exported → %s',fname));
+                setStatus(app,sprintf('MRE radiomics saved → %s', outFile));
             catch ME
                 uialert(app.UIFigure, ME.message,'Export Error','Icon','error');
                 setStatus(app,['MRE radiomics export failed: ' ME.message]);
