@@ -2,7 +2,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 % HepatosplenicMRE_App  — Abdominal MRI/MRE Analysis (Version 1.0, M.Y., April 17, 2026)
 %
 %   All processing, image viewing, and ROI placement occurs inside this
-%   one window. No separate pop-up figures.
+%   one window. ROI drawing uses a magnified popup window for precision.
 %
 %   TABS
 %     Localizer  Scrollable coronal + sagittal; interactive L1/L2 placement
@@ -312,6 +312,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'MREROIErodePx', 2, ...
             'MRETargetAxis', 'mag', ...
             'MREROIDrawing', false, ...
+            'MREROIPopupFig',   [], ...      % magnified drawing popup figure
             'DixonROIActive',   false, ...
             'DixonROIName',     '', ...
             'DixonROISlice',    NaN, ...
@@ -319,6 +320,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'DixonROIFinalMask', [], ...
             'DixonROIErodePx',  2, ...
             'DixonROIDrawing',  false, ...
+            'DixonROIPopupFig', [], ...      % magnified drawing popup figure
             'DixonTargetAxis',  'pdff', ...  % 'pdff'|'water'|'fat'
             'ROIVertices',      47, ...      % polygon vertex count after freehand
             'ROIs',         struct( ...   % all ROI masks
@@ -715,7 +717,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxDixonPDFF = uiaxes(leftG);
             app.AxDixonPDFF.Layout.Row = 1;
             setupDarkAxes(app.AxDixonPDFF,'PDFF (%)');
-            app.AxDixonPDFF.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('pdff');
+            app.AxDixonPDFF.ButtonDownFcn = @(~,~)app.onDixonPanelClick('pdff');
 
             % Water W/L row (under PDFF)
             wWLrow = uigridlayout(leftG,[1 5]);
@@ -771,7 +773,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxDixonIP = uiaxes(rightG);
             app.AxDixonIP.Layout.Row = 1;
             setupDarkAxes(app.AxDixonIP,'Water');
-            app.AxDixonIP.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('water');
+            app.AxDixonIP.ButtonDownFcn = @(~,~)app.onDixonPanelClick('water');
 
             % Nav row: Prev / slice label / Next
             navG = uigridlayout(rightG,[1 3]);
@@ -802,7 +804,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxDixonWater = uiaxes(rightG);
             app.AxDixonWater.Layout.Row = 3;
             setupDarkAxes(app.AxDixonWater,'Fat');
-            app.AxDixonWater.ButtonDownFcn = @(~,~)app.setCurrentDixonTargetAxis('fat');
+            app.AxDixonWater.ButtonDownFcn = @(~,~)app.onDixonPanelClick('fat');
 
             % Keep the legacy ROI drawing path anchored to the PDFF panel.
             app.AxDixon = app.AxDixonPDFF;
@@ -933,19 +935,19 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxMREStiff.Layout.Row=[1 3]; app.AxMREStiff.Layout.Column=1;
             setupDarkAxes(app.AxMREStiff,'Stiffness (kPa)');
             colormap(app.AxMREStiff, mreStiffCmap());
-            app.AxMREStiff.ButtonDownFcn = @(~,~)app.setCurrentMRETargetAxis('stiff');
+            app.AxMREStiff.ButtonDownFcn = @(~,~)app.onMREPanelClick('stiff');
 
             app.AxMREWave = uiaxes(imgG);
             app.AxMREWave.Layout.Row=[1 3]; app.AxMREWave.Layout.Column=2;
             setupDarkAxes(app.AxMREWave,'Processed wave');
             colormap(app.AxMREWave, mreWaveCmap());
-            app.AxMREWave.ButtonDownFcn = @(~,~)app.setCurrentMRETargetAxis('proc');
+            app.AxMREWave.ButtonDownFcn = @(~,~)app.onMREPanelClick('proc');
 
             app.AxMREMag = uiaxes(imgG);
             app.AxMREMag.Layout.Row=1; app.AxMREMag.Layout.Column=3;
             setupDarkAxes(app.AxMREMag,'Magnitude');
             colormap(app.AxMREMag,'gray');
-            app.AxMREMag.ButtonDownFcn = @(~,~)app.setCurrentMRETargetAxis('mag');
+            app.AxMREMag.ButtonDownFcn = @(~,~)app.onMREPanelClick('mag');
 
             navG = uigridlayout(imgG,[1 3]);
             navG.Layout.Row = 2; navG.Layout.Column = 3;
@@ -976,7 +978,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.AxMRERawWave.Layout.Row=3; app.AxMRERawWave.Layout.Column=3;
             setupDarkAxes(app.AxMRERawWave,'Raw wave');
             colormap(app.AxMRERawWave,'gray');
-            app.AxMRERawWave.ButtonDownFcn = @(~,~)app.setCurrentMRETargetAxis('raw');
+            app.AxMRERawWave.ButtonDownFcn = @(~,~)app.onMREPanelClick('raw');
 
             app.AxMREStiffBar = uiaxes(imgG);
             app.AxMREStiffBar.Layout.Row = 4; app.AxMREStiffBar.Layout.Column = 1;
@@ -2192,19 +2194,59 @@ function captureManualOuterMREROI(app)
     roiColor = mreROIColor(app.AppData.MREROIName);
     axisKey = app.inferCurrentMRETargetAxis();
     app.setCurrentMRETargetAxis(axisKey);
-    ax = app.getMREAxisByKey(axisKey);
-    setStatus(app, sprintf('Draw a freehand outer %s contour on %s. Double-click to finish.', lower(app.getMREROIOrganLabel()), app.getMREAxisLabel(axisKey)));
+
+    [popupFig, popupAx] = app.openMREROIPopup(axisKey);
+    if isempty(popupFig) || ~isvalid(popupFig)
+        setStatus(app,'Could not open magnified drawing window.'); return
+    end
+
+    setStatus(app, sprintf('Draw %s contour in magnified window. Double-click to finish.', ...
+        lower(app.getMREROIOrganLabel())));
     app.AppData.MREROIDrawing = true;
     app.updateMREPlaybackButtonEnabled();
     drawCleanup = onCleanup(@()app.finishMREROIDrawing());
-    mask = captureFreehandMask(app, ax, nR, nC, roiColor);
+    mask = captureFreehandMask(app, popupAx, nR, nC, roiColor);
     clear drawCleanup;
-    if ~any(mask(:))
+
+    if ~isvalid(popupFig) || ~any(mask(:))
+        try, delete(popupFig); catch, end
+        app.AppData.MREROIPopupFig = [];
         refreshMRE(app);
         app.showMREROIHotkeyHelp();
         setStatus(app, 'Freehand contour was empty. Press F to try again or Esc to cancel.');
         return
     end
+
+    % Overlay mask boundary in popup and wait for confirmation
+    try
+        hold(popupAx, 'on');
+        bndList = bwboundaries(logical(mask), 'noholes');
+        for k = 1:numel(bndList)
+            b = bndList{k};
+            plot(popupAx, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
+        end
+        hold(popupAx, 'off');
+    catch, end
+
+    setStatus(app, 'ROI drawn. Press A or Enter to accept, Esc to discard.');
+    popupFig.UserData = struct('accepted', false);
+    popupFig.WindowKeyPressFcn = @(~,e) roiPopupConfirmKey(popupFig, e);
+    uiwait(popupFig);
+
+    accepted = false;
+    if isvalid(popupFig)
+        try, accepted = popupFig.UserData.accepted; catch, end
+        delete(popupFig);
+    end
+    app.AppData.MREROIPopupFig = [];
+
+    if ~accepted
+        refreshMRE(app);
+        app.showMREROIHotkeyHelp();
+        setStatus(app, 'ROI discarded. Press F to retry or Esc to cancel workflow.');
+        return
+    end
+
     app.AppData.MREROIOuterMask = cleanOuterMask(app, mask);
     app.recomputeCurrentMREROI(true);
 end
@@ -2246,39 +2288,43 @@ function captureSeedAutoMREROI(app)
 end
 
 function editCurrentMREROIVertices(app)
-% Load the current MRE outer mask as an editable drawpolygon so the
-% operator can drag individual vertices to refine the contour.
+% Load the current MRE outer mask as an editable drawpolygon in a
+% magnified popup window. Press A/Enter to accept, Esc to discard.
     if ~app.isMREROIWorkflowActive(), return; end
     mask = app.AppData.MREROIOuterMask;
     if isempty(mask) || ~any(mask(:))
-        % No mask yet — fall back to freehand
         app.captureManualOuterMREROI(); return;
     end
     axisKey = app.inferCurrentMRETargetAxis();
     app.setCurrentMRETargetAxis(axisKey);
-    ax = app.getMREAxisByKey(axisKey);
     [nR, nC] = size(mask);
     roiColor = mreROIColor(app.AppData.MREROIName);
     nVerts   = max(3, round(app.AppData.ROIVertices));
 
-    % Extract boundary → resample to nVerts polygon vertices
+    [popupFig, popupAx] = app.openMREROIPopup(axisKey);
+    if isempty(popupFig) || ~isvalid(popupFig)
+        setStatus(app,'Could not open magnified drawing window.'); return
+    end
+
     bndList = bwboundaries(mask, 'noholes');
-    if isempty(bndList), app.captureManualOuterMREROI(); return; end
+    if isempty(bndList)
+        try, delete(popupFig); catch, end
+        app.AppData.MREROIPopupFig = [];
+        app.captureManualOuterMREROI(); return;
+    end
     [~, maxIdx] = max(cellfun(@(b) size(b,1), bndList));
-    bnd  = bndList{maxIdx};          % [row col] pairs
-    pos0 = [bnd(:,2), bnd(:,1)];    % convert to [x y] = [col row]
+    bnd  = bndList{maxIdx};
+    pos0 = [bnd(:,2), bnd(:,1)];
     polyPts = roiResamplePolyline(pos0, nVerts);
-    % Clip to image bounds so no vertex starts outside the visible area.
     polyPts(:,1) = min(max(polyPts(:,1), 1), nC);
     polyPts(:,2) = min(max(polyPts(:,2), 1), nR);
 
-    % Show editable polygon; block until user double-clicks to confirm
     hPoly = [];
     try
-        setStatus(app, 'Vertex edit: drag vertices to refine MRE ROI. Double-click interior to confirm.');
+        setStatus(app, 'Vertex edit in magnified window: drag vertices, double-click to confirm.');
         app.AppData.MREROIDrawing = true;
         app.updateMREPlaybackButtonEnabled();
-        hPoly = drawpolygon(ax, ...
+        hPoly = drawpolygon(popupAx, ...
             'Position',  polyPts, ...
             'Color',     roiColor, ...
             'LineWidth', 1.8, ...
@@ -2288,24 +2334,61 @@ function editCurrentMREROIVertices(app)
         try, delete(hPoly); catch, end
         app.AppData.MREROIDrawing = false;
         app.updateMREPlaybackButtonEnabled();
+        try, delete(popupFig); catch, end
+        app.AppData.MREROIPopupFig = [];
         return
     end
     app.AppData.MREROIDrawing = false;
     app.updateMREPlaybackButtonEnabled();
 
     if isempty(hPoly) || ~isvalid(hPoly)
+        try, delete(popupFig); catch, end
+        app.AppData.MREROIPopupFig = [];
         return
     end
     try, posFinal = hPoly.Position; catch, posFinal = []; end
     try, delete(hPoly); catch, end
 
-    if isempty(posFinal) || size(posFinal,1) < 3, return; end
+    if isempty(posFinal) || size(posFinal,1) < 3
+        try, delete(popupFig); catch, end
+        app.AppData.MREROIPopupFig = [];
+        return
+    end
 
     x0 = min(max(posFinal(:,1), 1), nC);
     y0 = min(max(posFinal(:,2), 1), nR);
     newMask = logical(poly2mask(x0, y0, nR, nC));
     newMask = imfill(newMask, 'holes');
-    if ~any(newMask(:)), return; end
+    if ~any(newMask(:))
+        try, delete(popupFig); catch, end
+        app.AppData.MREROIPopupFig = [];
+        return
+    end
+
+    % Show new outline in popup, wait for A/Enter confirmation
+    try
+        hold(popupAx, 'on');
+        bndList2 = bwboundaries(newMask, 'noholes');
+        for k = 1:numel(bndList2)
+            b = bndList2{k};
+            plot(popupAx, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
+        end
+        hold(popupAx, 'off');
+    catch, end
+
+    setStatus(app, 'ROI contour ready. Press A or Enter to accept, Esc to discard.');
+    popupFig.UserData = struct('accepted', false);
+    popupFig.WindowKeyPressFcn = @(~,e) roiPopupConfirmKey(popupFig, e);
+    uiwait(popupFig);
+
+    accepted = false;
+    if isvalid(popupFig)
+        try, accepted = popupFig.UserData.accepted; catch, end
+        delete(popupFig);
+    end
+    app.AppData.MREROIPopupFig = [];
+
+    if ~accepted, return; end
 
     app.AppData.MREROIOuterMask = newMask;
     app.recomputeCurrentMREROI(true);
@@ -2508,6 +2591,14 @@ function cancelMREROIWorkflow(app, doRefresh)
     if ~isfield(app.AppData,'MREROIActive')
         return
     end
+    try
+        if isfield(app.AppData,'MREROIPopupFig') && ...
+                ~isempty(app.AppData.MREROIPopupFig) && ...
+                isvalid(app.AppData.MREROIPopupFig)
+            delete(app.AppData.MREROIPopupFig);
+        end
+    catch, end
+    app.AppData.MREROIPopupFig = [];
     app.clearMREROIPreviewOverlay();
     app.AppData.MREROIActive = false;
     app.AppData.MREROIName = '';
@@ -2667,6 +2758,14 @@ function I = getMREMagnitudeForROI(app, sl)
 
         function cancelDixonROIWorkflow(app, doRefresh)
             if nargin < 2, doRefresh = true; end
+            try
+                if isfield(app.AppData,'DixonROIPopupFig') && ...
+                        ~isempty(app.AppData.DixonROIPopupFig) && ...
+                        isvalid(app.AppData.DixonROIPopupFig)
+                    delete(app.AppData.DixonROIPopupFig);
+                end
+            catch, end
+            app.AppData.DixonROIPopupFig = [];
             app.AppData.DixonROIActive   = false;
             app.AppData.DixonROIName     = '';
             app.AppData.DixonROISlice    = NaN;
@@ -2707,31 +2806,66 @@ function I = getMREMagnitudeForROI(app, sl)
             if ~app.isDixonROIWorkflowActive(), return; end
             axisKey = app.inferCurrentDixonTargetAxis();
             app.setCurrentDixonTargetAxis(axisKey);
-            ax = app.getDixonAxisByKey(axisKey);
             sl = app.AppData.DixonROISlice;
             I = app.getDixonImageForROI(sl, axisKey);
             if isempty(I), setStatus(app,'No image on selected panel.'); return; end
-            nR = size(I,1); nC = size(I,2);
+            [nR, nC] = size(I);
             roiColor = dixonROIColor(app.AppData.DixonROIName);
-            setStatus(app, sprintf('Draw freehand %s contour on %s. Double-click to finish.', ...
-                lower(app.getDixonOrganLabel()), app.getDixonAxisLabel(axisKey)));
+
+            [popupFig, popupAx] = app.openDixonROIPopup(axisKey);
+            if isempty(popupFig) || ~isvalid(popupFig)
+                setStatus(app,'Could not open magnified drawing window.'); return
+            end
+
+            setStatus(app, sprintf('Draw %s contour in magnified window. Double-click to finish.', ...
+                lower(app.getDixonOrganLabel())));
             app.AppData.DixonROIDrawing = true;
-            mask = captureFreehandMask(app, ax, nR, nC, roiColor);
+            mask = captureFreehandMask(app, popupAx, nR, nC, roiColor);
             app.AppData.DixonROIDrawing = false;
-            if ~any(mask(:))
+
+            if ~isvalid(popupFig) || ~any(mask(:))
+                try, delete(popupFig); catch, end
+                app.AppData.DixonROIPopupFig = [];
                 refreshDixon(app); app.showDixonROIHotkeyHelp();
                 setStatus(app,'Freehand contour was empty. Press F to retry or Esc to cancel.');
                 return
             end
-            % Fill holes only — no erosion, no vertex changes, no blob filtering.
+
+            % Overlay mask boundary in popup, then wait for A/Enter confirmation
+            try
+                hold(popupAx, 'on');
+                bndList = bwboundaries(logical(mask), 'noholes');
+                for k = 1:numel(bndList)
+                    b = bndList{k};
+                    plot(popupAx, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
+                end
+                hold(popupAx, 'off');
+            catch, end
+
+            setStatus(app, 'ROI drawn. Press A or Enter to accept, Esc to discard.');
+            popupFig.UserData = struct('accepted', false);
+            popupFig.WindowKeyPressFcn = @(~,e) roiPopupConfirmKey(popupFig, e);
+            uiwait(popupFig);
+
+            accepted = false;
+            if isvalid(popupFig)
+                try, accepted = popupFig.UserData.accepted; catch, end
+                delete(popupFig);
+            end
+            app.AppData.DixonROIPopupFig = [];
+
+            if ~accepted
+                refreshDixon(app); app.showDixonROIHotkeyHelp();
+                setStatus(app,'ROI discarded. Press F to retry or Esc to cancel workflow.');
+                return
+            end
+
             try; newRegion = imfill(logical(mask), 'holes'); catch; newRegion = logical(mask); end
-            % Merge with any existing ROI region (supports bilateral structures, e.g. psoas).
             existing = logical(app.AppData.DixonROIFinalMask);
             if ~isequal(size(existing), [nR nC]), existing = false(nR, nC); end
             merged = existing | newRegion;
             app.AppData.DixonROIOuterMask = merged;
             app.AppData.DixonROIFinalMask = merged;
-            % Double-click = immediate accept (no extra keypress needed).
             app.acceptCurrentDixonROI();
         end
 
@@ -2757,17 +2891,21 @@ function I = getMREMagnitudeForROI(app, sl)
                 case 'LiverDixon'
                     axisKey = app.inferCurrentDixonTargetAxis();
                     app.setCurrentDixonTargetAxis(axisKey);
-                    ax = app.getDixonAxisByKey(axisKey);
                     I  = app.getDixonImageForROI(sl, axisKey);
                     if isempty(I)
                         setStatus(app,'No image on selected panel.'); return;
                     end
                     nR = size(I,1); nC = size(I,2);
-                    setStatus(app, ...
-                        'Draw ROUGH liver outline — D auto-refines using liver tissue model. Double-click to finish.');
+                    [popupFig, popupAx] = app.openDixonROIPopup(axisKey);
+                    if isempty(popupFig) || ~isvalid(popupFig)
+                        setStatus(app,'Could not open magnified drawing window.'); return
+                    end
+                    setStatus(app, 'Draw ROUGH liver outline in magnified window. Double-click to finish.');
                     app.AppData.DixonROIDrawing = true;
-                    roughMask = captureFreehandMask(app, ax, nR, nC, dixonROIColor(roiName));
+                    roughMask = captureFreehandMask(app, popupAx, nR, nC, dixonROIColor(roiName));
                     app.AppData.DixonROIDrawing = false;
+                    try, delete(popupFig); catch, end
+                    app.AppData.DixonROIPopupFig = [];
                     if ~any(roughMask(:))
                         refreshDixon(app); app.showDixonROIHotkeyHelp();
                         setStatus(app,'Outline empty. Press D to retry or F for freehand.'); return;
@@ -2779,17 +2917,21 @@ function I = getMREMagnitudeForROI(app, sl)
                 case 'SpleenDixon'
                     axisKey = app.inferCurrentDixonTargetAxis();
                     app.setCurrentDixonTargetAxis(axisKey);
-                    ax = app.getDixonAxisByKey(axisKey);
                     I  = app.getDixonImageForROI(sl, axisKey);
                     if isempty(I)
                         setStatus(app,'No image on selected panel.'); return;
                     end
                     nR = size(I,1); nC = size(I,2);
-                    setStatus(app, ...
-                        'Draw ROUGH spleen outline — D auto-refines using compact homogeneous model. Double-click to finish.');
+                    [popupFig, popupAx] = app.openDixonROIPopup(axisKey);
+                    if isempty(popupFig) || ~isvalid(popupFig)
+                        setStatus(app,'Could not open magnified drawing window.'); return
+                    end
+                    setStatus(app, 'Draw ROUGH spleen outline in magnified window. Double-click to finish.');
                     app.AppData.DixonROIDrawing = true;
-                    roughMask = captureFreehandMask(app, ax, nR, nC, dixonROIColor(roiName));
+                    roughMask = captureFreehandMask(app, popupAx, nR, nC, dixonROIColor(roiName));
                     app.AppData.DixonROIDrawing = false;
+                    try, delete(popupFig); catch, end
+                    app.AppData.DixonROIPopupFig = [];
                     if ~any(roughMask(:))
                         refreshDixon(app); app.showDixonROIHotkeyHelp();
                         setStatus(app,'Outline empty. Press D to retry or F for freehand.'); return;
@@ -2806,18 +2948,22 @@ function I = getMREMagnitudeForROI(app, sl)
                 otherwise
                     axisKey = app.inferCurrentDixonTargetAxis();
                     app.setCurrentDixonTargetAxis(axisKey);
-                    ax = app.getDixonAxisByKey(axisKey);
                     I  = app.getDixonImageForROI(sl, axisKey);
                     if isempty(I)
                         setStatus(app,'No image on selected panel for seeding.'); return;
                     end
                     nR = size(I,1); nC = size(I,2);
-                    setStatus(app, sprintf( ...
-                        'Draw seed circle inside %s on %s. Double-click to finish.', ...
-                        lower(app.getDixonOrganLabel()), app.getDixonAxisLabel(axisKey)));
+                    [popupFig, popupAx] = app.openDixonROIPopup(axisKey);
+                    if isempty(popupFig) || ~isvalid(popupFig)
+                        setStatus(app,'Could not open magnified drawing window.'); return
+                    end
+                    setStatus(app, sprintf('Draw seed circle inside %s. Double-click to finish.', ...
+                        lower(app.getDixonOrganLabel())));
                     app.AppData.DixonROIDrawing = true;
-                    seedMask = captureSeedMask(app, ax, nR, nC, dixonROIColor(roiName));
+                    seedMask = captureSeedMask(app, popupAx, nR, nC, dixonROIColor(roiName));
                     app.AppData.DixonROIDrawing = false;
+                    try, delete(popupFig); catch, end
+                    app.AppData.DixonROIPopupFig = [];
                     if ~any(seedMask(:))
                         refreshDixon(app); app.showDixonROIHotkeyHelp();
                         setStatus(app,'Seed circle empty. Press D to retry or F for freehand.'); return;
@@ -2887,39 +3033,42 @@ function I = getMREMagnitudeForROI(app, sl)
         end
 
         function editCurrentDixonROIVertices(app)
-        % Load the current outer mask as an editable drawpolygon so the
-        % operator can drag individual vertices to refine the contour.
+        % Load the current outer mask as an editable drawpolygon in a
+        % magnified popup window. Press A/Enter to accept, Esc to discard.
             if ~app.isDixonROIWorkflowActive(), return; end
             mask = app.AppData.DixonROIOuterMask;
             if isempty(mask) || ~any(mask(:))
-                % No mask yet — fall back to freehand
                 app.captureManualOuterDixonROI(); return;
             end
             axisKey = app.inferCurrentDixonTargetAxis();
             app.setCurrentDixonTargetAxis(axisKey);
-            ax = app.getDixonAxisByKey(axisKey);
             [nR, nC] = size(mask);
             roiColor = dixonROIColor(app.AppData.DixonROIName);
             nVerts   = max(3, round(app.AppData.ROIVertices));
 
-            % Extract boundary → resample to nVerts polygon vertices
+            [popupFig, popupAx] = app.openDixonROIPopup(axisKey);
+            if isempty(popupFig) || ~isvalid(popupFig)
+                setStatus(app,'Could not open magnified drawing window.'); return
+            end
+
             bndList = bwboundaries(mask, 'noholes');
-            if isempty(bndList), app.captureManualOuterDixonROI(); return; end
+            if isempty(bndList)
+                try, delete(popupFig); catch, end
+                app.AppData.DixonROIPopupFig = [];
+                app.captureManualOuterDixonROI(); return;
+            end
             [~, maxIdx] = max(cellfun(@(b) size(b,1), bndList));
-            bnd  = bndList{maxIdx};          % [row col] pairs
-            pos0 = [bnd(:,2), bnd(:,1)];     % convert to [x y] = [col row]
+            bnd  = bndList{maxIdx};
+            pos0 = [bnd(:,2), bnd(:,1)];
             polyPts = roiResamplePolyline(pos0, nVerts);
-            % Clip to image bounds so no vertex starts outside the visible area.
             polyPts(:,1) = min(max(polyPts(:,1), 1), nC);
             polyPts(:,2) = min(max(polyPts(:,2), 1), nR);
 
-            % Show editable polygon
             hPoly = [];
             try
-                setStatus(app, sprintf( ...
-                    'Vertex edit: drag vertices to refine. Double-click interior to confirm.'));
+                setStatus(app, 'Vertex edit in magnified window: drag vertices, double-click to confirm.');
                 app.AppData.DixonROIDrawing = true;
-                hPoly = drawpolygon(ax, ...
+                hPoly = drawpolygon(popupAx, ...
                     'Position',  polyPts, ...
                     'Color',     roiColor, ...
                     'LineWidth', 1.8, ...
@@ -2928,23 +3077,60 @@ function I = getMREMagnitudeForROI(app, sl)
             catch
                 try, delete(hPoly); catch, end
                 app.AppData.DixonROIDrawing = false;
+                try, delete(popupFig); catch, end
+                app.AppData.DixonROIPopupFig = [];
                 return
             end
             app.AppData.DixonROIDrawing = false;
 
             if isempty(hPoly) || ~isvalid(hPoly)
+                try, delete(popupFig); catch, end
+                app.AppData.DixonROIPopupFig = [];
                 return
             end
             try, posFinal = hPoly.Position; catch, posFinal = []; end
             try, delete(hPoly); catch, end
 
-            if isempty(posFinal) || size(posFinal,1) < 3, return; end
+            if isempty(posFinal) || size(posFinal,1) < 3
+                try, delete(popupFig); catch, end
+                app.AppData.DixonROIPopupFig = [];
+                return
+            end
 
             x0 = min(max(posFinal(:,1), 1), nC);
             y0 = min(max(posFinal(:,2), 1), nR);
             newMask = logical(poly2mask(x0, y0, nR, nC));
             newMask = imfill(newMask, 'holes');
-            if ~any(newMask(:)), return; end
+            if ~any(newMask(:))
+                try, delete(popupFig); catch, end
+                app.AppData.DixonROIPopupFig = [];
+                return
+            end
+
+            % Show new outline in popup, wait for A/Enter confirmation
+            try
+                hold(popupAx, 'on');
+                bndList2 = bwboundaries(newMask, 'noholes');
+                for k = 1:numel(bndList2)
+                    b = bndList2{k};
+                    plot(popupAx, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
+                end
+                hold(popupAx, 'off');
+            catch, end
+
+            setStatus(app, 'ROI contour ready. Press A or Enter to accept, Esc to discard.');
+            popupFig.UserData = struct('accepted', false);
+            popupFig.WindowKeyPressFcn = @(~,e) roiPopupConfirmKey(popupFig, e);
+            uiwait(popupFig);
+
+            accepted = false;
+            if isvalid(popupFig)
+                try, accepted = popupFig.UserData.accepted; catch, end
+                delete(popupFig);
+            end
+            app.AppData.DixonROIPopupFig = [];
+
+            if ~accepted, return; end
 
             app.AppData.DixonROIOuterMask = newMask;
             app.recomputeCurrentDixonROI(true);
@@ -3935,6 +4121,129 @@ function tf = shouldBypassGlobalHotkeys(app)
             catch
             end
         end
+
+        % -----------------------------------------------------------------
+        %  PANEL CLICK HANDLERS — open magnified popup when ROI workflow active
+        % -----------------------------------------------------------------
+
+        function onDixonPanelClick(app, axisKey)
+            app.setCurrentDixonTargetAxis(axisKey);
+            if app.isDixonROIWorkflowActive()
+                try, if app.AppData.DixonROIDrawing, return; end, catch, end
+                app.captureManualOuterDixonROI();
+            end
+        end
+
+        function onMREPanelClick(app, axisKey)
+            app.setCurrentMRETargetAxis(axisKey);
+            if app.isMREROIWorkflowActive()
+                try, if app.AppData.MREROIDrawing, return; end, catch, end
+                app.captureManualOuterMREROI();
+            end
+        end
+
+        % -----------------------------------------------------------------
+        %  MAGNIFIED ROI POPUP BUILDERS
+        % -----------------------------------------------------------------
+
+        function [fig, ax] = openDixonROIPopup(app, axisKey)
+        % Create a magnified figure showing the Dixon image for ROI drawing.
+            fig = []; ax = [];
+            sl = app.AppData.DixonROISlice;
+            I  = app.getDixonImageForROI(sl, axisKey);
+            if isempty(I), return; end
+
+            % Match colormap / clim from the main display
+            if strcmp(axisKey, 'pdff')
+                cmapData = app.AppData.DixonCmap;
+                lo = app.AppData.DixonClimMin;
+                hi = app.AppData.DixonClimMax;
+                if lo == 0 && hi == 0, [lo,hi] = robustCLim(I,1,99,false); end
+            else
+                cmapData = 'gray';
+                lo = 0; hi = 0;
+                try
+                    if strcmp(axisKey,'water')
+                        lo = app.EdtWaterWinLo.Value;
+                        hi = app.EdtWaterWinHi.Value;
+                    else
+                        lo = app.EdtFatWinLo.Value;
+                        hi = app.EdtFatWinHi.Value;
+                    end
+                catch, end
+                if hi <= lo, [lo,hi] = robustCLim(I,1,99,false); end
+            end
+
+            titleStr = sprintf('ROI Drawing — %s · %s · Slice %d    [A/Enter = accept   Esc = discard]', ...
+                app.getDixonOrganLabel(), app.getDixonAxisLabel(axisKey), sl);
+            [fig, ax] = openROIPopupFigure(I, cmapData, [lo hi], titleStr);
+            app.AppData.DixonROIPopupFig = fig;
+
+            % Overlay any existing mask for the same slice as dashed guide
+            try
+                existMask = getStoredDixonROIMask(app, app.AppData.DixonROIName, sl);
+                if ~isempty(existMask) && any(existMask(:))
+                    hold(ax,'on');
+                    bL = bwboundaries(existMask,'noholes');
+                    rc = dixonROIColor(app.AppData.DixonROIName) * 0.5 + 0.35;
+                    for k = 1:numel(bL)
+                        b = bL{k};
+                        plot(ax, b(:,2), b(:,1), '--', 'Color', rc, 'LineWidth', 1.5);
+                    end
+                    hold(ax,'off');
+                end
+            catch, end
+        end
+
+        function [fig, ax] = openMREROIPopup(app, axisKey)
+        % Create a magnified figure showing the MRE image for ROI drawing.
+            fig = []; ax = [];
+            sl  = app.AppData.MREROISlice;
+            mre = app.AppData.MRE;
+            if isempty(mre), return; end
+
+            switch axisKey
+                case 'stiff'
+                    if ~isfield(mre,'S') || isempty(mre.S), return; end
+                    I = double(mre.S(:,:,min(sl,size(mre.S,3))));
+                    climVals = app.AppData.StiffCLim;
+                    cmapData = mreStiffCmap();
+                case 'proc'
+                    if ~isfield(mre,'W') || isempty(mre.W), return; end
+                    nPh = size(mre.W,4);
+                    ph  = max(1,min(nPh,app.AppData.MREPhase));
+                    I   = double(squeeze(mre.W(:,:,min(sl,size(mre.W,3)),ph)));
+                    wMax = app.AppData.WaveMax;
+                    if wMax <= 0, [lo,hi] = robustCLim(I,0,99.5,true); climVals=[lo hi];
+                    else, climVals = [-wMax wMax]; end
+                    cmapData = mreWaveCmap();
+                case 'raw'
+                    if isfield(mre,'W_raw') && ~isempty(mre.W_raw)
+                        nPh = size(mre.W_raw,4);
+                        ph  = max(1,min(nPh,app.AppData.MREPhase));
+                        I   = double(squeeze(mre.W_raw(:,:,min(sl,size(mre.W_raw,3)),ph)));
+                    elseif isfield(mre,'W') && ~isempty(mre.W)
+                        nPh = size(mre.W,4);
+                        ph  = max(1,min(nPh,app.AppData.MREPhase));
+                        I   = double(squeeze(mre.W(:,:,min(sl,size(mre.W,3)),ph)));
+                    else, return; end
+                    [lo,hi] = robustCLim(I,0,99.5,true);
+                    climVals = [lo hi];
+                    cmapData = mreWaveCmap();
+                otherwise  % 'mag'
+                    I = getMREMagnitudeForROI(app, sl);
+                    if isempty(I), return; end
+                    [lo,hi] = robustCLim(I,1,99,false);
+                    climVals = [lo hi];
+                    cmapData = gray(256);
+            end
+
+            titleStr = sprintf('ROI Drawing — %s · %s · Slice %d    [A/Enter = accept   Esc = discard]', ...
+                app.getMREROIOrganLabel(), app.getMREAxisLabel(axisKey), sl);
+            [fig, ax] = openROIPopupFigure(I, cmapData, climVals, titleStr);
+            app.AppData.MREROIPopupFig = fig;
+        end
+
     end
 
     % =====================================================================
@@ -7330,6 +7639,60 @@ function mask = getStoredDixonROIMask(app, roiName, sl)
             end
         end
     catch
+    end
+end
+
+
+% =========================================================================
+%  MAGNIFIED ROI POPUP HELPERS
+% =========================================================================
+
+function [fig, ax] = openROIPopupFigure(imgData, cmapData, climVals, titleStr)
+% Create a large standalone figure for precise ROI drawing.
+% Returns [fig, ax] — the figure and its single axes.
+    scr  = get(0,'ScreenSize');
+    popH = min(round(scr(4) * 0.82), 840);
+    popW = min(round(scr(3) * 0.82), 960);
+    popX = scr(1) + round((scr(3) - popW) / 2);
+    popY = scr(2) + round((scr(4) - popH) / 2);
+
+    fig = uifigure('Name', titleStr, ...
+        'Position', [popX popY popW popH], ...
+        'Resize',   'on', ...
+        'Color',    [0.10 0.10 0.10]);
+    gl = uigridlayout(fig, [1 1]);
+    gl.Padding = [2 2 2 2];
+    ax = uiaxes(gl);
+    ax.Color = [0.10 0.10 0.10];
+
+    imagesc(ax, imgData);
+    axis(ax, 'image');
+    ax.XTick = []; ax.YTick = [];
+    ax.XColor = 'none'; ax.YColor = 'none';
+
+    if ischar(cmapData) || isstring(cmapData)
+        try, colormap(ax, char(cmapData)); catch, colormap(ax, 'gray'); end
+    elseif isnumeric(cmapData) && size(cmapData,2) == 3
+        colormap(ax, cmapData);
+    end
+    if numel(climVals) == 2 && all(isfinite(climVals)) && climVals(2) > climVals(1)
+        clim(ax, climVals);
+    end
+    drawnow;
+end
+
+
+function roiPopupConfirmKey(fig, event)
+% Keyboard handler for the ROI drawing popup.
+% A / Enter → accept;  Esc → discard.
+    if ~isvalid(fig), return; end
+    key = lower(event.Key);
+    if any(strcmp(key, {'a', 'return', 'enter'}))
+        fig.UserData = struct('accepted', true);
+        uiresume(fig);
+    elseif strcmp(key, 'escape')
+        fig.UserData = struct('accepted', false);
+        uiresume(fig);
     end
 end
 
