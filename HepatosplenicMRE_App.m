@@ -2230,8 +2230,19 @@ function captureManualOuterMREROI(app)
         return
     end
 
-    app.AppData.MREROIOuterMask = cleanOuterMask(app, mask);
+    % Preserve excluded holes — skip imfill, just remove tiny noise regions
+    mask = logical(mask);
+    try, mask = bwareaopen(mask, 100); catch, end
+    try, if any(mask(:)), mask = bwareafilt(mask, 1); end, catch, end
+    if ~any(mask(:))
+        refreshMRE(app);
+        app.showMREROIHotkeyHelp();
+        setStatus(app, 'ROI discarded. Press F to retry or Esc to cancel workflow.');
+        return
+    end
+    app.AppData.MREROIOuterMask = mask;
     app.recomputeCurrentMREROI(true);
+    app.acceptCurrentMREROI();
 end
 
 function captureSeedAutoMREROI(app)
@@ -2359,6 +2370,7 @@ function editCurrentMREROIVertices(app)
 
     app.AppData.MREROIOuterMask = newMask;
     app.recomputeCurrentMREROI(true);
+    app.acceptCurrentMREROI();
 end
 
 function adjustCurrentMREROIErosion(app, deltaPx)
@@ -4072,10 +4084,6 @@ function tf = shouldBypassGlobalHotkeys(app)
 
         function onMREPanelClick(app, axisKey)
             app.setCurrentMRETargetAxis(axisKey);
-            if app.isMREROIWorkflowActive()
-                try, if app.AppData.MREROIDrawing, return; end, catch, end
-                app.captureManualOuterMREROI();
-            end
         end
 
         % -----------------------------------------------------------------
@@ -7671,7 +7679,7 @@ function redrawROIPopup(ax, imgData, cmapData, climVals, mask, roiColor)
         end
         if ~isempty(mask) && any(mask(:))
             hold(ax, 'on');
-            bndList = bwboundaries(logical(mask), 'noholes');
+            bndList = bwboundaries(logical(mask));
             for k = 1:numel(bndList)
                 b = bndList{k};
                 plot(ax, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
@@ -7725,7 +7733,7 @@ function [mask, accepted] = roiPopupMultiOpLoop(app, popupFig, popupAx, ...
                 mask = logical(mask) | logical(delta);
             end
             redrawROIPopup(popupAx, imgData, cmapData, climVals, mask, roiColor);
-        else  % exclude
+        elseif any(strcmp(action, {'exclude', 'e', 'x'}))
             if strcmp(modality, 'MRE')
                 app.AppData.MREROIDrawing = true;
                 try, app.updateMREPlaybackButtonEnabled(); catch, end
@@ -7745,6 +7753,7 @@ function [mask, accepted] = roiPopupMultiOpLoop(app, popupFig, popupAx, ...
             end
             redrawROIPopup(popupAx, imgData, cmapData, climVals, mask, roiColor);
         end
+        % unknown/empty action (spurious uiwait return): loop again
     end
 end
 
