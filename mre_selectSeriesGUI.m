@@ -573,7 +573,10 @@ function group = findRelatedDixon(seriesList, anchor)
     if isIdealAnchor
         anchorNumStr = regexprep(num2str(double(anchor.SeriesNumber)), '^0+', '');
         if isempty(anchorNumStr), anchorNumStr = '0'; end
+        anchorSig = idealDescSig(anchor);
 
+        % --- Pass 1: collect all qualifying IDEAL-IQ candidates (unchanged logic) ---
+        allIdeal = struct([]);
         for k = 1:numel(seriesList)
             s = seriesList(k);
             sdesc = lower(char(s.SeriesDescription));
@@ -604,22 +607,42 @@ function group = findRelatedDixon(seriesList, anchor)
             % match exactly so that series from other acquisitions aren't mixed in.
             countOK    = sameCount || (isIdealRole && ~strcmp(sRole,'IDEALIQ_Multi'));
 
-            % Restrict to the selected acquisition family: the candidate's
-            % series number must be a GE-convention descendant of the anchor
-            % (e.g. anchor S2 → S201, S202; anchor S12 → S1201, S1202).
-            % This prevents a second Dixon acquisition in the same exam from
-            % being merged into the selected family.
-            sNumStr   = regexprep(num2str(double(s.SeriesNumber)), '^0+', '');
-            isRelated = isSeriesNumberDescendant(anchorNumStr, sNumStr);
+            if isIdeal && (isUseful || isRawRecon) && countOK
+                if isempty(allIdeal), allIdeal = s; else, allIdeal(end+1) = s; end %#ok<AGROW>
+            end
+        end
 
-            % Include when IDEAL member AND (useful content OR raw product recon)
-            % AND image count is acceptable for the role AND belongs to this family.
-            if isIdeal && (isUseful || isRawRecon) && countOK && isRelated
-                if isempty(group)
-                    group = s;
-                else
-                    group(end+1) = s; %#ok<AGROW>
-                end
+        % --- Pass 2: detect GE numbering convention, then apply family filter ---
+        %
+        % New GE convention: recon series numbers are GE-convention descendants
+        % of the anchor (anchor S2 → S201, S202; anchor S12 → S1201, S1202).
+        % Old GE convention: recon numbers are arbitrary (anchor S5 → S15992...).
+        %
+        % Detection: if any non-anchor candidate is a descendant, it's new convention.
+        %   New convention → filter by series-number prefix.
+        %     Handles: same-body-part duplicate acquisitions (S2 vs S12 scenario).
+        %   Old convention → filter by description signature (strips water/fat/pdff).
+        %     Handles: different-body-part acquisitions with the same naming scheme.
+        %   Both conventions are self-consistent within a single exam.
+        hasDescendant = false;
+        for k = 1:numel(allIdeal)
+            sn = regexprep(num2str(double(allIdeal(k).SeriesNumber)), '^0+', '');
+            if ~strcmp(sn, anchorNumStr) && isSeriesNumberDescendant(anchorNumStr, sn)
+                hasDescendant = true;
+                break;
+            end
+        end
+
+        for k = 1:numel(allIdeal)
+            s = allIdeal(k);
+            sn = regexprep(num2str(double(s.SeriesNumber)), '^0+', '');
+            if hasDescendant
+                include = isSeriesNumberDescendant(anchorNumStr, sn);
+            else
+                include = isempty(anchorSig) || strcmp(idealDescSig(s), anchorSig);
+            end
+            if include
+                if isempty(group), group = s; else, group(end+1) = s; end %#ok<AGROW>
             end
         end
 
@@ -700,4 +723,17 @@ function s = truncate(str, maxLen)
     else
         s = str;
     end
+end
+
+function sig = idealDescSig(s)
+% Description signature used to group IDEAL-IQ recons across naming conventions.
+% Mirrors the idealSignature logic in dixon_parseDICOMExam: normalise to
+% alphanumerics, then strip the contrast-type keywords so that Water/Fat/FatFrac/
+% T2/R2* products of the same acquisition share one signature while acquisitions
+% of different body parts (e.g. Abdomen vs Pelvis) remain distinct.
+    desc = lower(char(s.SeriesDescription));
+    sig  = regexprep(desc, '[^a-z0-9]+', ' ');
+    sig  = regexprep(sig, '\bfatfrac\b|\bpdff\b|\bwater\b|\bfat\b|\bt2\b|\br2\*?\b|\braw\b', ' ');
+    sig  = regexprep(sig, '\s+', ' ');
+    sig  = strtrim(sig);
 end
