@@ -2359,9 +2359,26 @@ function captureManualOuterMREROI(app)
     axisKey = app.inferCurrentMRETargetAxis();
     app.setCurrentMRETargetAxis(axisKey);
 
+    % Stop the wave animation timer BEFORE creating the popup figure.
+    % The timer fires advanceWaveFrame→refreshMRE which manipulates UI axes;
+    % if it runs while uifigure() or drawfreehand() is executing it causes
+    % "Operation terminated by user" crashes and an infinite uiwait loop.
+    % Only save the state the first time (editCurrentMREROIVertices may have
+    % already saved it and stopped the timer before delegating here).
+    if ~isfield(app.AppData,'MREPlaybackWasOnBeforeROI') || ~app.AppData.MREPlaybackWasOnBeforeROI
+        try
+            app.AppData.MREPlaybackWasOnBeforeROI = app.AppData.MREPlaying || ...
+                (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer));
+        catch
+            app.AppData.MREPlaybackWasOnBeforeROI = false;
+        end
+    end
+    app.pauseMREPlaybackForROI();
+
     [popupFig, popupAx, imgData, cmapData, climVals] = app.openMREROIPopup(axisKey);
     if isempty(popupFig) || ~isvalid(popupFig)
-        setStatus(app,'Could not open magnified drawing window.'); return
+        setStatus(app,'Could not open magnified drawing window.');
+        mreResumePlaybackIfWasPlaying(app); return
     end
 
     setStatus(app, 'Draw contour in magnified window. Double-click to finish.');
@@ -2377,7 +2394,7 @@ function captureManualOuterMREROI(app)
         refreshMRE(app);
         app.showMREROIHotkeyHelp();
         setStatus(app, 'Freehand contour was empty. Press F to try again or Esc to cancel.');
-        return
+        mreResumePlaybackIfWasPlaying(app); return
     end
 
     % Stay in popup: allow include/exclude before final accept
@@ -2391,7 +2408,7 @@ function captureManualOuterMREROI(app)
         refreshMRE(app);
         app.showMREROIHotkeyHelp();
         setStatus(app, 'ROI discarded. Press F to retry or Esc to cancel workflow.');
-        return
+        mreResumePlaybackIfWasPlaying(app); return
     end
 
     % Preserve excluded holes — skip imfill, just remove tiny noise regions
@@ -2402,11 +2419,11 @@ function captureManualOuterMREROI(app)
         refreshMRE(app);
         app.showMREROIHotkeyHelp();
         setStatus(app, 'ROI discarded. Press F to retry or Esc to cancel workflow.');
-        return
+        mreResumePlaybackIfWasPlaying(app); return
     end
     app.AppData.MREROIOuterMask = mask;
     app.recomputeCurrentMREROI(true);
-    app.acceptCurrentMREROI();
+    app.acceptCurrentMREROI();  % clearMREROIBusy restores playback via MREPlaybackWasOnBeforeROI
 end
 
 function captureSeedAutoMREROI(app)
@@ -2459,16 +2476,29 @@ function editCurrentMREROIVertices(app)
     roiColor = mreROIColor(app.AppData.MREROIName);
     nVerts   = max(3, round(app.AppData.ROIVertices));
 
+    % Stop the wave animation timer before opening the popup (same reason
+    % as in captureManualOuterMREROI — timer fires during uifigure creation).
+    if ~isfield(app.AppData,'MREPlaybackWasOnBeforeROI') || ~app.AppData.MREPlaybackWasOnBeforeROI
+        try
+            app.AppData.MREPlaybackWasOnBeforeROI = app.AppData.MREPlaying || ...
+                (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer));
+        catch
+            app.AppData.MREPlaybackWasOnBeforeROI = false;
+        end
+    end
+    app.pauseMREPlaybackForROI();
+
     [popupFig, popupAx, imgData, cmapData, climVals] = app.openMREROIPopup(axisKey);
     if isempty(popupFig) || ~isvalid(popupFig)
-        setStatus(app,'Could not open magnified drawing window.'); return
+        setStatus(app,'Could not open magnified drawing window.');
+        mreResumePlaybackIfWasPlaying(app); return
     end
 
     bndList = bwboundaries(mask, 'noholes');
     if isempty(bndList)
         try, delete(popupFig); catch, end
         app.AppData.MREROIPopupFig = [];
-        app.captureManualOuterMREROI(); return;
+        app.captureManualOuterMREROI(); return;  % captureManualOuterMREROI handles resume
     end
     [~, maxIdx] = max(cellfun(@(b) size(b,1), bndList));
     bnd  = bndList{maxIdx};
@@ -2494,7 +2524,7 @@ function editCurrentMREROIVertices(app)
         app.updateMREPlaybackButtonEnabled();
         try, delete(popupFig); catch, end
         app.AppData.MREROIPopupFig = [];
-        return
+        mreResumePlaybackIfWasPlaying(app); return
     end
     app.AppData.MREROIDrawing = false;
     app.updateMREPlaybackButtonEnabled();
@@ -2502,7 +2532,7 @@ function editCurrentMREROIVertices(app)
     if isempty(hPoly) || ~isvalid(hPoly)
         try, delete(popupFig); catch, end
         app.AppData.MREROIPopupFig = [];
-        return
+        mreResumePlaybackIfWasPlaying(app); return
     end
     try, posFinal = hPoly.Position; catch, posFinal = []; end
     try, delete(hPoly); catch, end
@@ -2510,7 +2540,7 @@ function editCurrentMREROIVertices(app)
     if isempty(posFinal) || size(posFinal,1) < 3
         try, delete(popupFig); catch, end
         app.AppData.MREROIPopupFig = [];
-        return
+        mreResumePlaybackIfWasPlaying(app); return
     end
 
     x0 = min(max(posFinal(:,1), 1), nC);
@@ -2520,7 +2550,7 @@ function editCurrentMREROIVertices(app)
     if ~any(newMask(:))
         try, delete(popupFig); catch, end
         app.AppData.MREROIPopupFig = [];
-        return
+        mreResumePlaybackIfWasPlaying(app); return
     end
 
     % Multi-op loop: allow include/exclude before final accept
@@ -2530,11 +2560,13 @@ function editCurrentMREROIVertices(app)
     if isvalid(popupFig), delete(popupFig); end
     app.AppData.MREROIPopupFig = [];
 
-    if ~accepted || ~any(newMask(:)), return; end
+    if ~accepted || ~any(newMask(:))
+        mreResumePlaybackIfWasPlaying(app); return
+    end
 
     app.AppData.MREROIOuterMask = newMask;
     app.recomputeCurrentMREROI(true);
-    app.acceptCurrentMREROI();
+    app.acceptCurrentMREROI();  % clearMREROIBusy restores playback via MREPlaybackWasOnBeforeROI
 end
 
 function adjustCurrentMREROIErosion(app, deltaPx)
@@ -2654,11 +2686,16 @@ function acceptCurrentMREROI(app)
     if isfield(app.AppData,'MREROIBusy') && app.AppData.MREROIBusy
         return
     end
-    try
-        app.AppData.MREPlaybackWasOnBeforeROI = app.AppData.MREPlaying || ...
-            (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer));
-    catch
-        app.AppData.MREPlaybackWasOnBeforeROI = false;
+    % Only record playback state if not already saved — captureManualOuterMREROI
+    % and editCurrentMREROIVertices may have stopped the timer earlier so
+    % MREPlaying is already false; we must not overwrite the saved true value.
+    if ~isfield(app.AppData,'MREPlaybackWasOnBeforeROI') || ~app.AppData.MREPlaybackWasOnBeforeROI
+        try
+            app.AppData.MREPlaybackWasOnBeforeROI = app.AppData.MREPlaying || ...
+                (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer));
+        catch
+            app.AppData.MREPlaybackWasOnBeforeROI = false;
+        end
     end
     app.pauseMREPlaybackForROI();
     app.AppData.MREROIBusy = true;
@@ -7940,6 +7977,22 @@ function [mask, accepted] = roiPopupMultiOpLoop(app, popupFig, popupAx, ...
         end
         % unknown/empty action (spurious uiwait return): loop again
     end
+end
+
+
+function mreResumePlaybackIfWasPlaying(app)
+% Resume wave playback after a popup ROI that was cancelled or discarded,
+% if playback was running before the popup was opened.
+% Called on all cancel/discard paths in captureManualOuterMREROI and
+% editCurrentMREROIVertices; the accept path uses clearMREROIBusy instead.
+    try
+        if isfield(app.AppData,'MREPlaybackWasOnBeforeROI') && app.AppData.MREPlaybackWasOnBeforeROI
+            app.AppData.MREPlaybackWasOnBeforeROI = false;
+            if ~app.AppData.MREPlaying
+                app.toggleMREPlay();
+            end
+        end
+    catch, end
 end
 
 
