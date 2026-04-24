@@ -859,7 +859,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 [0.95 0.55 0.15],[1 1 1]);
             app.BtnROI_PsoasDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('PsoasDixon');
 
-            app.BtnROI_TrunkDixon = roiBtn(rg,5,'Trunk Muscle', ...
+            app.BtnROI_TrunkDixon = roiBtn(rg,5,'Other Skeletal Muscles', ...
                 [0.85 0.40 0.05],[1 1 1]);
             app.BtnROI_TrunkDixon.ButtonPushedFcn = @(~,~)app.drawDixonROI('TrunkDixon');
 
@@ -1126,7 +1126,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblMREInfo.Text = sprintf(['Choose organ, click target panel, hotkeys:' char(10) ...
                 'F = freehand → edit polygon → dbl-click confirm' char(10) ...
                 'D = seed + auto on Magnitude' char(10) ...
-                'E = exclude, I = include, +/- = erosion' char(10) ...
+                'E = exclude, I = include' char(10) ...
                 'A/Enter = accept, Esc = cancel']);
             app.LblMREInfo.FontSize=11; app.LblMREInfo.WordWrap='on';
             app.LblMREInfo.FontColor=[0.45 0.45 0.45];
@@ -2126,19 +2126,19 @@ end
 
 function showMREROIHotkeyHelp(app)
     app.LblMREInfo.Text = sprintf(['MRE ROI workflow hotkeys:' char(10) ...
-        'Click a panel first. F = freehand on that panel, D = seed + auto on Magnitude' char(10) ...
+        'F = freehand on selected panel, D = seed + auto on Magnitude' char(10) ...
         'R = edit vertices of existing ROI' char(10) ...
-        'E = exclude, I = include, +/- = erosion (%d px)' char(10) ...
+        'E = exclude, I = include' char(10) ...
         'A or Enter = accept ROI, Esc = cancel' char(10) ...
         'Current panel: %s. ROI confidence LapC >= %.2f applies automatically.'], ...
-        app.AppData.MREROIErodePx, app.getMREAxisLabel(app.AppData.MRETargetAxis), app.getMREROIConfThresh(app.AppData.MREROIName));
+        app.getMREAxisLabel(app.AppData.MRETargetAxis), app.getMREROIConfThresh(app.AppData.MREROIName));
 end
 
 function resetMREROIHotkeyHelp(app)
     app.LblMREInfo.Text = sprintf(['MRE ROI workflow:' char(10) ...
         'Choose Liver, Spleen, Muscle, or Fat stiffness, then click a panel:' char(10) ...
         'F = freehand on panel, D = seed + auto on Magnitude' char(10) ...
-        'E = exclude, I = include, +/- = erosion' char(10) ...
+        'E = exclude, I = include' char(10) ...
         'A or Enter = accept, Esc = cancel' char(10) ...
         'Use the Conf. fields under each organ button for ROI-specific LapC thresholds.']);
 end
@@ -2393,9 +2393,8 @@ function recomputeCurrentMREROI(app, doPreview)
     end
     sl = app.AppData.MREROISlice;
     confMask = getMREConfidenceMask(app, sl, [size(outerMask,1) size(outerMask,2)], app.AppData.MREROIName);
-    baseInner = erodeMaskInward(app, outerMask, app.AppData.MREROIErodePx);
-    finalMask = cleanMeasurementMask(app, baseInner & confMask);
-    app.AppData.MREROIBaseInnerMask = baseInner;
+    finalMask = cleanMeasurementMask(app, outerMask & confMask);
+    app.AppData.MREROIBaseInnerMask = outerMask;
     app.AppData.MREROIConfMask = confMask;
     app.AppData.MREROIFinalMask = finalMask;
     app.showMREROIHotkeyHelp();
@@ -2403,9 +2402,9 @@ function recomputeCurrentMREROI(app, doPreview)
         refreshMRE(app);
     end
     if any(finalMask(:))
-        setStatus(app, sprintf('%s ROI preview ready on slice %d. E/I refine, +/- erosion=%d px, Enter to accept.', app.getMREROIOrganLabel(), sl, app.AppData.MREROIErodePx));
+        setStatus(app, sprintf('%s ROI preview ready on slice %d. E/I to refine, Enter to accept.', app.getMREROIOrganLabel(), sl));
     else
-        setStatus(app, sprintf('ROI became empty after %d px erosion and confidence %.2f. Press - to reduce erosion, lower the threshold, redraw with F/D, or press Enter/A to accept this slice as technical failure.', app.AppData.MREROIErodePx, app.getMREROIConfThresh(app.AppData.MREROIName)));
+        setStatus(app, sprintf('ROI became empty after confidence masking (threshold %.2f). Redraw with F/D, or press Enter/A to accept as technical failure.', app.getMREROIConfThresh(app.AppData.MREROIName)));
     end
 end
 
@@ -2632,7 +2631,7 @@ function I = getMREMagnitudeForROI(app, sl)
             if contains(roiName,'Liver'),    organLabel = 'Liver';
             elseif contains(roiName,'Spleen'),  organLabel = 'Spleen';
             elseif contains(roiName,'Psoas'),   organLabel = 'Psoas Muscle';
-            elseif contains(roiName,'Trunk'),   organLabel = 'Trunk Muscle';
+            elseif contains(roiName,'Trunk'),   organLabel = 'Other Skeletal Muscles';
             elseif contains(roiName,'Muscle'),  organLabel = 'Muscle';
             elseif contains(roiName,'SAT'),     organLabel = 'SAT';
             elseif contains(roiName,'VAT'),     organLabel = 'VAT';
