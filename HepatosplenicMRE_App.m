@@ -5201,7 +5201,7 @@ function tf = shouldBypassGlobalHotkeys(app)
                 try, dixSliceZ = buildDixonSliceZ(dix); catch, end
                 organs = {'LiverDixon','SpleenDixon','PsoasDixon','TrunkDixon','SATDixon','VATDixon'};
                 hdr = radiomicsCSVHeader();
-                lines = {hdr};
+                lines = {hdr, radiomicsCSVUnits('%')};
                 for oi = 1:numel(organs)
                     rn = organs{oi};
                     if ~isfield(app.AppData.ROIs,rn), continue; end
@@ -5250,7 +5250,7 @@ function tf = shouldBypassGlobalHotkeys(app)
                 try, mreSliceZ = buildSliceZFromSinfo(mre.SpatialInfo); catch, end
                 organs = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
                 hdr = radiomicsCSVHeader();
-                lines = {hdr};
+                lines = {hdr, radiomicsCSVUnits('kPa')};
                 for oi = 1:numel(organs)
                     rn = organs{oi};
                     if ~isfield(app.AppData.ROIs,rn), continue; end
@@ -6791,6 +6791,28 @@ end
 % =========================================================================
 %  RADIOMICS HELPERS
 % =========================================================================
+
+function units = radiomicsCSVUnits(signalUnit)
+% Return a units row (row 2) matching radiomicsCSVHeader() column order.
+% signalUnit: e.g. '%' for PDFF or 'kPa' for MRE stiffness.
+if nargin < 1 || isempty(signalUnit), signalUnit = ''; end
+su  = signalUnit;
+su2 = [su '^2'];
+units = strjoin({ ...
+    '(text)', '(index)', 'mm', ...              % OrganROI  SliceIndex  SliceLocation_mm
+    'voxels', 'mm^3', ...                       % VoxelCount  Volume_mm3
+    su, su, su, su2, su, '', '', ...            % Mean Median Mode Variance StdDev Skewness Kurtosis
+    su2, 'bits', '', su, su, ...                % Energy Entropy Uniformity RMS MAD
+    su, su, su, su, ...                         % Min Max Range IQR
+    su, su, su, su, ...                         % P10 P25 P75 P90
+    'mm^2', 'mm', '', '', '', ...               % Area_mm2 Perimeter_mm Sphericity Compactness Eccentricity
+    'mm', 'mm', '', '', 'mm', ...               % MajorAxis_mm MinorAxis_mm Elongation Solidity MaxDiameter_mm
+    '', '', '', '', '', '', '', '', '', '', ...  % GLCM (10)
+    '', '', '', '', '', '', '', '', '', '', '', ... % GLRLM (11)
+    '', '', '', '', '', '', '', '', '', '', ''   % GLSZM (11)
+}, ',');
+end
+
 
 function hdr = radiomicsCSVHeader()
 % Return the 67-column CSV header for full radiomics export.
