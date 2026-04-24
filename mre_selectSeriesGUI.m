@@ -571,6 +571,9 @@ function group = findRelatedDixon(seriesList, anchor)
                     contains(anchorDesc,'ideal');
 
     if isIdealAnchor
+        anchorNumStr = regexprep(num2str(double(anchor.SeriesNumber)), '^0+', '');
+        if isempty(anchorNumStr), anchorNumStr = '0'; end
+
         for k = 1:numel(seriesList)
             s = seriesList(k);
             sdesc = lower(char(s.SeriesDescription));
@@ -601,9 +604,17 @@ function group = findRelatedDixon(seriesList, anchor)
             % match exactly so that series from other acquisitions aren't mixed in.
             countOK    = sameCount || (isIdealRole && ~strcmp(sRole,'IDEALIQ_Multi'));
 
+            % Restrict to the selected acquisition family: the candidate's
+            % series number must be a GE-convention descendant of the anchor
+            % (e.g. anchor S2 → S201, S202; anchor S12 → S1201, S1202).
+            % This prevents a second Dixon acquisition in the same exam from
+            % being merged into the selected family.
+            sNumStr   = regexprep(num2str(double(s.SeriesNumber)), '^0+', '');
+            isRelated = isSeriesNumberDescendant(anchorNumStr, sNumStr);
+
             % Include when IDEAL member AND (useful content OR raw product recon)
-            % AND image count is acceptable for the role.
-            if isIdeal && (isUseful || isRawRecon) && countOK
+            % AND image count is acceptable for the role AND belongs to this family.
+            if isIdeal && (isUseful || isRawRecon) && countOK && isRelated
                 if isempty(group)
                     group = s;
                 else
