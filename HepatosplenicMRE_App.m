@@ -1,32 +1,196 @@
 classdef HepatosplenicMRE_App < matlab.apps.AppBase
-% HepatosplenicMRE_App  — Abdominal MRI/MRE Analysis (Version 1.0, M.Y., April 17, 2026)
+% HepatosplenicMRE_App  —  Abdominal MRI / MRE Analysis Platform
+% Version 1.0  |  Meng Yin, PhD  |  Mayo Clinic Radiology  |  April 2026
+% =========================================================================
 %
-%   All processing, image viewing, and ROI placement occurs inside this
-%   one window. ROI drawing uses a magnified popup window for precision.
+% OVERVIEW
+%   Single-window MATLAB App Designer application for quantitative analysis
+%   of hepatosplenic MRI (Dixon / PDFF) and MR Elastography (MRE).
+%   All image viewing, landmark placement, manual ROI drawing, and results
+%   export are handled within this one class.
 %
-%   TABS
-%     Localizer  Scrollable coronal + sagittal; interactive L1/L2 placement
-%     Dixon      Multi-contrast viewer (Water, PDFF, InPhase) + organ ROIs
-%     MRE        Magnitude / animated wave / stiffness + organ ROIs
-%     Results    Summary table of all measurements
+%   The application is launched by running:
+%       app = HepatosplenicMRE_App;
 %
-%   ROI SETS (all saved separately)
-%     Liver_Dixon    entire-organ contour on Dixon → volume, PDFF
-%     Spleen_Dixon   entire-organ contour on Dixon → volume, PDFF
-%     Muscle_L1      L1 slice on Dixon → area, PDFF
-%     Muscle_L2      L2 slice on Dixon → area, PDFF
-%     SAT_L1         L1 slice on Dixon → area, PDFF
-%     SAT_L2         L2 slice on Dixon → area, PDFF
-%     Liver_MRE      inner stiffness ROI on MRE (per slice)
-%     Spleen_MRE     inner stiffness ROI on MRE (per slice)
+% =========================================================================
+% TABS
+% =========================================================================
+%   Localizer   Scrollable coronal + sagittal reformats.  Click "Place L1"
+%               and "Place L2" (or the disc-level buttons T9/10 → L3/4) to
+%               mark vertebral levels used for muscle / SAT ROI slices.
 %
-%   USAGE
-%     app = HepatosplenicMRE_App;
+%   Dixon       Three-panel viewer: PDFF (colour), Water, Fat / InPhase.
+%               Organ ROI buttons appear on the right.  ROI drawing uses a
+%               magnified popup window (see workflow below).
 %
-%   AUTHOR  Meng Yin, PhD
-%           Department of Radiology, Mayo Clinic
-%           Email: Yin.Meng@mayo.edu
-%   DATE    April 17, 2026
+%   MRE         Four-panel viewer: Magnitude, Wave (animated), Stiffness,
+%               Raw wave.  ROI buttons for Liver, Spleen, Muscle, Fat.
+%               ROI drawing also uses a magnified popup (see below).
+%
+%   Results     Summary table: volume, mean PDFF, mean stiffness per organ
+%               per slice.  Export buttons for PDFF and MRE radiomics CSVs.
+%
+% =========================================================================
+% DIXON ROI — STEP-BY-STEP WORKFLOW
+% =========================================================================
+%   1. Click an organ button on the right panel of the Dixon tab
+%      (Liver, Spleen, Psoas, Other Skeletal Muscles, SAT, VAT, …).
+%      The status bar confirms "Workflow started for <Organ> on slice N."
+%
+%   2. Use the slice slider (or arrow keys) to navigate to the target slice.
+%
+%   3. CLICK the desired image panel (PDFF / Water / Fat) to open the
+%      magnified drawing popup for that panel.
+%      — Alternatively press  F  to open the popup on the currently
+%        selected panel without clicking.
+%
+%   4. DRAW the organ contour in the magnified popup using the mouse.
+%      Hold the left mouse button and trace around the organ.
+%      DOUBLE-CLICK to finish the freehand contour.
+%        ► The software is NOT stuck at this point — it is waiting for
+%          your next command (see step 5).  Watch the status bar.
+%
+%   5. After double-click the popup stays open showing the drawn contour.
+%      You can now refine the ROI using these hotkeys IN THE POPUP WINDOW:
+%
+%        I   Include — draw an additional region to ADD to the ROI (green).
+%                      Hold mouse + trace + double-click to finish.
+%        E   Exclude — draw a region to REMOVE from the ROI (magenta).
+%                      This creates a hole (e.g. to exclude a large vessel
+%                      entirely inside the organ).  Hold + trace +
+%                      double-click to finish.
+%        F   Redraw  — discard the current contour and draw a new one.
+%
+%      After each I / E operation the popup redraws the updated boundary.
+%      Inner hole boundaries (vessel exclusions) are shown as inner lines.
+%      You can repeat I / E as many times as needed.
+%
+%   6. Press  A  (or Enter) in the popup to ACCEPT the ROI.
+%      The popup closes, the ROI is stored, and the status bar shows
+%      "<Organ> ROI accepted on slice N."
+%      — Press  Esc  instead to DISCARD the drawing and cancel.
+%
+%   7. Repeat steps 2–6 for additional slices or organs.
+%      Results accumulate in the Results tab automatically.
+%
+%   NOTES
+%   • The initial freehand contour is filled (holes closed) before the
+%     multi-op loop begins, so a rough closed stroke is sufficient.
+%   • Subsequent  E  exclusions create genuine holes in the stored mask;
+%     imfill is NOT re-applied after the loop, preserving vessel cutouts.
+%   • No edge erosion is applied; the mask you draw is the mask stored.
+%
+% =========================================================================
+% MRE ROI — STEP-BY-STEP WORKFLOW
+% =========================================================================
+%   1. Click an organ button on the right panel of the MRE tab
+%      (Liver, Spleen, Muscle, Fat).  A confidence threshold field appears;
+%      adjust it if needed (default 0.1 for liver/spleen).
+%
+%   2. Use the slice slider to navigate to the target slice.
+%
+%   3. CLICK an MRE panel (Stiffness / Wave / Magnitude / Raw wave) to
+%      select which image will appear in the magnified popup.
+%      — Clicking a panel here ONLY selects the view axis; it does NOT
+%        open the popup automatically.  This is intentional — you may want
+%        to browse slices first before committing to a draw.
+%
+%   4. Press  F  to open the magnified drawing popup on the selected panel.
+%      (Press  D  instead to use seed + automatic grow on the Magnitude
+%      image — useful as a starting point to refine manually.)
+%
+%   5. DRAW the organ contour in the popup.  Hold mouse + trace + DOUBLE-
+%      CLICK to finish.
+%        ► The software is NOT stuck — it is waiting for I / E / A / Esc.
+%
+%   6. Refine with  I  (include, green) and  E  (exclude, magenta) exactly
+%      as described for Dixon above.  Each I/E requires its own
+%      hold + trace + double-click in the popup.
+%
+%   7. Press  A  (or Enter) in the popup to ACCEPT.
+%      The ROI is processed: outerMask & confidenceMask (LaplaceC >= threshold)
+%      is computed and stored as the final measurement mask.
+%      No erosion is applied; the drawn boundary is used directly.
+%      The popup closes.  Press  Esc  to discard.
+%
+%   8. Additional refinement from the MAIN window (after the popup closes):
+%        E   Fine-exclude from the measurement ROI on any panel.
+%        I   Fine-include additional region into the measurement ROI.
+%        R   Re-edit the outer contour vertices in a new popup.
+%        +/– (was erosion; now no-op — kept for keyboard compatibility.)
+%        A   Re-accept the current final mask if you refined with E/I.
+%        Esc Cancel the entire workflow for this organ / slice.
+%
+%   NOTES
+%   • The confidence mask multiplied in step 7 removes low-reliability
+%     voxels (e.g. near the body wall, wrap artifact) automatically.
+%   • Inner vessel exclusions drawn with  E  in the popup are preserved
+%     through acceptance; the confidence mask does not refill them.
+%
+% =========================================================================
+% COMMON CONFUSION POINTS FOR NEW USERS
+% =========================================================================
+%   Q: "The program seems frozen / nothing happens after I draw."
+%   A: After double-clicking to finish the contour the popup is waiting
+%      for your command.  Look at the STATUS BAR at the bottom of the main
+%      window — it always shows the next expected action:
+%        "A=accept  Esc=discard  I=include region  E/X=exclude region"
+%      Click inside the popup window first if hotkeys are not responding
+%      (the popup needs keyboard focus), then press A to accept.
+%
+%   Q: "I pressed A but the ROI was not saved."
+%   A: Make sure you pressed A while the POPUP WINDOW is in focus, not
+%      the main window.  Click the popup once and try again.
+%
+%   Q: "I drew an exclusion inside the ROI but nothing changed visually."
+%   A: Inner hole boundaries are drawn as inner lines after  E  completes.
+%      If the popup looks identical, the exclusion region may have been
+%      too small or was accidentally drawn outside the ROI.  Press  E
+%      again to draw a new exclusion, or press  A  to accept and inspect
+%      the mask on the main display.
+%
+%   Q: "Clicking an MRE panel opens nothing — for Dixon it opened a popup."
+%   A: This is intentional.  For MRE, clicking only selects the display
+%      panel.  Press  F  after clicking the panel to open the popup.
+%
+% =========================================================================
+% DEVELOPER NOTES — ROI DRAWING CODE FLOW
+% =========================================================================
+%   The magnified popup is opened by openDixonROIPopup / openMREROIPopup.
+%   The initial freehand contour is captured by captureFreehandMask, which
+%   calls drawfreehand(ax) and blocks on wait(hFH) until double-click.
+%
+%   After the initial draw the mask enters roiPopupMultiOpLoop (standalone
+%   function at the end of the file).  This loop:
+%     1. Calls redrawROIPopup to refresh the popup display.
+%     2. Sets popupFig.WindowKeyPressFcn = @roiPopupMultiKey.
+%     3. Calls uiwait(popupFig) — execution is SUSPENDED here.
+%     4. roiPopupMultiKey fires on any key press, sets
+%        popupFig.UserData.action and calls uiresume(popupFig).
+%     5. The loop reads the action and dispatches:
+%          'accept'  → sets accepted=true, breaks
+%          'discard' → clears mask, breaks
+%          'include' → calls captureFreehandMask (green), ORs into mask
+%          'exclude' → calls captureFreehandMask (magenta), ANDs ~delta
+%          ''        → spurious uiwait return; loop continues (no-op)
+%     6. On return, the caller deletes the popup and (for Dixon) calls
+%        acceptCurrentDixonROI, or (for MRE) calls recomputeCurrentMREROI
+%        then acceptCurrentMREROI in sequence.
+%
+%   Key design constraints:
+%   • imfill('holes') is applied to the RAW freehand stroke only, not to
+%     the mask after the multi-op loop, preserving vessel-exclusion holes.
+%   • cleanOuterMask (bwareaopen + bwareafilt, no imfill) is used for MRE
+%     outer mask cleanup; Dixon stores the mask directly.
+%   • For MRE, clicking a panel calls setCurrentMRETargetAxis only (no
+%     popup), so users must press F explicitly.
+%   • redrawROIPopup uses bwboundaries without 'noholes' so that inner
+%     hole boundaries are visible in the popup display.
+%
+% =========================================================================
+%   AUTHOR   Meng Yin, PhD  |  Radiology, Mayo Clinic  |  Yin.Meng@mayo.edu
+%   DATE     April 2026
+% =========================================================================
 
     % =====================================================================
     %  UI PROPERTIES
