@@ -2195,13 +2195,12 @@ function captureManualOuterMREROI(app)
     axisKey = app.inferCurrentMRETargetAxis();
     app.setCurrentMRETargetAxis(axisKey);
 
-    [popupFig, popupAx] = app.openMREROIPopup(axisKey);
+    [popupFig, popupAx, imgData, cmapData, climVals] = app.openMREROIPopup(axisKey);
     if isempty(popupFig) || ~isvalid(popupFig)
         setStatus(app,'Could not open magnified drawing window.'); return
     end
 
-    setStatus(app, sprintf('Draw %s contour in magnified window. Double-click to finish.', ...
-        lower(app.getMREROIOrganLabel())));
+    setStatus(app, 'Draw contour in magnified window. Double-click to finish.');
     app.AppData.MREROIDrawing = true;
     app.updateMREPlaybackButtonEnabled();
     drawCleanup = onCleanup(@()app.finishMREROIDrawing());
@@ -2217,30 +2216,14 @@ function captureManualOuterMREROI(app)
         return
     end
 
-    % Overlay mask boundary in popup and wait for confirmation
-    try
-        hold(popupAx, 'on');
-        bndList = bwboundaries(logical(mask), 'noholes');
-        for k = 1:numel(bndList)
-            b = bndList{k};
-            plot(popupAx, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
-        end
-        hold(popupAx, 'off');
-    catch, end
+    % Stay in popup: allow include/exclude before final accept
+    [mask, accepted] = roiPopupMultiOpLoop(app, popupFig, popupAx, mask, ...
+        imgData, cmapData, climVals, roiColor, nR, nC, 'MRE');
 
-    setStatus(app, 'ROI drawn. Press A or Enter to accept, Esc to discard.');
-    popupFig.UserData = struct('accepted', false);
-    popupFig.WindowKeyPressFcn = @(~,e) roiPopupConfirmKey(popupFig, e);
-    uiwait(popupFig);
-
-    accepted = false;
-    if isvalid(popupFig)
-        try, accepted = popupFig.UserData.accepted; catch, end
-        delete(popupFig);
-    end
+    if isvalid(popupFig), delete(popupFig); end
     app.AppData.MREROIPopupFig = [];
 
-    if ~accepted
+    if ~accepted || ~any(mask(:))
         refreshMRE(app);
         app.showMREROIHotkeyHelp();
         setStatus(app, 'ROI discarded. Press F to retry or Esc to cancel workflow.');
@@ -2301,7 +2284,7 @@ function editCurrentMREROIVertices(app)
     roiColor = mreROIColor(app.AppData.MREROIName);
     nVerts   = max(3, round(app.AppData.ROIVertices));
 
-    [popupFig, popupAx] = app.openMREROIPopup(axisKey);
+    [popupFig, popupAx, imgData, cmapData, climVals] = app.openMREROIPopup(axisKey);
     if isempty(popupFig) || ~isvalid(popupFig)
         setStatus(app,'Could not open magnified drawing window.'); return
     end
@@ -2365,30 +2348,14 @@ function editCurrentMREROIVertices(app)
         return
     end
 
-    % Show new outline in popup, wait for A/Enter confirmation
-    try
-        hold(popupAx, 'on');
-        bndList2 = bwboundaries(newMask, 'noholes');
-        for k = 1:numel(bndList2)
-            b = bndList2{k};
-            plot(popupAx, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
-        end
-        hold(popupAx, 'off');
-    catch, end
+    % Multi-op loop: allow include/exclude before final accept
+    [newMask, accepted] = roiPopupMultiOpLoop(app, popupFig, popupAx, newMask, ...
+        imgData, cmapData, climVals, roiColor, nR, nC, 'MRE');
 
-    setStatus(app, 'ROI contour ready. Press A or Enter to accept, Esc to discard.');
-    popupFig.UserData = struct('accepted', false);
-    popupFig.WindowKeyPressFcn = @(~,e) roiPopupConfirmKey(popupFig, e);
-    uiwait(popupFig);
-
-    accepted = false;
-    if isvalid(popupFig)
-        try, accepted = popupFig.UserData.accepted; catch, end
-        delete(popupFig);
-    end
+    if isvalid(popupFig), delete(popupFig); end
     app.AppData.MREROIPopupFig = [];
 
-    if ~accepted, return; end
+    if ~accepted || ~any(newMask(:)), return; end
 
     app.AppData.MREROIOuterMask = newMask;
     app.recomputeCurrentMREROI(true);
@@ -2812,13 +2779,12 @@ function I = getMREMagnitudeForROI(app, sl)
             [nR, nC] = size(I);
             roiColor = dixonROIColor(app.AppData.DixonROIName);
 
-            [popupFig, popupAx] = app.openDixonROIPopup(axisKey);
+            [popupFig, popupAx, imgData, cmapData, climVals] = app.openDixonROIPopup(axisKey);
             if isempty(popupFig) || ~isvalid(popupFig)
                 setStatus(app,'Could not open magnified drawing window.'); return
             end
 
-            setStatus(app, sprintf('Draw %s contour in magnified window. Double-click to finish.', ...
-                lower(app.getDixonOrganLabel())));
+            setStatus(app, 'Draw contour in magnified window. Double-click to finish.');
             app.AppData.DixonROIDrawing = true;
             mask = captureFreehandMask(app, popupAx, nR, nC, roiColor);
             app.AppData.DixonROIDrawing = false;
@@ -2831,41 +2797,27 @@ function I = getMREMagnitudeForROI(app, sl)
                 return
             end
 
-            % Overlay mask boundary in popup, then wait for A/Enter confirmation
-            try
-                hold(popupAx, 'on');
-                bndList = bwboundaries(logical(mask), 'noholes');
-                for k = 1:numel(bndList)
-                    b = bndList{k};
-                    plot(popupAx, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
-                end
-                hold(popupAx, 'off');
-            catch, end
+            % Fill + merge with any existing mask (bilateral structures)
+            try, mask = imfill(logical(mask), 'holes'); catch, mask = logical(mask); end
+            existing = logical(app.AppData.DixonROIFinalMask);
+            if ~isequal(size(existing), [nR nC]), existing = false(nR, nC); end
+            mask = existing | mask;
 
-            setStatus(app, 'ROI drawn. Press A or Enter to accept, Esc to discard.');
-            popupFig.UserData = struct('accepted', false);
-            popupFig.WindowKeyPressFcn = @(~,e) roiPopupConfirmKey(popupFig, e);
-            uiwait(popupFig);
+            % Stay in popup: allow include/exclude before final accept
+            [mask, accepted] = roiPopupMultiOpLoop(app, popupFig, popupAx, mask, ...
+                imgData, cmapData, climVals, roiColor, nR, nC, 'Dixon');
 
-            accepted = false;
-            if isvalid(popupFig)
-                try, accepted = popupFig.UserData.accepted; catch, end
-                delete(popupFig);
-            end
+            if isvalid(popupFig), delete(popupFig); end
             app.AppData.DixonROIPopupFig = [];
 
-            if ~accepted
+            if ~accepted || ~any(mask(:))
                 refreshDixon(app); app.showDixonROIHotkeyHelp();
                 setStatus(app,'ROI discarded. Press F to retry or Esc to cancel workflow.');
                 return
             end
 
-            try; newRegion = imfill(logical(mask), 'holes'); catch; newRegion = logical(mask); end
-            existing = logical(app.AppData.DixonROIFinalMask);
-            if ~isequal(size(existing), [nR nC]), existing = false(nR, nC); end
-            merged = existing | newRegion;
-            app.AppData.DixonROIOuterMask = merged;
-            app.AppData.DixonROIFinalMask = merged;
+            app.AppData.DixonROIOuterMask = mask;
+            app.AppData.DixonROIFinalMask = mask;
             app.acceptCurrentDixonROI();
         end
 
@@ -3046,7 +2998,7 @@ function I = getMREMagnitudeForROI(app, sl)
             roiColor = dixonROIColor(app.AppData.DixonROIName);
             nVerts   = max(3, round(app.AppData.ROIVertices));
 
-            [popupFig, popupAx] = app.openDixonROIPopup(axisKey);
+            [popupFig, popupAx, imgData, cmapData, climVals] = app.openDixonROIPopup(axisKey);
             if isempty(popupFig) || ~isvalid(popupFig)
                 setStatus(app,'Could not open magnified drawing window.'); return
             end
@@ -3107,30 +3059,14 @@ function I = getMREMagnitudeForROI(app, sl)
                 return
             end
 
-            % Show new outline in popup, wait for A/Enter confirmation
-            try
-                hold(popupAx, 'on');
-                bndList2 = bwboundaries(newMask, 'noholes');
-                for k = 1:numel(bndList2)
-                    b = bndList2{k};
-                    plot(popupAx, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
-                end
-                hold(popupAx, 'off');
-            catch, end
+            % Multi-op loop: allow include/exclude before final accept
+            [newMask, accepted] = roiPopupMultiOpLoop(app, popupFig, popupAx, newMask, ...
+                imgData, cmapData, climVals, roiColor, nR, nC, 'Dixon');
 
-            setStatus(app, 'ROI contour ready. Press A or Enter to accept, Esc to discard.');
-            popupFig.UserData = struct('accepted', false);
-            popupFig.WindowKeyPressFcn = @(~,e) roiPopupConfirmKey(popupFig, e);
-            uiwait(popupFig);
-
-            accepted = false;
-            if isvalid(popupFig)
-                try, accepted = popupFig.UserData.accepted; catch, end
-                delete(popupFig);
-            end
+            if isvalid(popupFig), delete(popupFig); end
             app.AppData.DixonROIPopupFig = [];
 
-            if ~accepted, return; end
+            if ~accepted || ~any(newMask(:)), return; end
 
             app.AppData.DixonROIOuterMask = newMask;
             app.recomputeCurrentDixonROI(true);
@@ -4146,9 +4082,9 @@ function tf = shouldBypassGlobalHotkeys(app)
         %  MAGNIFIED ROI POPUP BUILDERS
         % -----------------------------------------------------------------
 
-        function [fig, ax] = openDixonROIPopup(app, axisKey)
+        function [fig, ax, imgData, cmapData, climVals] = openDixonROIPopup(app, axisKey)
         % Create a magnified figure showing the Dixon image for ROI drawing.
-            fig = []; ax = [];
+            fig = []; ax = []; imgData = []; cmapData = 'gray'; climVals = [0 1];
             sl = app.AppData.DixonROISlice;
             I  = app.getDixonImageForROI(sl, axisKey);
             if isempty(I), return; end
@@ -4173,8 +4109,10 @@ function tf = shouldBypassGlobalHotkeys(app)
                 catch, end
                 if hi <= lo, [lo,hi] = robustCLim(I,1,99,false); end
             end
+            imgData  = I;
+            climVals = [lo hi];
 
-            titleStr = sprintf('ROI Drawing — %s · %s · Slice %d    [A/Enter = accept   Esc = discard]', ...
+            titleStr = sprintf('ROI Drawing — %s · %s · Slice %d    [A/Enter=accept  Esc=discard  I=include  E=exclude]', ...
                 app.getDixonOrganLabel(), app.getDixonAxisLabel(axisKey), sl);
             [fig, ax] = openROIPopupFigure(I, cmapData, [lo hi], titleStr);
             app.AppData.DixonROIPopupFig = fig;
@@ -4195,9 +4133,9 @@ function tf = shouldBypassGlobalHotkeys(app)
             catch, end
         end
 
-        function [fig, ax] = openMREROIPopup(app, axisKey)
+        function [fig, ax, imgData, cmapData, climVals] = openMREROIPopup(app, axisKey)
         % Create a magnified figure showing the MRE image for ROI drawing.
-            fig = []; ax = [];
+            fig = []; ax = []; imgData = []; cmapData = gray(256); climVals = [0 1];
             sl  = app.AppData.MREROISlice;
             mre = app.AppData.MRE;
             if isempty(mre), return; end
@@ -4237,8 +4175,9 @@ function tf = shouldBypassGlobalHotkeys(app)
                     climVals = [lo hi];
                     cmapData = gray(256);
             end
+            imgData = I;
 
-            titleStr = sprintf('ROI Drawing — %s · %s · Slice %d    [A/Enter = accept   Esc = discard]', ...
+            titleStr = sprintf('ROI Drawing — %s · %s · Slice %d    [A/Enter=accept  Esc=discard  I=include  E=exclude]', ...
                 app.getMREROIOrganLabel(), app.getMREAxisLabel(axisKey), sl);
             [fig, ax] = openROIPopupFigure(I, cmapData, climVals, titleStr);
             app.AppData.MREROIPopupFig = fig;
@@ -7693,6 +7632,119 @@ function roiPopupConfirmKey(fig, event)
     elseif strcmp(key, 'escape')
         fig.UserData = struct('accepted', false);
         uiresume(fig);
+    end
+end
+
+
+function roiPopupMultiKey(fig, event)
+% Extended key handler: A/Enter=accept, Esc=discard, I=include, E/X=exclude.
+    if ~isvalid(fig), return; end
+    key = lower(event.Key);
+    ch = ''; try, ch = lower(event.Character); catch, end
+    if any(strcmp(key, {'a', 'return', 'enter'}))
+        fig.UserData = struct('action', 'accept'); uiresume(fig);
+    elseif strcmp(key, 'escape')
+        fig.UserData = struct('action', 'discard'); uiresume(fig);
+    elseif strcmp(key, 'i') || strcmp(ch, 'i')
+        fig.UserData = struct('action', 'include'); uiresume(fig);
+    elseif any(strcmp(key, {'e', 'x'})) || any(strcmp(ch, {'e', 'x'}))
+        fig.UserData = struct('action', 'exclude'); uiresume(fig);
+    end
+end
+
+
+function redrawROIPopup(ax, imgData, cmapData, climVals, mask, roiColor)
+% Clear axis, re-display image with colormap/clim, overlay current mask boundary.
+    try
+        cla(ax);
+        imagesc(ax, imgData);
+        axis(ax, 'image');
+        ax.XTick = []; ax.YTick = [];
+        ax.XColor = 'none'; ax.YColor = 'none';
+        if ischar(cmapData) || isstring(cmapData)
+            try, colormap(ax, char(cmapData)); catch, colormap(ax, 'gray'); end
+        elseif isnumeric(cmapData) && size(cmapData, 2) == 3
+            colormap(ax, cmapData);
+        end
+        if numel(climVals) == 2 && all(isfinite(climVals)) && climVals(2) > climVals(1)
+            clim(ax, climVals);
+        end
+        if ~isempty(mask) && any(mask(:))
+            hold(ax, 'on');
+            bndList = bwboundaries(logical(mask), 'noholes');
+            for k = 1:numel(bndList)
+                b = bndList{k};
+                plot(ax, b(:,2), b(:,1), '-', 'Color', roiColor, 'LineWidth', 2.5);
+            end
+            hold(ax, 'off');
+        end
+        drawnow;
+    catch, end
+end
+
+
+function [mask, accepted] = roiPopupMultiOpLoop(app, popupFig, popupAx, ...
+        initialMask, imgData, cmapData, climVals, roiColor, nR, nC, modality)
+% Main loop: redraw popup → uiwait for key → handle accept/discard/include/exclude.
+    mask = initialMask;
+    accepted = false;
+    redrawROIPopup(popupAx, imgData, cmapData, climVals, mask, roiColor);
+
+    while true
+        if ~isvalid(popupFig), break; end
+        setStatus(app, 'A=accept  Esc=discard  I=include region  E/X=exclude region');
+        popupFig.UserData = struct('action', '');
+        popupFig.WindowKeyPressFcn = @(~,e) roiPopupMultiKey(popupFig, e);
+        uiwait(popupFig);
+
+        if ~isvalid(popupFig), break; end
+        action = '';
+        try, action = popupFig.UserData.action; catch, end
+
+        if strcmp(action, 'accept')
+            accepted = true; break;
+        elseif strcmp(action, 'discard')
+            mask = []; break;
+        elseif strcmp(action, 'include')
+            if strcmp(modality, 'MRE')
+                app.AppData.MREROIDrawing = true;
+                try, app.updateMREPlaybackButtonEnabled(); catch, end
+            else
+                app.AppData.DixonROIDrawing = true;
+            end
+            setStatus(app, 'Draw region to INCLUDE (green). Double-click to finish.');
+            delta = captureFreehandMask(app, popupAx, nR, nC, [0.2 0.9 0.2]);
+            if strcmp(modality, 'MRE')
+                app.AppData.MREROIDrawing = false;
+                try, app.updateMREPlaybackButtonEnabled(); catch, end
+            else
+                app.AppData.DixonROIDrawing = false;
+            end
+            if any(delta(:))
+                try, delta = imfill(logical(delta), 'holes'); catch, end
+                mask = logical(mask) | logical(delta);
+            end
+            redrawROIPopup(popupAx, imgData, cmapData, climVals, mask, roiColor);
+        else  % exclude
+            if strcmp(modality, 'MRE')
+                app.AppData.MREROIDrawing = true;
+                try, app.updateMREPlaybackButtonEnabled(); catch, end
+            else
+                app.AppData.DixonROIDrawing = true;
+            end
+            setStatus(app, 'Draw region to EXCLUDE (magenta). Double-click to finish.');
+            delta = captureFreehandMask(app, popupAx, nR, nC, [1 0 1]);
+            if strcmp(modality, 'MRE')
+                app.AppData.MREROIDrawing = false;
+                try, app.updateMREPlaybackButtonEnabled(); catch, end
+            else
+                app.AppData.DixonROIDrawing = false;
+            end
+            if any(delta(:))
+                mask = logical(mask) & ~logical(delta);
+            end
+            redrawROIPopup(popupAx, imgData, cmapData, climVals, mask, roiColor);
+        end
     end
 end
 
