@@ -206,6 +206,12 @@ function groups = buildGroups(seriesList)
             else
                 anchor.Role = 'IDEALIQ_Family';
             end
+            % Embed the resolved family membership so findRelatedDixon can
+            % return exactly these series without any additional filtering.
+            % This is the most robust approach: the family resolver already
+            % handles old-convention (arbitrary series numbers) and
+            % new-convention (GE prefix descendants) correctly.
+            anchor.FamilySeriesNums = double([dixonExam.Families(k).Members.SeriesNumber]);
             dixCell{end+1} = anchor; %#ok<AGROW>
         end
     else
@@ -548,20 +554,23 @@ function s = findSeriesByNumber(seriesList, seriesNumber, typePrefix)
 end
 
 function group = findRelatedDixon(seriesList, anchor)
-%FINDRELATEDDIXON  Return the selected Dixon acquisition family only.
-% Robust, parser-independent grouping:
-%   IDEAL-IQ:
-%     - same image count as the selected anchor
-%     - description contains IDEAL
-%     - keep only useful recons: FatFrac / Water / Fat
-%     - ignore raw multi stacks and mismatched-count series
-%   Conventional IP/OP:
-%     - keep only IP/OP-looking series
+%FINDRELATEDDIXON  Return all series belonging to the same Dixon family.
+%
+% Primary path (preferred): when the anchor carries FamilySeriesNums
+%   (embedded by buildGroups from dixon_parseDICOMExam), look up those
+%   exact series numbers in seriesList.  This handles both old-convention
+%   exams (arbitrary recon numbers, e.g. anchor S5 → S15992/S15993/S15998)
+%   and new-convention exams (GE prefix descendants, e.g. S12 → S1201/S1202)
+%   correctly, and keeps duplicate acquisitions separated by construction.
+%
+% Fallback path: when FamilySeriesNums is absent (e.g. fallback tree or
+%   a series selected directly), collect all IDEAL-IQ series that contain
+%   useful content (water/fat/pdff) — the April-18 logic that is known to
+%   work for single-acquisition exams.
 
     group = struct([]);
 
     anchorDesc = lower(char(anchor.SeriesDescription));
-    targetN    = double(anchor.nImages);
 
     isIdealAnchor = strcmp(anchor.Role,'IDEALIQ_Family') || ...
                     strcmp(anchor.Role,'IDEALIQ_PDFF')   || ...
@@ -571,82 +580,43 @@ function group = findRelatedDixon(seriesList, anchor)
                     contains(anchorDesc,'ideal');
 
     if isIdealAnchor
-        anchorNumStr = regexprep(num2str(double(anchor.SeriesNumber)), '^0+', '');
-        if isempty(anchorNumStr), anchorNumStr = '0'; end
-        anchorSig = idealDescSig(anchor);
+        % ── Primary: use pre-resolved family membership ──────────────────
+        if isfield(anchor,'FamilySeriesNums') && ~isempty(anchor.FamilySeriesNums)
+            famNums = double(anchor.FamilySeriesNums);
+            for k = 1:numel(seriesList)
+                if ismember(double(seriesList(k).SeriesNumber), famNums)
+                    if isempty(group), group = seriesList(k);
+                    else, group(end+1) = seriesList(k); end %#ok<AGROW>
+                end
+            end
+            if ~isempty(group)
+                [~, idx] = sort([group.SeriesNumber]);
+                group = group(idx);
+                return
+            end
+        end
 
-        % --- Pass 1: collect all qualifying IDEAL-IQ candidates (unchanged logic) ---
-        allIdeal = struct([]);
+        % ── Fallback: collect all qualifying IDEAL-IQ series (Apr-18 logic) ─
+        targetN = double(anchor.nImages);
         for k = 1:numel(seriesList)
             s = seriesList(k);
             sdesc = lower(char(s.SeriesDescription));
             sRole = char(s.Role);
 
-            % A series is an IDEAL-IQ member if its description contains
-            % 'ideal'/'dixon' OR it already carries an IDEALIQ_* role
-            % (GE standalone Water/Fat recons are often named just "Water"
-            % or "Fat" without the word "ideal" in the description).
             isIdealRole = startsWith(sRole, 'IDEALIQ_');
             isIdeal     = contains(sdesc,'ideal') || contains(sdesc,'dixon') || isIdealRole;
 
-            % Useful content: water, fat, pdff, inphase, outphase keyword in desc.
             isUseful  = contains(sdesc,'fatfrac') || contains(sdesc,'water') || ...
                         contains(sdesc,'fat') || ...
                         contains(sdesc,'inphase') || contains(sdesc,'in phase') || ...
                         contains(sdesc,'outphase') || contains(sdesc,'out phase') || ...
                         contains(sdesc,'in-phase') || contains(sdesc,'out-of-phase');
 
-            sameCount  = double(s.nImages) == targetN;
-
-            % isRawRecon: IDEALIQ_Raw series are definitively Water/Fat/IP/OP
-            % standalone products — always include regardless of keywords.
             isRawRecon = strcmp(sRole, 'IDEALIQ_Raw');
-
-            % countOK: Raw/PDFF/T2s may have different slice counts from the
-            % anchor (PDFF fewer slices, T2s same).  Multi-contrast stacks must
-            % match exactly so that series from other acquisitions aren't mixed in.
+            sameCount  = double(s.nImages) == targetN;
             countOK    = sameCount || (isIdealRole && ~strcmp(sRole,'IDEALIQ_Multi'));
 
             if isIdeal && (isUseful || isRawRecon) && countOK
-                if isempty(allIdeal), allIdeal = s; else, allIdeal(end+1) = s; end %#ok<AGROW>
-            end
-        end
-
-        % --- Pass 2: detect GE numbering convention, then apply family filter ---
-        %
-        % New GE convention: recon series numbers are GE-convention descendants
-        % of the anchor (anchor S2 → S201, S202; anchor S12 → S1201, S1202).
-        % Old GE convention: recon numbers are arbitrary (anchor S5 → S15992...).
-        %
-        % Detection: if any non-anchor candidate is a descendant, it's new convention.
-        %   New convention → filter by series-number prefix.
-        %     Handles: same-body-part duplicate acquisitions (S2 vs S12 scenario).
-        %   Old convention → filter by description signature (strips water/fat/pdff).
-        %     Handles: different-body-part acquisitions with the same naming scheme.
-        %   Both conventions are self-consistent within a single exam.
-        hasDescendant = false;
-        for k = 1:numel(allIdeal)
-            % Skip raw multi-echo acquisitions: IDEALIQ_Multi series share an
-            % accidental number prefix with single-digit anchors (e.g. S599
-            % looks like a descendant of S5 but is the multi-echo raw scan, not
-            % a GE-convention single-contrast recon).
-            if strcmp(char(allIdeal(k).Role), 'IDEALIQ_Multi'), continue; end
-            sn = regexprep(num2str(double(allIdeal(k).SeriesNumber)), '^0+', '');
-            if ~strcmp(sn, anchorNumStr) && isSeriesNumberDescendant(anchorNumStr, sn)
-                hasDescendant = true;
-                break;
-            end
-        end
-
-        for k = 1:numel(allIdeal)
-            s = allIdeal(k);
-            sn = regexprep(num2str(double(s.SeriesNumber)), '^0+', '');
-            if hasDescendant
-                include = isSeriesNumberDescendant(anchorNumStr, sn);
-            else
-                include = isempty(anchorSig) || strcmp(idealDescSig(s), anchorSig);
-            end
-            if include
                 if isempty(group), group = s; else, group(end+1) = s; end %#ok<AGROW>
             end
         end
