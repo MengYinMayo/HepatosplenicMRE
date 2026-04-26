@@ -626,6 +626,11 @@ function group = findRelatedDixon(seriesList, anchor)
         %   Both conventions are self-consistent within a single exam.
         hasDescendant = false;
         for k = 1:numel(allIdeal)
+            % Skip raw multi-echo acquisitions: IDEALIQ_Multi series share an
+            % accidental number prefix with single-digit anchors (e.g. S599
+            % looks like a descendant of S5 but is the multi-echo raw scan, not
+            % a GE-convention single-contrast recon).
+            if strcmp(char(allIdeal(k).Role), 'IDEALIQ_Multi'), continue; end
             sn = regexprep(num2str(double(allIdeal(k).SeriesNumber)), '^0+', '');
             if ~strcmp(sn, anchorNumStr) && isSeriesNumberDescendant(anchorNumStr, sn)
                 hasDescendant = true;
@@ -732,6 +737,10 @@ function sig = idealDescSig(s)
 % T2/R2* products of the same acquisition share one signature while acquisitions
 % of different body parts (e.g. Abdomen vs Pelvis) remain distinct.
     desc = lower(char(s.SeriesDescription));
+    % Strip parenthesised unit annotations before normalising, e.g. "(1/s)",
+    % "(%)", "(ms)", so that "R2*(1/s)" and "FatFrac(%)" produce the same
+    % family signature as plain "R2*" and "FatFrac".
+    desc = regexprep(desc, '\([^)]{0,15}\)', ' ');
     sig  = regexprep(desc, '[^a-z0-9]+', ' ');
     sig  = regexprep(sig, '\bfatfrac\b|\bpdff\b|\bwater\b|\bfat\b|\bt2\b|\br2\*?\b|\braw\b', ' ');
     sig  = regexprep(sig, '\s+', ' ');
