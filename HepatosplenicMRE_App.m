@@ -19,7 +19,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %               and "Place L2" (or the disc-level buttons T9/10 → L3/4) to
 %               mark vertebral levels used for muscle / SAT ROI slices.
 %
-%   Dixon       Three-panel viewer: PDFF (colour), Water, Fat / InPhase.
+%   Dixon       Three-panel viewer: PDFF (colorED), Water, and Fat images.
 %               Organ ROI buttons appear on the right.  ROI drawing uses a
 %               magnified popup window (see workflow below).
 %
@@ -39,10 +39,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %
 %   2. Use the slice slider (or arrow keys) to navigate to the target slice.
 %
-%   3. CLICK the desired image panel (PDFF / Water / Fat) to open the
-%      magnified drawing popup for that panel.
-%      — Alternatively press  F  to open the popup on the currently
-%        selected panel without clicking.
+%   3. CLICK the desired image panel (PDFF / Water / Fat) to select which
+%      magnified drawing popup for that panel. After selecting panel,
+%        press  "F"  to open the popup on the currently
+%        selected panel for free-hand ROI drawing.
 %
 %   4. DRAW the organ contour in the magnified popup using the mouse.
 %      Hold the left mouse button and trace around the organ.
@@ -78,14 +78,13 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %     multi-op loop begins, so a rough closed stroke is sufficient.
 %   • Subsequent  E  exclusions create genuine holes in the stored mask;
 %     imfill is NOT re-applied after the loop, preserving vessel cutouts.
-%   • No edge erosion is applied; the mask you draw is the mask stored.
 %
 % =========================================================================
 % MRE ROI — STEP-BY-STEP WORKFLOW
 % =========================================================================
 %   1. Click an organ button on the right panel of the MRE tab
 %      (Liver, Spleen, Muscle, Fat).  A confidence threshold field appears;
-%      adjust it if needed (default 0.1 for liver/spleen).
+%      adjust it if needed (default 0.9 for liver).
 %
 %   2. Use the slice slider to navigate to the target slice.
 %
@@ -123,7 +122,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %
 %   NOTES
 %   • The confidence mask multiplied in step 7 removes low-reliability
-%     voxels (e.g. near the body wall, wrap artifact) automatically.
+%     stiffness calculation automatically.
 %   • Inner vessel exclusions drawn with  E  in the popup are preserved
 %     through acceptance; the confidence mask does not refill them.
 %
