@@ -56,7 +56,26 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     rawSeries   = findRoles(dixonGroup, ...
         {'IDEALIQ_Raw','IDEALIQ_Water','IDEALIQ_Fat','IDEALIQ_InPhase','IDEALIQ_OutPhase'});
     pdffSeries  = findRole(dixonGroup, 'IDEALIQ_PDFF');
+    % Keyword fallback: if role lookup missed, find FatFrac by description.
+    % IDEAL-IQ always produces a FatFrac(%) recon — never compute from W+F.
+    if isempty(pdffSeries)
+        pdffSeries = findBestNamedSeries(dixonGroup, {'fatfrac'});
+    end
+    if isempty(pdffSeries)
+        pdffSeries = findBestNamedSeries(dixonGroup, {'fat frac'});
+    end
+    if isempty(pdffSeries)
+        pdffSeries = findBestNamedSeries(dixonGroup, {'pdff'});
+    end
+
     t2sSeries   = findRole(dixonGroup, 'IDEALIQ_T2s');
+    % Keyword fallback for R2*/T2* map.
+    if isempty(t2sSeries)
+        t2sSeries = findBestNamedSeries(dixonGroup, {'r2*'}, {'water','fat','fatfrac'});
+    end
+    if isempty(t2sSeries)
+        t2sSeries = findBestNamedSeries(dixonGroup, {'r2star'}, {'water','fat','fatfrac'});
+    end
 
     % Prefer T2*-corrected water/fat (old IDEAL-IQ: 's15992_T2_Water_...',
     % 's15993_T2_Fat_...') over plain water/fat when both are present.
@@ -157,11 +176,20 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     end
 
     if isempty(dixon.PDFF) && ~isempty(pdffSeries)
-        vprint(opts, 'Reading PDFF from: S%d  (%d files)', ...
+        vprint(opts, 'Reading PDFF (FatFrac) from: S%d  (%d files)', ...
             pdffSeries(1).SeriesNumber, pdffSeries(1).nImages);
         [dixon.PDFF, pdffInfo] = readPDFFSeries(pdffSeries(1), opts);
         if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
             dixon.SpatialInfo = pdffInfo;
+        end
+    end
+
+    if isempty(dixon.T2star) && ~isempty(t2sSeries)
+        vprint(opts, 'Reading R2*/T2* from: S%d  (%d files)', ...
+            t2sSeries(1).SeriesNumber, t2sSeries(1).nImages);
+        dixon.T2star = readSingleContrast(t2sSeries(1).Files, opts);
+        if isempty(dixon.SpatialInfo) || ~isfield(dixon.SpatialInfo,'VoxelSize')
+            dixon = fillSpatialInfo(dixon, t2sSeries(1).Files);
         end
     end
 
@@ -235,7 +263,9 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
         dixon.OutPhase = dixon.Fat;
     end
 
-    % Compute PDFF from Water/Fat if still missing
+    % Compute PDFF from Water/Fat only for IP/OP acquisitions that have no
+    % FatFrac series.  For IDEAL-IQ (old or new GE), pdffSeries is always
+    % found above, so this block is only reached for conventional IP/OP.
     if isempty(dixon.PDFF) && ~isempty(dixon.Water) && ~isempty(dixon.Fat)
         vprint(opts, 'Computing PDFF from Water+Fat...');
         W = double(dixon.Water); F = double(dixon.Fat);
