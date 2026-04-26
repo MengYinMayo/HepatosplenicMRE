@@ -239,8 +239,12 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     if isempty(dixon.PDFF) && ~isempty(dixon.Water) && ~isempty(dixon.Fat)
         vprint(opts, 'Computing PDFF from Water+Fat...');
         W = double(dixon.Water); F = double(dixon.Fat);
-        denom = W + F; denom(denom < eps) = 1;
-        dixon.PDFF = 100 .* F ./ denom;
+        denom = W + F;
+        % Replace non-positive denominators (background, noise) with 1 so
+        % the division is safe.  Clamp result to [0, 100] %.
+        denom(denom <= 0) = 1;
+        pdff = 100 .* F ./ denom;
+        dixon.PDFF = max(0, min(100, pdff));
     end
 
     % ── 4.  Fill spatial info ─────────────────────────────────────────

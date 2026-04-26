@@ -199,19 +199,71 @@ function groups = buildGroups(seriesList)
         dixonExam = struct('Families', struct([]));
     end
     if isfield(dixonExam,'Families') && ~isempty(dixonExam.Families)
+        % Separate IDEALIQ and IPOP families.
+        idealFamList = {};
+        ipopFamList  = {};
         for k = 1:numel(dixonExam.Families)
-            anchor = dixonExam.Families(k).Anchor;
             if strcmpi(dixonExam.Families(k).Type,'IPOP')
-                anchor.Role = 'IPOP_Family';
+                ipopFamList{end+1} = dixonExam.Families(k); %#ok<AGROW>
             else
-                anchor.Role = 'IDEALIQ_Family';
+                idealFamList{end+1} = dixonExam.Families(k); %#ok<AGROW>
             end
-            % Embed the resolved family membership so findRelatedDixon can
-            % return exactly these series without any additional filtering.
-            % This is the most robust approach: the family resolver already
-            % handles old-convention (arbitrary series numbers) and
-            % new-convention (GE prefix descendants) correctly.
-            anchor.FamilySeriesNums = double([dixonExam.Families(k).Members.SeriesNumber]);
+        end
+
+        % Classify IDEALIQ families as "processed" (has PDFF or T2s member)
+        % or "raw-only" (only raw/multi acquisition images).  Old GE exams
+        % produce a separate raw family (e.g. S5 "WATER:1.5T IDEAL-IQ
+        % Abdomen") whose processed recons land in a different family (e.g.
+        % S15992-S15998).  Merge raw-only members into all processed families
+        % so any family member the user selects loads the complete set.
+        procFams    = {};
+        rawOnlyFams = {};
+        for k = 1:numel(idealFamList)
+            if idealFamilyHasProcessed(idealFamList{k})
+                procFams{end+1} = idealFamList{k}; %#ok<AGROW>
+            else
+                rawOnlyFams{end+1} = idealFamList{k}; %#ok<AGROW>
+            end
+        end
+
+        % Collect all series numbers from raw-only families.
+        rawOnlyNums = [];
+        for k = 1:numel(rawOnlyFams)
+            rawOnlyNums = [rawOnlyNums, double([rawOnlyFams{k}.Members.SeriesNumber])]; %#ok<AGROW>
+        end
+
+        % Build dixCell entries for processed IDEALIQ families (all members).
+        for k = 1:numel(procFams)
+            fam     = procFams{k};
+            famNums = unique([double([fam.Members.SeriesNumber]), rawOnlyNums]);
+            for m = 1:numel(fam.Members)
+                entry = fam.Members(m);
+                entry.Role = 'IDEALIQ_Family';
+                entry.FamilySeriesNums = famNums;
+                dixCell{end+1} = entry; %#ok<AGROW>
+            end
+        end
+
+        % If no processed families exist, fall back to showing raw families.
+        if isempty(procFams)
+            for k = 1:numel(idealFamList)
+                fam     = idealFamList{k};
+                famNums = double([fam.Members.SeriesNumber]);
+                for m = 1:numel(fam.Members)
+                    entry = fam.Members(m);
+                    entry.Role = 'IDEALIQ_Family';
+                    entry.FamilySeriesNums = famNums;
+                    dixCell{end+1} = entry; %#ok<AGROW>
+                end
+            end
+        end
+
+        % IPOP families: one anchor entry per family.
+        for k = 1:numel(ipopFamList)
+            fam    = ipopFamList{k};
+            anchor = fam.Anchor;
+            anchor.Role = 'IPOP_Family';
+            anchor.FamilySeriesNums = double([fam.Members.SeriesNumber]);
             dixCell{end+1} = anchor; %#ok<AGROW>
         end
     else
@@ -634,6 +686,23 @@ function group = findRelatedDixon(seriesList, anchor)
                    isIPOP(anchor);
 
     if isIPOPAnchor
+        % Primary: use pre-resolved family membership when available.
+        if isfield(anchor,'FamilySeriesNums') && ~isempty(anchor.FamilySeriesNums)
+            famNums = double(anchor.FamilySeriesNums);
+            for k = 1:numel(seriesList)
+                if ismember(double(seriesList(k).SeriesNumber), famNums)
+                    if isempty(group), group = seriesList(k);
+                    else, group(end+1) = seriesList(k); end %#ok<AGROW>
+                end
+            end
+            if ~isempty(group)
+                [~, idx] = sort([group.SeriesNumber]);
+                group = group(idx);
+                return
+            end
+        end
+
+        % Fallback: collect all IPOP-looking series.
         for k = 1:numel(seriesList)
             s = seriesList(k);
             if isIPOP(s) || strcmp(char(s.Role),'IPOP_Dixon')
@@ -697,6 +766,21 @@ function s = truncate(str, maxLen)
         s = [str(1:maxLen-1) '…'];
     else
         s = str;
+    end
+end
+
+function tf = idealFamilyHasProcessed(fam)
+% True when a Dixon IDEALIQ family contains at least one series with a
+% processed-recon role (PDFF map or T2*/R2* map).  Used to distinguish
+% "processed" families from "raw-only" acquisition families (e.g. old GE
+% IDEAL-IQ where the raw series S5 is in its own family separate from the
+% processed recons S15992-S15998).
+    tf = false;
+    processedRoles = {'IDEALIQ_PDFF','IDEALIQ_T2s'};
+    for k = 1:numel(fam.Members)
+        if any(strcmp(char(fam.Members(k).Role), processedRoles))
+            tf = true; return;
+        end
     end
 end
 
