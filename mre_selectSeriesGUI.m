@@ -226,16 +226,12 @@ function groups = buildGroups(seriesList)
             end
         end
 
-        % Collect all series numbers from raw-only families.
-        rawOnlyNums = [];
-        for k = 1:numel(rawOnlyFams)
-            rawOnlyNums = [rawOnlyNums, double([rawOnlyFams{k}.Members.SeriesNumber])]; %#ok<AGROW>
-        end
-
         % Build dixCell entries for processed IDEALIQ families (all members).
+        % Raw-only families (no PDFF/T2s member) are hidden from the tree when
+        % processed recons exist — they must not be mixed into the DixonGroup.
         for k = 1:numel(procFams)
             fam     = procFams{k};
-            famNums = unique([double([fam.Members.SeriesNumber]), rawOnlyNums]);
+            famNums = double([fam.Members.SeriesNumber]);
             for m = 1:numel(fam.Members)
                 entry = fam.Members(m);
                 entry.Role = 'IDEALIQ_Family';
