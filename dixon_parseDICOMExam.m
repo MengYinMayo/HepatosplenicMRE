@@ -132,9 +132,6 @@ end
 function tf = isLikelyIdealMember(s)
     desc = lower(char(s.SeriesDescription));
     role = ''; try, role = char(s.Role); catch, end
-    % Series whose description contains both an MRE keyword and water/fat
-    % (e.g. "Water MRE", "FAT_MRE") are MRE-specific images, not Dixon.
-    if isMREWaterOrFat(desc), tf = false; return; end
     tf = startsWith(role,'IDEALIQ_') || contains(desc,'ideal') || contains(desc,'dixon') || ...
          isFatFracDesc(desc) || isWaterDesc(desc) || isFatDesc(desc);
     % Keep pure conventional IP/OP out of IDEAL families.
@@ -188,22 +185,11 @@ function tf = isFatFracDesc(desc)
 end
 
 function tf = isWaterDesc(desc)
-    tf = contains(desc,'water') && ~isFatFracDesc(desc) && ~isMREWaterOrFat(desc);
+    tf = contains(desc,'water') && ~isFatFracDesc(desc);
 end
 
 function tf = isFatDesc(desc)
-    tf = (contains(desc,' fat') || contains(desc,'_fat') || startsWith(strtrim(desc),'fat') || contains(desc,'fat image')) && ...
-         ~isFatFracDesc(desc) && ~isMREWaterOrFat(desc);
-end
-
-function tf = isMREWaterOrFat(desc)
-% True when the description simultaneously contains an MRE identifier and a
-% water/fat identifier (e.g. "Water MRE", "FAT_MRE"), indicating an
-% MRE-specific image rather than a Dixon/IDEAL-IQ series.
-% desc must already be lower-cased.
-    hasMRE = contains(desc, 'mre') || contains(desc, 'elastograph');
-    hasWF  = contains(desc, 'water') || contains(desc, 'fat');
-    tf = hasMRE && hasWF;
+    tf = (contains(desc,' fat') || contains(desc,'_fat') || startsWith(strtrim(desc),'fat') || contains(desc,'fat image')) && ~isFatFracDesc(desc);
 end
 
 function tf = isPreferredWaterDesc(desc)

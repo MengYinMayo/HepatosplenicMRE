@@ -283,15 +283,11 @@ function entry = classifySeries(entry)
 
     % ── IDEAL-IQ ─────────────────────────────────────────────────────
     % Outer trigger: GE private seq tag, description keywords, or folder name.
-    % Guard: descriptions that contain both an MRE keyword AND water/fat
-    % (e.g. "Water MRE", "FAT_MRE") are MRE-specific images, NOT Dixon.
-    isIdealIQ = (hit(seq,  {'ideal3darc','ideal3d','idealarc','ideal'}) || ...
-                 hit(desc, {'ideal','idealiq','ideal-iq','fat frac','fatfrac', ...
-                            'pdff','water','t2*:','r2star','r2*','r2 map','r2map'}) || ...
-                 strcmp(desc,'r2') || strcmp(desc,'fat') || ...
-                 hit(fnam, {'ideal','idealiq','dixon','pdff','water'})) && ...
-                ~isMREWaterOrFat(desc);
-    if isIdealIQ
+    if hit(seq,  {'ideal3darc','ideal3d','idealarc','ideal'}) || ...
+       hit(desc, {'ideal','idealiq','ideal-iq','fat frac','fatfrac', ...
+                  'pdff','water','t2*:','r2star','r2*','r2 map','r2map'}) || ...
+       strcmp(desc,'r2') || strcmp(desc,'fat') || ...
+       hit(fnam, {'ideal','idealiq','dixon','pdff','water'})
 
         % Sub-classify within IDEAL-IQ.
         if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
@@ -473,16 +469,6 @@ function wc = getWinCenter(hdr)
     if isfield(hdr,'WindowCenter') && ~isempty(hdr.WindowCenter)
         wc = double(hdr.WindowCenter(1));
     end
-end
-
-function tf = isMREWaterOrFat(desc)
-% True when a series description simultaneously contains an MRE identifier
-% AND a water/fat identifier, indicating an MRE-specific water or fat image
-% (e.g. "Water MRE", "FAT_MRE", "mre water image") rather than a
-% Dixon/IDEAL-IQ series.  desc must already be lower-cased.
-    hasMRE = contains(desc, 'mre') || contains(desc, 'elastograph');
-    hasWF  = contains(desc, 'water') || contains(desc, 'fat');
-    tf = hasMRE && hasWF;
 end
 
 function tf = hit(str, kwList)
