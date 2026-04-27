@@ -100,7 +100,7 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     % Old IDEAL-IQ produces T2*-corrected versions ('T2_Water', 'T2_Fat') which
     % are preferred over plain 'Water'/'Fat' if both exist.
     usedWaterSN = 0;   % SeriesNumber of the raw series used for water
-    if isempty(dixon.Water) && ~isempty(rawSeries)
+    if isempty(dixon.Water) && ~isempty(rawSeries) && isempty(waterSeries)
         % Prefer T2*-corrected water (has both 'water' and 't2'/'r2' in desc).
         waterRaw = findBestNamedSeries(rawSeries, {'water','t2'}, {});
         if isempty(waterRaw), waterRaw = findBestNamedSeries(rawSeries, {'water','r2'}, {}); end
@@ -127,7 +127,7 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
 
     % If rawSeries contains a standalone fat recon, extract it now.
     % Prefer T2*-corrected fat; fall back to any fat; then infer by exclusion.
-    if isempty(dixon.Fat) && ~isempty(rawSeries)
+    if isempty(dixon.Fat) && ~isempty(rawSeries) && isempty(fatSeries)
         fatFromRaw = findBestNamedSeries(rawSeries, {'fat','t2'}, {'fatfrac','fat frac','pdff'});
         if isempty(fatFromRaw), fatFromRaw = findBestNamedSeries(rawSeries, {'fat','r2'}, {'fatfrac','fat frac','pdff'}); end
         if isempty(fatFromRaw), fatFromRaw = findBestNamedSeries(rawSeries, {'fat'}, {'fatfrac','fat frac','pdff'}); end

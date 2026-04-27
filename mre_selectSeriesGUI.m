@@ -604,17 +604,16 @@ end
 function group = findRelatedDixon(seriesList, anchor)
 %FINDRELATEDDIXON  Return all series belonging to the same Dixon family.
 %
-% Primary path (preferred): when the anchor carries FamilySeriesNums
-%   (embedded by buildGroups from dixon_parseDICOMExam), look up those
-%   exact series numbers in seriesList.  This handles both old-convention
-%   exams (arbitrary recon numbers, e.g. anchor S5 → S15992/S15993/S15998)
-%   and new-convention exams (GE prefix descendants, e.g. S12 → S1201/S1202)
-%   correctly, and keeps duplicate acquisitions separated by construction.
+% IDEAL-IQ (two-pass, April-18 approach):
+%   Pass 1: collect all IDEAL-IQ candidates with useful content.
+%   Pass 2: detect GE numbering convention, then filter:
+%     New convention (S2→S201/S202): filter by series-number prefix.
+%     Old convention (arbitrary numbers): filter by description signature.
+%   This keeps multiple acquisitions separated (new convention) while
+%   correctly grouping old-style processed recons (old convention).
 %
-% Fallback path: when FamilySeriesNums is absent (e.g. fallback tree or
-%   a series selected directly), collect all IDEAL-IQ series that contain
-%   useful content (water/fat/pdff) — the April-18 logic that is known to
-%   work for single-acquisition exams.
+% Conventional IP/OP: FamilySeriesNums primary path, then IPOP description
+%   fallback.
 
     group = struct([]);
 
@@ -628,24 +627,13 @@ function group = findRelatedDixon(seriesList, anchor)
                     contains(anchorDesc,'ideal');
 
     if isIdealAnchor
-        % ── Primary: use pre-resolved family membership ──────────────────
-        if isfield(anchor,'FamilySeriesNums') && ~isempty(anchor.FamilySeriesNums)
-            famNums = double(anchor.FamilySeriesNums);
-            for k = 1:numel(seriesList)
-                if ismember(double(seriesList(k).SeriesNumber), famNums)
-                    if isempty(group), group = seriesList(k);
-                    else, group(end+1) = seriesList(k); end %#ok<AGROW>
-                end
-            end
-            if ~isempty(group)
-                [~, idx] = sort([group.SeriesNumber]);
-                group = group(idx);
-                return
-            end
-        end
+        anchorNumStr = regexprep(num2str(double(anchor.SeriesNumber)), '^0+', '');
+        if isempty(anchorNumStr), anchorNumStr = '0'; end
+        anchorSig  = idealDescSig(anchor);
+        targetN    = double(anchor.nImages);
 
-        % ── Fallback: collect all qualifying IDEAL-IQ series (Apr-18 logic) ─
-        targetN = double(anchor.nImages);
+        % ── Pass 1: collect all qualifying IDEAL-IQ candidates ───────────
+        allIdeal = struct([]);
         for k = 1:numel(seriesList)
             s = seriesList(k);
             sdesc = lower(char(s.SeriesDescription));
@@ -665,7 +653,38 @@ function group = findRelatedDixon(seriesList, anchor)
             countOK    = sameCount || (isIdealRole && ~strcmp(sRole,'IDEALIQ_Multi'));
 
             if isIdeal && (isUseful || isRawRecon) && countOK
-                if isempty(group), group = s; else, group(end+1) = s; end %#ok<AGROW>
+                if isempty(allIdeal), allIdeal = s;
+                else, allIdeal(end+1) = s; end %#ok<AGROW>
+            end
+        end
+
+        % ── Pass 2: detect GE convention, apply family filter ────────────
+        % New GE convention: recon numbers are GE-prefix descendants of the
+        %   acquisition anchor (S2→S201/S202; S12→S1201/S1202).
+        %   Filter by series-number prefix to keep acquisitions separate.
+        % Old GE convention: recon numbers are arbitrary (S5→S15992…S15998).
+        %   Filter by description signature — strips contrast keywords so all
+        %   products of one acquisition share one signature.
+        hasDescendant = false;
+        for k = 1:numel(allIdeal)
+            sn = regexprep(num2str(double(allIdeal(k).SeriesNumber)), '^0+', '');
+            if ~strcmp(sn, anchorNumStr) && isSeriesNumberDescendant(anchorNumStr, sn)
+                hasDescendant = true;
+                break;
+            end
+        end
+
+        for k = 1:numel(allIdeal)
+            s  = allIdeal(k);
+            sn = regexprep(num2str(double(s.SeriesNumber)), '^0+', '');
+            if hasDescendant
+                include = isSeriesNumberDescendant(anchorNumStr, sn);
+            else
+                include = isempty(anchorSig) || strcmp(idealDescSig(s), anchorSig);
+            end
+            if include
+                if isempty(group), group = s;
+                else, group(end+1) = s; end %#ok<AGROW>
             end
         end
 
