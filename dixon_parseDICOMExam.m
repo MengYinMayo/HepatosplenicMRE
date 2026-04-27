@@ -169,6 +169,10 @@ function sig = idealSignature(s)
     desc = regexprep(desc, '\([^)]{0,15}\)', ' ');
     sig = normalizeSignature(desc);
     sig = regexprep(sig, '\bfatfrac\b|\bpdff\b|\bwater\b|\bfat\b|\bt2\b|\br2\*?\b|\braw\b', ' ');
+    % Strip anatomy/location qualifiers that GE inconsistently appends to some
+    % contrast series (e.g. Water has "Abdomen" but FatFrac does not), so all
+    % recon products from one acquisition share the same family signature.
+    sig = regexprep(sig, '\babdomen\b|\babd\b|\bliver\b|\bpelvis\b|\baxial\b|\bcoronal\b|\bsagittal\b|\btransverse\b', ' ');
     sig = regexprep(sig, '\s+', ' ');
     sig = strtrim(sig);
 end
