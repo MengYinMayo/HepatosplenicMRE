@@ -163,10 +163,6 @@ end
 
 function sig = idealSignature(s)
     desc = lower(char(s.SeriesDescription));
-    % Strip parenthesised unit annotations before normalising, e.g. "(1/s)",
-    % "(%)", "(ms)", so that "R2*(1/s)" and "FatFrac(%)" produce the same
-    % family signature as plain "R2*" and "FatFrac" respectively.
-    desc = regexprep(desc, '\([^)]{0,15}\)', ' ');
     sig = normalizeSignature(desc);
     sig = regexprep(sig, '\bfatfrac\b|\bpdff\b|\bwater\b|\bfat\b|\bt2\b|\br2\*?\b|\braw\b', ' ');
     sig = regexprep(sig, '\s+', ' ');
