@@ -130,6 +130,9 @@ function anchor = chooseIPOPAnchor(family)
 end
 
 function tf = isLikelyIdealMember(s)
+    % Shield: MRE series that carry water/fat suppression tokens in their
+    % description must not be pulled into a Dixon/IDEAL-IQ family.
+    if looksLikeMRESeries(s), tf = false; return; end
     desc = lower(char(s.SeriesDescription));
     role = ''; try, role = char(s.Role); catch, end
     tf = startsWith(role,'IDEALIQ_') || contains(desc,'ideal') || contains(desc,'dixon') || ...
@@ -141,6 +144,8 @@ function tf = isLikelyIdealMember(s)
 end
 
 function tf = isLikelyIPOPMember(s)
+    % Shield: exclude MRE series from IP/OP Dixon classification.
+    if looksLikeMRESeries(s), tf = false; return; end
     % Series explicitly classified as IPOP_Dixon by mre_parseDICOMExam
     role = ''; try, role = char(s.Role); catch, end
     if strcmp(role, 'IPOP_Dixon')
@@ -151,6 +156,13 @@ function tf = isLikelyIPOPMember(s)
     if tf && (contains(desc,'ideal') || contains(desc,'dixon') || isFatFracDesc(desc) || isWaterDesc(desc) || isFatDesc(desc))
         tf = false;
     end
+end
+
+function tf = looksLikeMRESeries(s)
+    desc = lower(char(s.SeriesDescription));
+    role = ''; try, role = char(s.Role); catch, end
+    tf = contains(desc,'mre') || contains(desc,'elastograph') || ...
+         startsWith(role,'EPI_') || startsWith(role,'GRE_');
 end
 
 function tf = isLikelyIPOPText(desc)
