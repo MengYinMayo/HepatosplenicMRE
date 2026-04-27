@@ -167,6 +167,10 @@ function sig = idealSignature(s)
     % "(%)", "(ms)", so that "R2*(1/s)" and "FatFrac(%)" produce the same
     % family signature as plain "R2*" and "FatFrac" respectively.
     desc = regexprep(desc, '\([^)]{0,15}\)', ' ');
+    % Remove field-strength tokens (1.5T, 3.0T, 3T) so that sigs are
+    % field-strength-agnostic and robust to GE occasionally omitting the
+    % field-strength suffix on some contrast series of the same acquisition.
+    desc = regexprep(desc, '\b(?:1\.5|3\.0|3)\s*t\b', ' ');
     sig = normalizeSignature(desc);
     sig = regexprep(sig, '\bfatfrac\b|\bpdff\b|\bwater\b|\bfat\b|\bt2\b|\br2\*?\b|\braw\b', ' ');
     % Strip anatomy/location qualifiers that GE inconsistently appends to some
