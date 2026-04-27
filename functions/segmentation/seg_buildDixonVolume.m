@@ -184,8 +184,11 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
 
     % ── 3b. Conventional IP/OP series (EchoTime-based split) ─────────────
     % When InPhase and OutPhase are still absent, look for an IP/OP Dixon
-    % series in the group and split it by EchoTime:
-    %   shorter TE → Out-of-Phase (OP),  longer TE → In-Phase (IP).
+    % series in the group and split it by EchoTime using water-fat phase angle:
+    %   cos(2π·Δf·TE) maximum → In-Phase,  minimum → Out-of-Phase.
+    %   Δf = 3.5 ppm × 42.577 MHz/T × B0  (≈220 Hz at 1.5T, ≈440 Hz at 3T).
+    % This correctly handles both field strengths (unlike a simple short/long
+    % TE rule, which fails at 3T where the first IP echo is shorter than OP).
     % Water and Fat are then derived from IP and OP in the next block.
     if isempty(dixon.InPhase) && isempty(dixon.OutPhase)
         ipopSeries = findIPOPSeries(dixonGroup);
@@ -1036,11 +1039,16 @@ end
 
 function [ipVol, opVol] = readIPOPByEchoTime(series, opts)
 %READIPOPBYECHOTIME  Split a combined IP/OP series into InPhase and OutPhase
-%   volumes using EchoTime read from each DICOM header.
+%   volumes using EchoTime and MagneticFieldStrength from DICOM headers.
 %
-%   GE convention: OP (out-of-phase) has the SHORTER echo time and IP
-%   (in-phase) has the LONGER echo time.  Files may be stored in any
-%   interleaving order (contrast-first or slice-first).
+%   Water-fat chemical shift at 3.5 ppm is field-strength dependent:
+%     1.5 T → Δf ≈ 220 Hz  IP TEs: 4.6, 9.2 ms…   OP TEs: 2.3, 6.9 ms…
+%     3.0 T → Δf ≈ 440 Hz  IP TEs: 2.3, 4.6 ms…   OP TEs: 1.15, 3.45 ms…
+%
+%   Assignment uses cos(2π·Δf·TE): maximum → IP, minimum → OP.
+%   This is correct for any field strength and any TE combination — unlike a
+%   simple short/long rule which fails at 3T where the first IP echo (2.3 ms)
+%   is shorter than the second OP echo (3.45 ms).
 
     ipVol = []; opVol = [];
     files  = series.Files;
@@ -1050,6 +1058,8 @@ function [ipVol, opVol] = readIPOPByEchoTime(series, opts)
     vprint(opts, '  Reading %d headers for EchoTime...', nFiles);
     echoTimes = nan(1, nFiles);
     sliceLocs = zeros(1, nFiles);
+    B0      = 1.5;    % default field strength [T]
+    B0read  = false;
     for k = 1:nFiles
         try
             info = dicominfo(files{k}, 'UseDictionaryVR', true);
@@ -1060,6 +1070,10 @@ function [ipVol, opVol] = readIPOPByEchoTime(series, opts)
                 sliceLocs(k) = double(info.SliceLocation);
             elseif isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
                 sliceLocs(k) = double(info.InstanceNumber);
+            end
+            if ~B0read && isfield(info,'MagneticFieldStrength') && ~isempty(info.MagneticFieldStrength)
+                B0     = double(info.MagneticFieldStrength);
+                B0read = true;
             end
         catch
         end
@@ -1077,20 +1091,31 @@ function [ipVol, opVol] = readIPOPByEchoTime(series, opts)
         return
     end
     if numel(uniqueTE) > 2
-        vprint(opts, '  Note: %d unique EchoTimes found; using shortest and longest.', numel(uniqueTE));
-        uniqueTE = [min(uniqueTE), max(uniqueTE)];
+        vprint(opts, '  Note: %d unique EchoTimes found; selecting most IP/OP-like pair.', numel(uniqueTE));
     end
 
-    shortTE = uniqueTE(1);
-    longTE  = uniqueTE(end);
-    vprint(opts, '  EchoTime: OP(short)=%.3f ms, IP(long)=%.3f ms', shortTE, longTE);
+    % Chemical shift between water and fat at 3.5 ppm.
+    % Δf = 3.5 ppm × γ × B0  where γ = 42.577 MHz/T for ¹H.
+    deltaF = 3.5e-6 * 42.577e6 * B0;   % Hz  (≈220 Hz at 1.5T, ≈440 Hz at 3T)
+
+    % Water-fat phase at each unique TE: φ = 2π·Δf·TE (TE in seconds).
+    % cos(φ) = +1 → fully in-phase, cos(φ) = -1 → fully out-of-phase.
+    cosPhase = cos(2*pi * deltaF * uniqueTE * 1e-3);
+
+    [~, ipIdx] = max(cosPhase);   % TE closest to in-phase
+    [~, opIdx] = min(cosPhase);   % TE closest to out-of-phase
+    teIP = uniqueTE(ipIdx);
+    teOP = uniqueTE(opIdx);
+
+    vprint(opts, '  B0=%.1fT  Δf=%.0fHz  IP TE=%.3fms (cos=%.3f)  OP TE=%.3fms (cos=%.3f)', ...
+        B0, deltaF, teIP, cosPhase(ipIdx), teOP, cosPhase(opIdx));
 
     teValid = ~isnan(echoTimes);
-    opMask  = teValid & (abs(echoTimes - shortTE) <= abs(echoTimes - longTE));
-    ipMask  = teValid & ~opMask;
+    ipMask  = teValid & (abs(echoTimes - teIP) < abs(echoTimes - teOP));
+    opMask  = teValid & ~ipMask;
 
-    opVol = ipopReadByMask(files, opMask, sliceLocs);
     ipVol = ipopReadByMask(files, ipMask, sliceLocs);
+    opVol = ipopReadByMask(files, opMask, sliceLocs);
 
     vprint(opts, '  InPhase: %s   OutPhase: %s', sizeStr(ipVol), sizeStr(opVol));
 end
