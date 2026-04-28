@@ -4120,9 +4120,47 @@ function setStiffScale(app, newClim)
                 'About','help');
         end
         function onStudySelect(app,event)
-            n=event.SelectedNodes;
-            if ~isempty(n), setStatus(app,sprintf('Selected: %s',n.Text)); end
+            n = event.SelectedNodes;
+            if isempty(n), return; end
+            nd = n.NodeData;
+            if isempty(nd) || ~isstruct(nd), return; end
+            nodeType = '';
+            try, nodeType = nd.type; catch, end
+            if strcmp(nodeType,'dixon') || strcmp(nodeType,'dixon_series')
+                switchDixonFamily(app, nd.group);
+            else
+                setStatus(app, sprintf('Selected: %s', n.Text));
+            end
         end
+
+        function switchDixonFamily(app, dixonGroup)
+            if isempty(dixonGroup), return; end
+            % Skip reload if the same family is already shown.
+            try
+                cur = app.AppData.Selection.DixonGroup;
+                if ~isempty(cur) && isequal(sort([cur.SeriesNumber]), sort([dixonGroup.SeriesNumber]))
+                    return
+                end
+            catch
+            end
+            dlg = [];
+            try
+                setStatus(app, sprintf('Loading Dixon family starting at S%d...', dixonGroup(1).SeriesNumber));
+                dlg = uiprogressdlg(app.UIFigure,'Title','Loading Dixon', ...
+                    'Message','Building Dixon volumes...','Indeterminate','on');
+                app.AppData.Dixon = seg_buildDixonVolume(dixonGroup, struct('verbose',false));
+                app.AppData.Selection.DixonGroup = dixonGroup;
+                if isvalid(dlg), close(dlg); end
+                populateDixonTab(app);
+                activateTab(app,'dixon');
+                setStatus(app, sprintf('Dixon family loaded  (%d series, S%d–S%d)', ...
+                    numel(dixonGroup), dixonGroup(1).SeriesNumber, dixonGroup(end).SeriesNumber));
+            catch ME
+                try, if isvalid(dlg), close(dlg); end; catch, end
+                setStatus(app, ['Dixon switch failed: ' ME.message]);
+            end
+        end
+
         function onTabChange(app,~)
             try
                 activeTab = app.ImageTabGroup.SelectedTab;
@@ -5209,29 +5247,71 @@ function tf = shouldBypassGlobalHotkeys(app)
             delete(app.StudyTree.Children);
             root = uitreenode(app.StudyTree,'Text', ...
                 sprintf('%s  %s  (%s)', exam.PatientID, exam.StudyDate, exam.MREType));
-            root.NodeData = exam;
+            root.NodeData = struct('type','root');
+
             if ~isempty(selection.Localizer)
-                uitreenode(root,'Text',sprintf('[Localizer]  S%d  %s', ...
+                ln = uitreenode(root,'Text',sprintf('[Localizer]  S%d  %s', ...
                     selection.Localizer.SeriesNumber, selection.Localizer.SeriesDescription));
+                ln.NodeData = struct('type','localizer');
             end
-            if ~isempty(selection.Dixon)
-                dixNode = uitreenode(root,'Text', ...
-                    sprintf('[Dixon / IDEAL-IQ]  %d series', numel(selection.DixonGroup)));
-                for k = 1:numel(selection.DixonGroup)
-                    s = selection.DixonGroup(k);
+
+            % Show every Dixon family found in the exam as a separate clickable node.
+            % Clicking a family node (or any of its children) reloads the Dixon tab
+            % with that acquisition.
+            currentNums = [];
+            if ~isempty(selection.DixonGroup)
+                currentNums = [selection.DixonGroup.SeriesNumber];
+            end
+            try
+                dixonExam = dixon_parseDICOMExam(exam);
+            catch
+                dixonExam = struct('Families', struct([]));
+            end
+            if isfield(dixonExam,'Families') && ~isempty(dixonExam.Families)
+                for f = 1:numel(dixonExam.Families)
+                    fam    = dixonExam.Families(f);
+                    grp    = fam.Members;           % series array for this family
+                    isLoaded = ~isempty(currentNums) && ~isempty(grp) && ...
+                               any(ismember(currentNums, [grp.SeriesNumber]));
+                    marker = '';
+                    if isLoaded, marker = '  ◀ loaded'; end
+                    famLabel = sprintf('[%s]  %d series  —  %s%s', ...
+                        fam.Type, numel(grp), strtrim(char(fam.Anchor.SeriesDescription)), marker);
+                    famNode = uitreenode(root,'Text', famLabel);
+                    famNode.NodeData = struct('type','dixon','group',grp);
+                    for k = 1:numel(grp)
+                        s = grp(k);
+                        roleDisp = regexprep(s.Role,'IDEALIQ_|IPOP_','');
+                        cn = uitreenode(famNode,'Text', sprintf('  S%d  %-10s  %s', ...
+                            s.SeriesNumber, roleDisp, s.SeriesDescription));
+                        cn.NodeData = struct('type','dixon_series','group',grp);
+                    end
+                end
+            elseif ~isempty(selection.DixonGroup)
+                % Fallback when family resolver didn't run.
+                grp = selection.DixonGroup;
+                dn = uitreenode(root,'Text', ...
+                    sprintf('[Dixon / IDEAL-IQ]  %d series  ◀ loaded', numel(grp)));
+                dn.NodeData = struct('type','dixon','group',grp);
+                for k = 1:numel(grp)
+                    s = grp(k);
                     roleDisp = strrep(s.Role,'IDEALIQ_','');
-                    uitreenode(dixNode,'Text',sprintf('  S%d  %-12s  %s', ...
+                    cn = uitreenode(dn,'Text',sprintf('  S%d  %-12s  %s', ...
                         s.SeriesNumber, roleDisp, s.SeriesDescription));
+                    cn.NodeData = struct('type','dixon_series','group',grp);
                 end
             end
+
             if ~isempty(selection.MRE)
                 mreNode = uitreenode(root,'Text', ...
                     sprintf('[MRE]  %d series', numel(selection.MREGroup)));
+                mreNode.NodeData = struct('type','mre');
                 for k = 1:numel(selection.MREGroup)
                     s = selection.MREGroup(k);
                     roleDisp = mreRoleLabel(s.Role);
-                    uitreenode(mreNode,'Text',sprintf('  S%d  %-14s  %s', ...
+                    mn = uitreenode(mreNode,'Text',sprintf('  S%d  %-14s  %s', ...
                         s.SeriesNumber, roleDisp, s.SeriesDescription));
+                    mn.NodeData = struct('type','mre_series');
                 end
             end
             expand(root,'all');
