@@ -5270,7 +5270,12 @@ function tf = shouldBypassGlobalHotkeys(app)
             if isfield(dixonExam,'Families') && ~isempty(dixonExam.Families)
                 for f = 1:numel(dixonExam.Families)
                     fam    = dixonExam.Families(f);
-                    grp    = fam.Members;           % series array for this family
+                    % Use series-number proximity grouping (GE: floor(N/100)==anchorNum).
+                    % fam.Members can be wrong when idealSignature fails to unify
+                    % series descriptions across the same acquisition family.
+                    anchorNum = double(fam.Anchor.SeriesNumber);
+                    grp = buildDixonGroupForFamily(exam.Series, anchorNum);
+                    if isempty(grp), grp = fam.Members; end   % fallback
                     isLoaded = ~isempty(currentNums) && ~isempty(grp) && ...
                                any(ismember(currentNums, [grp.SeriesNumber]));
                     marker = '';
@@ -8072,6 +8077,26 @@ function mreResumePlaybackIfWasPlaying(app)
             end
         end
     catch, end
+end
+
+function grp = buildDixonGroupForFamily(seriesList, anchorNum)
+% Collect all IDEALIQ_* series that belong to a given family anchor.
+% GE IDEAL-IQ convention: derived recon series numbers satisfy
+%   floor(derivedN / 100) == anchorNum  (e.g. anchor S2 → S200–S209).
+% The anchor itself is always included.
+    grp = struct([]);
+    for k = 1:numel(seriesList)
+        s = seriesList(k);
+        if ~startsWith(char(s.Role),'IDEALIQ_'), continue; end
+        sn = double(s.SeriesNumber);
+        if sn == anchorNum || floor(sn / 100) == anchorNum
+            if isempty(grp), grp = s; else, grp(end+1) = s; end %#ok<AGROW>
+        end
+    end
+    if ~isempty(grp)
+        [~, idx] = sort([grp.SeriesNumber]);
+        grp = grp(idx);
+    end
 end
 
 
