@@ -174,6 +174,10 @@ function sig = idealSignature(s)
     desc = lower(char(s.SeriesDescription));
     sig = normalizeSignature(desc);
     sig = regexprep(sig, '\bfatfrac\b|\bpdff\b|\bwater\b|\bfat\b|\bt2\b|\br2\*?\b|\braw\b', ' ');
+    % Strip bare numeric tokens (e.g. "1" from "R2*(1/s)") and the "s" unit
+    % residual that normalizeSignature produces from the "(1/s)" denominator.
+    sig = regexprep(sig, '\b\d+\b', ' ');
+    sig = regexprep(sig, '\bs\b', ' ');
     sig = regexprep(sig, '\s+', ' ');
     sig = strtrim(sig);
 end

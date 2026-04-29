@@ -5296,8 +5296,18 @@ function tf = shouldBypassGlobalHotkeys(app)
                 famGrps = cell(nFam, 1);
                 for f = 1:nFam
                     anchorNum = double(dixonExam.Families(f).Anchor.SeriesNumber);
-                    g = buildDixonGroupForFamily(exam.Series, anchorNum);
-                    if isempty(g), g = dixonExam.Families(f).Members; end
+                    sigGrp = dixonExam.Families(f).Members;
+                    numGrp = buildDixonGroupForFamily(exam.Series, anchorNum);
+                    % Take whichever grouping yields more members: signature-based
+                    % grouping (fam.Members) works for old GE IDEAL-IQ where series
+                    % numbers are unrelated; series-number proximity works when
+                    % descriptions differ slightly between series.
+                    if numel(numGrp) > numel(sigGrp)
+                        g = numGrp;
+                    else
+                        g = sigGrp;
+                    end
+                    if isempty(g), g = fam.Members; end
                     famGrps{f} = g;
                 end
                 claimedNums = [];
