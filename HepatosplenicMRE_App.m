@@ -3922,7 +3922,28 @@ function setStiffScale(app, newClim)
                     n = dixonROINames{ri};
                     if isfield(rois, n), pdff.ROIs.(n) = rois.(n); end
                 end
-                save(fullfile(examPath,'pdff_data.mat'), 'pdff', '-v7.3');
+                % Save to a temp file outside any cloud-sync folder first, then
+                % move to the destination.  This avoids OneDrive/Dropbox holding
+                % the destination file open during syncing, which causes MATLAB's
+                % save to fail with "file could not be closed / might be corrupt".
+                destFile = fullfile(examPath, 'pdff_data.mat');
+                tmpFile  = [tempname '.mat'];
+                save(tmpFile, 'pdff', '-v7.3');
+                moved = false;
+                for attempt = 1:4
+                    try
+                        if isfile(destFile), delete(destFile); end
+                        movefile(tmpFile, destFile, 'f');
+                        moved = true;
+                        break;
+                    catch
+                        pause(0.3 * attempt);   % back off and retry
+                    end
+                end
+                if ~moved
+                    warning('savePDFFMat:moveFail', ...
+                        'Could not move pdff_data.mat to %s (cloud sync may be holding the file).', examPath);
+                end
             catch ME
                 warning('savePDFFMat:fail','Could not save pdff_data.mat: %s', ME.message);
             end
