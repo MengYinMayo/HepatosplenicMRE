@@ -4173,8 +4173,14 @@ function setStiffScale(app, newClim)
                             if any([fam.Members.SeriesNumber] == anchorNum)
                                 sigGrp = fam.Members;
                                 numGrp = buildDixonGroupForFamily(exam.Series, double(fam.Anchor.SeriesNumber));
+                                relGrp = struct([]);
+                                try
+                                    relGrp = findRelatedDixonGroup(exam.Series, fam.Anchor);
+                                catch
+                                end
                                 candidate = sigGrp;
-                                if numel(numGrp) > numel(sigGrp), candidate = numGrp; end
+                                if numel(numGrp) > numel(candidate), candidate = numGrp; end
+                                if numel(relGrp) > numel(candidate), candidate = relGrp; end
                                 if numel(candidate) > numel(bestGrp), bestGrp = candidate; end
                                 break;
                             end
@@ -5335,16 +5341,15 @@ function tf = shouldBypassGlobalHotkeys(app)
                     anchorNum = double(dixonExam.Families(f).Anchor.SeriesNumber);
                     sigGrp = dixonExam.Families(f).Members;
                     numGrp = buildDixonGroupForFamily(exam.Series, anchorNum);
-                    % Take whichever grouping yields more members: signature-based
-                    % grouping (fam.Members) works for old GE IDEAL-IQ where series
-                    % numbers are unrelated; series-number proximity works when
-                    % descriptions differ slightly between series.
-                    if numel(numGrp) > numel(sigGrp)
-                        g = numGrp;
-                    else
-                        g = sigGrp;
+                    relGrp = struct([]);
+                    try
+                        relGrp = findRelatedDixonGroup(exam.Series, dixonExam.Families(f).Anchor);
+                    catch
                     end
-                    if isempty(g), g = fam.Members; end
+                    g = sigGrp;
+                    if numel(numGrp) > numel(g), g = numGrp; end
+                    if numel(relGrp) > numel(g), g = relGrp; end
+                    if isempty(g), g = dixonExam.Families(f).Members; end
                     famGrps{f} = g;
                 end
                 claimedNums = [];
@@ -8169,6 +8174,38 @@ function grp = buildDixonGroupForFamily(seriesList, anchorNum)
         if ~startsWith(char(s.Role),'IDEALIQ_'), continue; end
         sn = double(s.SeriesNumber);
         if sn == anchorNum || floor(sn / 100) == anchorNum
+            if isempty(grp), grp = s; else, grp(end+1) = s; end %#ok<AGROW>
+        end
+    end
+    if ~isempty(grp)
+        [~, idx] = sort([grp.SeriesNumber]);
+        grp = grp(idx);
+    end
+end
+
+function grp = findRelatedDixonGroup(seriesList, anchor)
+% Role-based IDEAL-IQ family collector.  Unlike buildDixonGroupForFamily
+% (which relies on series-number proximity), this includes every
+% non-Multi IDEALIQ_* series unconditionally, so old GE exams where
+% recon series numbers bear no relation to the source anchor (e.g.
+% anchor S5 with recons at S15992–S15998) are handled correctly.
+% Multi-echo source stacks (IDEALIQ_Multi) are only included when their
+% slice count matches the anchor to avoid mixing different acquisitions.
+    grp = struct([]);
+    anchorDesc = lower(char(anchor.SeriesDescription));
+    isIdealAnchor = startsWith(char(anchor.Role),'IDEALIQ_') || ...
+                    contains(anchorDesc,'ideal') || contains(anchorDesc,'dixon');
+    if ~isIdealAnchor, return; end
+    targetN = double(anchor.nImages);
+    for k = 1:numel(seriesList)
+        s       = seriesList(k);
+        sdesc   = lower(char(s.SeriesDescription));
+        sRole   = char(s.Role);
+        isIdealRole = startsWith(sRole,'IDEALIQ_');
+        isIdeal     = contains(sdesc,'ideal') || contains(sdesc,'dixon') || isIdealRole;
+        sameCount   = double(s.nImages) == targetN;
+        countOK     = sameCount || (isIdealRole && ~strcmp(sRole,'IDEALIQ_Multi'));
+        if isIdeal && countOK
             if isempty(grp), grp = s; else, grp(end+1) = s; end %#ok<AGROW>
         end
     end
