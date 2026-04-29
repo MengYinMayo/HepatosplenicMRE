@@ -502,7 +502,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'WaterWin',     [0 0], ...   % [lo hi] for Water panel; [0 0] = auto
             'FatWin',       [0 0], ...   % [lo hi] for Fat panel; [0 0] = auto
             'CorWin',       [0 0], ...   % [lo hi] for Coronal panel; [0 0] = auto
-            'SagWin',       [0 0])
+            'SagWin',       [0 0], ...
+            'PanelDrag',    struct('Active', false, 'Which', '', 'StartX', NaN, 'StartW', NaN))
     end
 
     % =====================================================================
@@ -529,11 +530,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             createToolbar(app, outer);
 
-            % Body: left | center | right
-            app.BodyGrid = uigridlayout(outer,[1 3]);
+            % Body: left | splitter | center | splitter | right
+            app.BodyGrid = uigridlayout(outer,[1 5]);
             app.BodyGrid.Layout.Row    = 2;
             app.BodyGrid.Layout.Column = 1;
-            app.BodyGrid.ColumnWidth   = {260,'1x',310};
+            app.BodyGrid.ColumnWidth   = {260, 6, '1x', 6, 310};
             app.BodyGrid.RowHeight     = {'1x'};
             app.BodyGrid.Padding       = [0 0 0 0];
             app.BodyGrid.ColumnSpacing = 0;
@@ -541,7 +542,9 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             createLeftPanel(app);
             createCenterPanel(app);
             createRightPanel(app);
+            createSplitters(app);
             createBottomBar(app, outer);
+            app.UIFigure.WindowButtonUpFcn = @(~,~)app.onMouseUp();
         end
 
         % -----------------------------------------------------------------
@@ -652,7 +655,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % the full center column without any intermediate panel.
             app.ImageTabGroup = uitabgroup(app.BodyGrid);
             app.ImageTabGroup.Layout.Row    = 1;
-            app.ImageTabGroup.Layout.Column = 2;
+            app.ImageTabGroup.Layout.Column = 3;
             app.ImageTabGroup.FontSize = 13;
             app.ImageTabGroup.SelectionChangedFcn = @(~,e)app.onTabChange(e);
 
@@ -1341,7 +1344,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function createRightPanel(app)
             app.RightPanel = uipanel(app.BodyGrid,'Title','Measurements', ...
                 'FontSize',13,'FontWeight','bold');
-            app.RightPanel.Layout.Column = 3;
+            app.RightPanel.Layout.Column = 5;
 
             app.RightGrid = uigridlayout(app.RightPanel,[3 1]);
             app.RightGrid.RowHeight   = {110,220,'1x'};
@@ -1397,6 +1400,20 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                 val.HorizontalAlignment='right'; val.FontColor=[0.25 0.25 0.25];
                 app.(propNames{k}) = val;
             end
+        end
+
+        % -----------------------------------------------------------------
+        function createSplitters(app)
+            splL = uipanel(app.BodyGrid);
+            splL.Layout.Column = 2;
+            splL.BorderType = 'none';
+            splL.BackgroundColor = [0.78 0.78 0.78];
+            splL.ButtonDownFcn = @(~,~)app.onSplitStart('left');
+            splR = uipanel(app.BodyGrid);
+            splR.Layout.Column = 4;
+            splR.BorderType = 'none';
+            splR.BackgroundColor = [0.78 0.78 0.78];
+            splR.ButtonDownFcn = @(~,~)app.onSplitStart('right');
         end
 
         % -----------------------------------------------------------------
@@ -4180,7 +4197,9 @@ function setStiffScale(app, newClim)
                                 end
                                 candidate = sigGrp;
                                 if numel(numGrp) > numel(candidate), candidate = numGrp; end
-                                if numel(relGrp) > numel(candidate), candidate = relGrp; end
+                                if numel(relGrp) > numel(candidate) && numel(numGrp) < 3
+                                    candidate = relGrp;
+                                end
                                 if numel(candidate) > numel(bestGrp), bestGrp = candidate; end
                                 break;
                             end
@@ -5348,7 +5367,14 @@ function tf = shouldBypassGlobalHotkeys(app)
                     end
                     g = sigGrp;
                     if numel(numGrp) > numel(g), g = numGrp; end
-                    if numel(relGrp) > numel(g), g = relGrp; end
+                    % Role-based collector (relGrp) handles old GE IDEAL-IQ where
+                    % recons (S15992-S15998) are far from anchor (S5).  Only use it
+                    % when series-number proximity gives ≤2 series; otherwise the
+                    % proximity grouping already found the family correctly and
+                    % relGrp would merge independent acquisitions (e.g. S2 + S12).
+                    if numel(relGrp) > numel(g) && numel(numGrp) < 3
+                        g = relGrp;
+                    end
                     if isempty(g), g = dixonExam.Families(f).Members; end
                     famGrps{f} = g;
                 end
@@ -5357,8 +5383,14 @@ function tf = shouldBypassGlobalHotkeys(app)
                     fam = dixonExam.Families(f);
                     grp = famGrps{f};
                     anchorNum = double(fam.Anchor.SeriesNumber);
-                    % Skip if anchor already belongs to a previously shown family.
-                    if any(claimedNums == anchorNum), continue; end
+                    % Skip if this group overlaps any already-claimed series.
+                    % Checking all members (not just anchor) prevents duplicate
+                    % families that arise when different anchors expand to
+                    % overlapping groups (e.g. old GE S5 and S599 families).
+                    if ~isempty(grp) && ~isempty(claimedNums) && ...
+                            any(ismember([grp.SeriesNumber], claimedNums))
+                        continue
+                    end
                     claimedNums = [claimedNums, [grp.SeriesNumber]]; %#ok<AGROW>
                     isLoaded = ~isempty(currentNums) && ~isempty(grp) && ...
                                any(ismember(currentNums, [grp.SeriesNumber]));
@@ -5683,6 +5715,50 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         % -----------------------------------------------------------------
+        %  PANEL SPLITTER DRAG
+        % -----------------------------------------------------------------
+        function onSplitStart(app, which)
+            try
+                pt = app.UIFigure.CurrentPoint;
+                cols = app.BodyGrid.ColumnWidth;
+                if strcmp(which, 'left')
+                    startW = double(cols{1});
+                else
+                    startW = double(cols{5});
+                end
+                app.AppData.PanelDrag.Active = true;
+                app.AppData.PanelDrag.Which  = which;
+                app.AppData.PanelDrag.StartX = pt(1);
+                app.AppData.PanelDrag.StartW = startW;
+            catch
+            end
+        end
+
+        function onSplitDrag(app)
+            try
+                if ~app.AppData.PanelDrag.Active, return; end
+                pt    = app.UIFigure.CurrentPoint;
+                dx    = pt(1) - app.AppData.PanelDrag.StartX;
+                cols  = app.BodyGrid.ColumnWidth;
+                which = app.AppData.PanelDrag.Which;
+                startW = app.AppData.PanelDrag.StartW;
+                if strcmp(which, 'left')
+                    cols{1} = max(120, min(700, startW + dx));
+                else
+                    cols{5} = max(120, min(700, startW - dx));
+                end
+                app.BodyGrid.ColumnWidth = cols;
+            catch
+            end
+        end
+
+        function onMouseUp(app)
+            try
+                app.AppData.PanelDrag.Active = false;
+            catch
+            end
+        end
+
         %  SCROLL-WHEEL NAVIGATION
         % -----------------------------------------------------------------
         function onScrollWheel(app, event)
@@ -5707,6 +5783,13 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         function onMouseMove(app)
+            try
+                if isfield(app.AppData,'PanelDrag') && app.AppData.PanelDrag.Active
+                    onSplitDrag(app);
+                    return
+                end
+            catch
+            end
             try
                 if (isfield(app.AppData,'MREROIDrawing') && app.AppData.MREROIDrawing) || ...
                         (isfield(app.AppData,'MREROIBusy') && app.AppData.MREROIBusy)
