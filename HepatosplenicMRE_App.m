@@ -4156,7 +4156,38 @@ function setStiffScale(app, newClim)
 
         function switchDixonFamily(app, dixonGroup)
             if isempty(dixonGroup), return; end
-            % Skip reload if the same family is already shown.
+            % Re-derive the complete family group from the current exam so that
+            % clicking a stale 1-series browser node still loads the full
+            % acquisition.  Looks up which family contains the clicked series,
+            % then takes the larger of signature-based and series-number groups.
+            try
+                exam = app.AppData.Exam;
+                if ~isempty(exam) && isfield(exam,'Series')
+                    anchorNum = double(dixonGroup(1).SeriesNumber);
+                    bestGrp   = dixonGroup;
+                    try
+                        dxExam = dixon_parseDICOMExam(exam);
+                        for f = 1:numel(dxExam.Families)
+                            fam = dxExam.Families(f);
+                            if isempty(fam.Members), continue; end
+                            if any([fam.Members.SeriesNumber] == anchorNum)
+                                sigGrp = fam.Members;
+                                numGrp = buildDixonGroupForFamily(exam.Series, double(fam.Anchor.SeriesNumber));
+                                candidate = sigGrp;
+                                if numel(numGrp) > numel(sigGrp), candidate = numGrp; end
+                                if numel(candidate) > numel(bestGrp), bestGrp = candidate; end
+                                break;
+                            end
+                        end
+                    catch
+                        numGrp = buildDixonGroupForFamily(exam.Series, anchorNum);
+                        if numel(numGrp) > numel(bestGrp), bestGrp = numGrp; end
+                    end
+                    dixonGroup = bestGrp;
+                end
+            catch
+            end
+            % Skip reload if the same family is already loaded.
             try
                 cur = app.AppData.Selection.DixonGroup;
                 if ~isempty(cur) && isequal(sort([cur.SeriesNumber]), sort([dixonGroup.SeriesNumber]))
@@ -4176,6 +4207,12 @@ function setStiffScale(app, newClim)
                 activateTab(app,'dixon');
                 setStatus(app, sprintf('Dixon family loaded  (%d series, S%d–S%d)', ...
                     numel(dixonGroup), dixonGroup(1).SeriesNumber, dixonGroup(end).SeriesNumber));
+                % Refresh study browser: update ◀ loaded markers and fix any
+                % stale groupings that were displayed from the initial load.
+                try
+                    updateStudyBrowser(app, app.AppData.Exam, app.AppData.Selection);
+                catch
+                end
             catch ME
                 try, if isvalid(dlg), close(dlg); end; catch, end
                 setStatus(app, ['Dixon switch failed: ' ME.message]);
