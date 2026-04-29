@@ -5268,14 +5268,25 @@ function tf = shouldBypassGlobalHotkeys(app)
                 dixonExam = struct('Families', struct([]));
             end
             if isfield(dixonExam,'Families') && ~isempty(dixonExam.Families)
-                for f = 1:numel(dixonExam.Families)
-                    fam    = dixonExam.Families(f);
-                    % Use series-number proximity grouping (GE: floor(N/100)==anchorNum).
-                    % fam.Members can be wrong when idealSignature fails to unify
-                    % series descriptions across the same acquisition family.
+                % Pre-compute groups for all families, then deduplicate:
+                % skip any family whose anchor is already claimed by a
+                % larger family (e.g. S200 is redundant once S2→{S200-S202}).
+                nFam = numel(dixonExam.Families);
+                famGrps = cell(nFam, 1);
+                for f = 1:nFam
+                    anchorNum = double(dixonExam.Families(f).Anchor.SeriesNumber);
+                    g = buildDixonGroupForFamily(exam.Series, anchorNum);
+                    if isempty(g), g = dixonExam.Families(f).Members; end
+                    famGrps{f} = g;
+                end
+                claimedNums = [];
+                for f = 1:nFam
+                    fam = dixonExam.Families(f);
+                    grp = famGrps{f};
                     anchorNum = double(fam.Anchor.SeriesNumber);
-                    grp = buildDixonGroupForFamily(exam.Series, anchorNum);
-                    if isempty(grp), grp = fam.Members; end   % fallback
+                    % Skip if anchor already belongs to a previously shown family.
+                    if any(claimedNums == anchorNum), continue; end
+                    claimedNums = [claimedNums, [grp.SeriesNumber]]; %#ok<AGROW>
                     isLoaded = ~isempty(currentNums) && ~isempty(grp) && ...
                                any(ismember(currentNums, [grp.SeriesNumber]));
                     marker = '';
