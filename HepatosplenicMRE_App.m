@@ -502,7 +502,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             'WaterWin',     [0 0], ...   % [lo hi] for Water panel; [0 0] = auto
             'FatWin',       [0 0], ...   % [lo hi] for Fat panel; [0 0] = auto
             'CorWin',       [0 0], ...   % [lo hi] for Coronal panel; [0 0] = auto
-            'SagWin',       [0 0])
+            'SagWin',       [0 0], ...
+            'PanelDrag',    struct('Active',false,'Which','','StartX',NaN,'StartW',NaN))
     end
 
     % =====================================================================
@@ -517,6 +518,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.UIFigure.Resize    = 'on';
             app.UIFigure.CloseRequestFcn = @(~,~) app.onClose();
             app.UIFigure.WindowKeyPressFcn = @(~,e) app.onKeyPress(e);
+            app.UIFigure.WindowButtonDownFcn  = @(~,~) app.onMouseDown();
+            app.UIFigure.WindowButtonUpFcn    = @(~,~) app.onMouseUp();
 
             createMenus(app);
 
@@ -529,11 +532,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
             createToolbar(app, outer);
 
-            % Body: left | center | right
-            app.BodyGrid = uigridlayout(outer,[1 3]);
+            % Body: left | splitter | center | splitter | right
+            app.BodyGrid = uigridlayout(outer,[1 5]);
             app.BodyGrid.Layout.Row    = 2;
             app.BodyGrid.Layout.Column = 1;
-            app.BodyGrid.ColumnWidth   = {260,'1x',310};
+            app.BodyGrid.ColumnWidth   = {260, 6, '1x', 6, 310};
             app.BodyGrid.RowHeight     = {'1x'};
             app.BodyGrid.Padding       = [0 0 0 0];
             app.BodyGrid.ColumnSpacing = 0;
@@ -541,6 +544,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             createLeftPanel(app);
             createCenterPanel(app);
             createRightPanel(app);
+            createSplitters(app);
             createBottomBar(app, outer);
         end
 
@@ -652,7 +656,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             % the full center column without any intermediate panel.
             app.ImageTabGroup = uitabgroup(app.BodyGrid);
             app.ImageTabGroup.Layout.Row    = 1;
-            app.ImageTabGroup.Layout.Column = 2;
+            app.ImageTabGroup.Layout.Column = 3;
             app.ImageTabGroup.FontSize = 13;
             app.ImageTabGroup.SelectionChangedFcn = @(~,e)app.onTabChange(e);
 
@@ -1341,7 +1345,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         function createRightPanel(app)
             app.RightPanel = uipanel(app.BodyGrid,'Title','Measurements', ...
                 'FontSize',13,'FontWeight','bold');
-            app.RightPanel.Layout.Column = 3;
+            app.RightPanel.Layout.Column = 5;
 
             app.RightGrid = uigridlayout(app.RightPanel,[3 1]);
             app.RightGrid.RowHeight   = {110,220,'1x'};
@@ -4180,7 +4184,7 @@ function setStiffScale(app, newClim)
                                 end
                                 candidate = sigGrp;
                                 if numel(numGrp) > numel(candidate), candidate = numGrp; end
-                                if numel(relGrp) > numel(candidate), candidate = relGrp; end
+                                if numel(relGrp) > numel(candidate) && numel(numGrp) < 3, candidate = relGrp; end
                                 if numel(candidate) > numel(bestGrp), bestGrp = candidate; end
                                 break;
                             end
@@ -5348,7 +5352,10 @@ function tf = shouldBypassGlobalHotkeys(app)
                     end
                     g = sigGrp;
                     if numel(numGrp) > numel(g), g = numGrp; end
-                    if numel(relGrp) > numel(g), g = relGrp; end
+                    % Only use role-based collector for old GE (numGrp<3); new GE
+                    % with numGrp>=3 already has proximity grouping that separates
+                    % multiple acquisitions (e.g. S2→S200-S202, S12→S1200-S1202).
+                    if numel(relGrp) > numel(g) && numel(numGrp) < 3, g = relGrp; end
                     if isempty(g), g = dixonExam.Families(f).Members; end
                     famGrps{f} = g;
                 end
@@ -5356,9 +5363,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                 for f = 1:nFam
                     fam = dixonExam.Families(f);
                     grp = famGrps{f};
-                    anchorNum = double(fam.Anchor.SeriesNumber);
-                    % Skip if anchor already belongs to a previously shown family.
-                    if any(claimedNums == anchorNum), continue; end
+                    anchorNum = double(fam.Anchor.SeriesNumber); %#ok<NASGU>
+                    % Skip if ANY member of this group was already claimed by a
+                    % previously shown family (handles old GE where two candidate
+                    % families share many of the same recon series).
+                    if ~isempty(grp) && ~isempty(claimedNums) && ...
+                            any(ismember([grp.SeriesNumber], claimedNums)), continue; end
                     claimedNums = [claimedNums, [grp.SeriesNumber]]; %#ok<AGROW>
                     isLoaded = ~isempty(currentNums) && ~isempty(grp) && ...
                                any(ismember(currentNums, [grp.SeriesNumber]));
@@ -5707,6 +5717,14 @@ function tf = shouldBypassGlobalHotkeys(app)
         end
 
         function onMouseMove(app)
+            % Splitter drag takes priority over everything else
+            try
+                if isfield(app.AppData,'PanelDrag') && app.AppData.PanelDrag.Active
+                    onSplitDrag(app);
+                    return
+                end
+            catch
+            end
             try
                 if (isfield(app.AppData,'MREROIDrawing') && app.AppData.MREROIDrawing) || ...
                         (isfield(app.AppData,'MREROIBusy') && app.AppData.MREROIBusy)
@@ -5774,6 +5792,77 @@ function tf = shouldBypassGlobalHotkeys(app)
                 end
             catch; end
             app.AppData.LocHoverAxes = '';
+        end
+
+        % -----------------------------------------------------------------
+        %  PANEL SPLITTER HELPERS
+        % -----------------------------------------------------------------
+        function createSplitters(app)
+            % Left splitter (between browser and center)
+            sp1 = uipanel(app.BodyGrid);
+            sp1.Layout.Row    = 1;
+            sp1.Layout.Column = 2;
+            sp1.BackgroundColor = [0.75 0.75 0.75];
+            sp1.BorderType = 'none';
+            sp1.UserData   = 'splitter_left';
+            sp1.Tooltip    = 'Drag to resize';
+
+            % Right splitter (between center and measurements)
+            sp2 = uipanel(app.BodyGrid);
+            sp2.Layout.Row    = 1;
+            sp2.Layout.Column = 4;
+            sp2.BackgroundColor = [0.75 0.75 0.75];
+            sp2.BorderType = 'none';
+            sp2.UserData   = 'splitter_right';
+            sp2.Tooltip    = 'Drag to resize';
+        end
+
+        function onMouseDown(app)
+            try
+                obj = app.UIFigure.CurrentObject;
+                if isempty(obj) || ~isprop(obj,'UserData'), return; end
+                tag = obj.UserData;
+                if ~(strcmp(tag,'splitter_left') || strcmp(tag,'splitter_right')), return; end
+                mp = app.UIFigure.CurrentPoint;
+                cw = app.BodyGrid.ColumnWidth;
+                if strcmp(tag,'splitter_left')
+                    startW = cw{1};
+                else
+                    startW = cw{5};
+                end
+                if isnumeric(startW)
+                    app.AppData.PanelDrag = struct('Active',true,'Which',tag, ...
+                        'StartX',mp(1),'StartW',startW);
+                end
+            catch
+            end
+        end
+
+        function onSplitDrag(app)
+            try
+                mp = app.UIFigure.CurrentPoint;
+                dx = mp(1) - app.AppData.PanelDrag.StartX;
+                w0 = app.AppData.PanelDrag.StartW;
+                cw = app.BodyGrid.ColumnWidth;
+                if strcmp(app.AppData.PanelDrag.Which,'splitter_left')
+                    newW = max(150, min(600, w0 + dx));
+                    cw{1} = newW;
+                else
+                    newW = max(200, min(600, w0 - dx));
+                    cw{5} = newW;
+                end
+                app.BodyGrid.ColumnWidth = cw;
+            catch
+            end
+        end
+
+        function onMouseUp(app)
+            try
+                if isfield(app.AppData,'PanelDrag')
+                    app.AppData.PanelDrag.Active = false;
+                end
+            catch
+            end
         end
 
         % -----------------------------------------------------------------
@@ -8196,14 +8285,19 @@ function grp = findRelatedDixonGroup(seriesList, anchor)
     isIdealAnchor = startsWith(char(anchor.Role),'IDEALIQ_') || ...
                     contains(anchorDesc,'ideal') || contains(anchorDesc,'dixon');
     if ~isIdealAnchor, return; end
-    targetN = double(anchor.nImages);
+    try
+        targetN = double(anchor.nImages);
+        if ~isfinite(targetN) || targetN <= 0, targetN = Inf; end
+    catch
+        targetN = Inf;
+    end
     for k = 1:numel(seriesList)
         s       = seriesList(k);
         sdesc   = lower(char(s.SeriesDescription));
         sRole   = char(s.Role);
         isIdealRole = startsWith(sRole,'IDEALIQ_');
         isIdeal     = contains(sdesc,'ideal') || contains(sdesc,'dixon') || isIdealRole;
-        sameCount   = double(s.nImages) == targetN;
+        sameCount   = isfinite(targetN) && (double(s.nImages) == targetN);
         countOK     = sameCount || (isIdealRole && ~strcmp(sRole,'IDEALIQ_Multi'));
         if isIdeal && countOK
             if isempty(grp), grp = s; else, grp(end+1) = s; end %#ok<AGROW>
