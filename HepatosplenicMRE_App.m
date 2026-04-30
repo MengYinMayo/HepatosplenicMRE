@@ -4182,9 +4182,17 @@ function setStiffScale(app, newClim)
                                     relGrp = findRelatedDixonGroup(exam.Series, fam.Anchor);
                                 catch
                                 end
+                                nUniqNum = 0;
+                                if ~isempty(numGrp), try, nUniqNum = numel(unique([numGrp.SeriesNumber])); catch, nUniqNum = numel(numGrp); end; end
+                                nUniqSig = 0;
+                                if ~isempty(sigGrp), try, nUniqSig = numel(unique([sigGrp.SeriesNumber])); catch, nUniqSig = numel(sigGrp); end; end
                                 candidate = sigGrp;
-                                if numel(numGrp) > numel(candidate), candidate = numGrp; end
-                                if numel(relGrp) > numel(candidate) && numel(numGrp) < 3, candidate = relGrp; end
+                                if nUniqNum >= 3
+                                    candidate = numGrp;
+                                elseif numel(numGrp) > numel(candidate)
+                                    candidate = numGrp;
+                                end
+                                if numel(relGrp) > numel(candidate) && nUniqNum < 3 && nUniqSig < 3, candidate = relGrp; end
                                 if numel(candidate) > numel(bestGrp), bestGrp = candidate; end
                                 break;
                             end
@@ -5350,12 +5358,20 @@ function tf = shouldBypassGlobalHotkeys(app)
                         relGrp = findRelatedDixonGroup(exam.Series, dixonExam.Families(f).Anchor);
                     catch
                     end
+                    nUniqNum = 0;
+                    if ~isempty(numGrp), try, nUniqNum = numel(unique([numGrp.SeriesNumber])); catch, nUniqNum = numel(numGrp); end; end
+                    nUniqSig = 0;
+                    if ~isempty(sigGrp), try, nUniqSig = numel(unique([sigGrp.SeriesNumber])); catch, nUniqSig = numel(sigGrp); end; end
                     g = sigGrp;
-                    if numel(numGrp) > numel(g), g = numGrp; end
-                    % Only use role-based collector for old GE (numGrp<3); new GE
-                    % with numGrp>=3 already has proximity grouping that separates
-                    % multiple acquisitions (e.g. S2→S200-S202, S12→S1200-S1202).
-                    if numel(relGrp) > numel(g) && numel(numGrp) < 3, g = relGrp; end
+                    if nUniqNum >= 3
+                        g = numGrp;  % new GE: proximity correctly finds all recons
+                    elseif numel(numGrp) > numel(g)
+                        g = numGrp;
+                    end
+                    % Use role-based collector only when BOTH sig and num groups are
+                    % small — old GE (S5 anchor, far-numbered recons S15992-S15998).
+                    % New GE PDFF anchor: nUniqNum<3 but nUniqSig>=3 → skip relGrp.
+                    if numel(relGrp) > numel(g) && nUniqNum < 3 && nUniqSig < 3, g = relGrp; end
                     if isempty(g), g = dixonExam.Families(f).Members; end
                     famGrps{f} = g;
                 end
