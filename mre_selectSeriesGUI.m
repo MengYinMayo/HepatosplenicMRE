@@ -571,6 +571,32 @@ function group = findRelatedDixon(seriesList, anchor)
                     contains(anchorDesc,'ideal');
 
     if isIdealAnchor
+        anchorSN = double(anchor.SeriesNumber);
+
+        % Primary path: use the DICOM parser to find the exact family.
+        % When an exam has two IDEAL-IQ acquisitions (e.g. BH + FB), the
+        % description/count scan below would pull series from both families
+        % into the same group, confusing seg_buildDixonVolume.  The parser
+        % already resolves families correctly, so delegate to it first.
+        try
+            dxExam = dixon_parseDICOMExam(struct('Series', seriesList));
+            for fIdx = 1:numel(dxExam.Families)
+                fam = dxExam.Families(fIdx);
+                if isempty(fam.Members), continue; end
+                famSNs = [fam.Members.SeriesNumber];
+                if any(famSNs == anchorSN) || double(fam.Anchor.SeriesNumber) == anchorSN
+                    group = fam.Members;
+                    [~, idx] = sort([group.SeriesNumber]);
+                    group = group(idx);
+                    return
+                end
+            end
+        catch
+        end
+
+        % Fallback: description/count scan restricted to the anchor's
+        % acquisition via SeriesNumber proximity (anchor N owns recons
+        % in [N*100 .. N*100+99], e.g. S2 → S200-S299).
         for k = 1:numel(seriesList)
             s = seriesList(k);
             sdesc = lower(char(s.SeriesDescription));
@@ -601,9 +627,16 @@ function group = findRelatedDixon(seriesList, anchor)
             % match exactly so that series from other acquisitions aren't mixed in.
             countOK    = sameCount || (isIdealRole && ~strcmp(sRole,'IDEALIQ_Multi'));
 
+            % inSameAcq: guard against a second IDEAL-IQ acquisition whose
+            % series have the same image count and overlapping description
+            % keywords.  Anchor N owns recons whose series number encodes N
+            % in the hundreds digit (floor(sn/100)==N), e.g. S200-S299 for S2.
+            sn         = double(s.SeriesNumber);
+            inSameAcq  = (sn == anchorSN) || (floor(sn/100) == anchorSN);
+
             % Include when IDEAL member AND (useful content OR raw product recon)
-            % AND image count is acceptable for the role.
-            if isIdeal && (isUseful || isRawRecon) && countOK
+            % AND image count is acceptable for the role AND same acquisition.
+            if isIdeal && (isUseful || isRawRecon) && countOK && inSameAcq
                 if isempty(group)
                     group = s;
                 else
