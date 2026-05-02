@@ -2442,6 +2442,15 @@ function captureSeedAutoMREROI(app)
         return
     end
     setStatus(app, sprintf('Draw a seed circle inside the %s on Magnitude. Double-click to finish.', lower(app.getMREROIOrganLabel())));
+    if ~isfield(app.AppData,'MREPlaybackWasOnBeforeROI') || ~app.AppData.MREPlaybackWasOnBeforeROI
+        try
+            app.AppData.MREPlaybackWasOnBeforeROI = app.AppData.MREPlaying || ...
+                (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer));
+        catch
+            app.AppData.MREPlaybackWasOnBeforeROI = false;
+        end
+    end
+    app.pauseMREPlaybackForROI();
     app.AppData.MREROIDrawing = true;
     app.updateMREPlaybackButtonEnabled();
     drawCleanup = onCleanup(@()app.finishMREROIDrawing());
@@ -2618,6 +2627,15 @@ function excludeFromCurrentMREROI(app)
     app.setCurrentMRETargetAxis(axisKey);
     ax = app.getMREAxisByKey(axisKey);
     setStatus(app, sprintf('Draw a freehand region on %s to exclude from the measurement ROI.', app.getMREAxisLabel(axisKey)));
+    if ~isfield(app.AppData,'MREPlaybackWasOnBeforeROI') || ~app.AppData.MREPlaybackWasOnBeforeROI
+        try
+            app.AppData.MREPlaybackWasOnBeforeROI = app.AppData.MREPlaying || ...
+                (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer));
+        catch
+            app.AppData.MREPlaybackWasOnBeforeROI = false;
+        end
+    end
+    app.pauseMREPlaybackForROI();
     app.AppData.MREROIDrawing = true;
     app.updateMREPlaybackButtonEnabled();
     drawCleanup = onCleanup(@()app.finishMREROIDrawing());
@@ -2651,6 +2669,15 @@ function includeIntoCurrentMREROI(app)
     app.setCurrentMRETargetAxis(axisKey);
     ax = app.getMREAxisByKey(axisKey);
     setStatus(app, sprintf('Draw a freehand region on %s to add into the measurement ROI (disconnected islands allowed if confidence passes).', app.getMREAxisLabel(axisKey)));
+    if ~isfield(app.AppData,'MREPlaybackWasOnBeforeROI') || ~app.AppData.MREPlaybackWasOnBeforeROI
+        try
+            app.AppData.MREPlaybackWasOnBeforeROI = app.AppData.MREPlaying || ...
+                (~isempty(app.AppData.MRETimer) && isvalid(app.AppData.MRETimer));
+        catch
+            app.AppData.MREPlaybackWasOnBeforeROI = false;
+        end
+    end
+    app.pauseMREPlaybackForROI();
     app.AppData.MREROIDrawing = true;
     app.updateMREPlaybackButtonEnabled();
     drawCleanup = onCleanup(@()app.finishMREROIDrawing());
@@ -6431,7 +6458,7 @@ function safeMREAxesImage(ax, img, climVals, cmapIn, baseTag)
     for ii = 1:numel(hImgs)
         hThis = hImgs(ii);
         try
-            if isequal(hThis, hBase)
+            if hThis == hBase
                 continue;
             end
         catch
