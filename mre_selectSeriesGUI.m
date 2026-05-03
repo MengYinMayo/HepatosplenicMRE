@@ -374,10 +374,9 @@ end
 
 function group = findRelatedMRE(seriesList, anchor)
 %FINDRELATEDMRE  Return all series belonging to the same MRE family.
-%   Primary: prefix-based series-number derivation (inferMREFamilyAnchor).
-%   Fallback: same top-level root number, for 3D EPI exams where wave
-%   series may be classified as independent EPI_RawIQ roots rather than
-%   descendants of the true raw-IQ root.
+%   Uses prefix-based series-number derivation with 2-digit steps so it
+%   safely handles S7->S700-S707, S30->S3001->S300101-S300107, and
+%   S401->S40100-S40107 without mixing in sibling families.
 
     group = struct([]);
     if isempty(anchor)
@@ -388,31 +387,17 @@ function group = findRelatedMRE(seriesList, anchor)
     anchorType = anchor.Role(1:3);
     anchorFreq = extractFreq(anchor.SeriesDescription);
 
-    anchorRootNum = double(anchor.SeriesNumber);
-    while anchorRootNum >= 100
-        anchorRootNum = floor(anchorRootNum / 100);
-    end
-
     for k = 1:numel(seriesList)
         s = seriesList(k);
         if numel(s.Role) < 3 || ~strcmp(s.Role(1:3), anchorType)
             continue
         end
+        if inferMREFamilyAnchor(seriesList, s) ~= anchorNum
+            continue
+        end
         sFreq = extractFreq(s.SeriesDescription);
         if anchorFreq > 0 && sFreq > 0 && abs(anchorFreq - sFreq) >= 1
             continue
-        end
-        if inferMREFamilyAnchor(seriesList, s) ~= anchorNum
-            % Fallback: include if same top-level root (handles 3D EPI where
-            % wave series are stored as primary originals and each gets its own
-            % EPI_RawIQ root instead of being mapped to the true raw-IQ root).
-            sRootNum = double(s.SeriesNumber);
-            while sRootNum >= 100
-                sRootNum = floor(sRootNum / 100);
-            end
-            if sRootNum ~= anchorRootNum
-                continue
-            end
         end
         if isempty(group)
             group = s;
