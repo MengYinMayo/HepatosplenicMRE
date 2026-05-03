@@ -445,9 +445,12 @@ function tf = isProcWave(e)
 end
 
 function tf = isStiff(e)
-% Stiffness: WindowCenter in 1000-15000 Pa range, small series
+% Stiffness: keyword in description, or WindowCenter in Pa range for small series.
+    desc = lower(e.SeriesDescription);
+    byDesc = contains(desc, 'stiffness') || contains(desc, ' oss') || contains(desc, '_oss');
     wc = getWinCenter(e.Header);
-    tf = (e.nImages <= 20) && (wc >= 1000) && (wc <= 15000) && ~isConf(e);
+    byWindow = (e.nImages <= 20) && (wc >= 1000) && (wc <= 15000) && ~isConf(e);
+    tf = byDesc || byWindow;
 end
 
 function tf = isConf(e)
