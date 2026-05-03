@@ -387,13 +387,27 @@ function group = findRelatedMRE(seriesList, anchor)
     anchorType = anchor.Role(1:3);
     anchorFreq = extractFreq(anchor.SeriesDescription);
 
+    % Top-level root: used as a fallback when no EPI_RawIQ exists and series
+    % numbers share a common prefix at the hundreds level (e.g. S001203 and
+    % S001208 both belong to virtual root 12).
+    anchorRootNum = double(anchorNum);
+    while anchorRootNum >= 100
+        anchorRootNum = floor(anchorRootNum / 100);
+    end
+
     for k = 1:numel(seriesList)
         s = seriesList(k);
         if numel(s.Role) < 3 || ~strcmp(s.Role(1:3), anchorType)
             continue
         end
         if inferMREFamilyAnchor(seriesList, s) ~= anchorNum
-            continue
+            sRootNum = double(s.SeriesNumber);
+            while sRootNum >= 100
+                sRootNum = floor(sRootNum / 100);
+            end
+            if sRootNum ~= anchorRootNum
+                continue
+            end
         end
         sFreq = extractFreq(s.SeriesDescription);
         if anchorFreq > 0 && sFreq > 0 && abs(anchorFreq - sFreq) >= 1

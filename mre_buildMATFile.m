@@ -586,10 +586,38 @@ function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionEPI(grp, opts)
         rems{k} = epiRemainder(rootNum, double(grp(k).SeriesNumber));
     end
 
+    % When all remainders are empty the chosen root is at a deeper level
+    % than the actual family root (e.g. rootNum=1203 but true root=12).
+    % Climb up by repeatedly flooring until we find a root that produces
+    % at least one non-empty remainder.
+    if all(cellfun(@isempty, rems)) && rootNum >= 100
+        virtRoot = rootNum;
+        while virtRoot >= 100
+            virtRoot = floor(virtRoot / 100);
+            testRems = cell(size(grp));
+            for k = 1:numel(grp)
+                testRems{k} = epiRemainder(virtRoot, double(grp(k).SeriesNumber));
+            end
+            if any(~cellfun(@isempty, testRems))
+                rootNum = virtRoot;
+                rems = testRems;
+                break
+            end
+        end
+    end
+
     is3D = any(strcmp(rems,'02')) && any(strcmp(rems,'03'));
     if ~is3D
         nDesc = sum(~cellfun(@isempty, rems));
         if nDesc > 10
+            is3D = true;
+        end
+    end
+    % Combined-3D: scanner writes all three MEG directions into one series
+    % filed under remainder '03' (no separate '01' or '02' series).
+    if ~is3D && any(strcmp(rems,'03')) && ...
+            ~any(strcmp(rems,'01')) && ~any(strcmp(rems,'02'))
+        if ~isempty(pickEPISeriesByRemainder(grp, rootNum, {'03'}, {'EPI_WaveMag_Raw'}))
             is3D = true;
         end
     end
