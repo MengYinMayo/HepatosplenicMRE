@@ -281,8 +281,14 @@ function dixon = seg_buildDixonVolume(dixonGroup, opts)
     end
 
     % ── 5.  Summary ───────────────────────────────────────────────────
-    if ~isempty(dixon.Water)
-        dixon.nSlices = size(dixon.Water, 3);
+    % Use first non-empty volume as reference (Water preferred, then Fat,
+    % PDFF, InPhase) so nSlices is set even when Water is absent.
+    refVol = '';
+    for fld_ = {'Water','Fat','PDFF','InPhase','OutPhase'}
+        if ~isempty(dixon.(fld_{1})), refVol = fld_{1}; break; end
+    end
+    if ~isempty(refVol)
+        dixon.nSlices = size(dixon.(refVol), 3);
         if isfield(dixon.SpatialInfo,'VoxelSize')
             dixon.PixelSpacing_mm  = dixon.SpatialInfo.VoxelSize(1:2);
             dixon.SliceThickness_mm= dixon.SpatialInfo.SliceSpacing;

@@ -1574,6 +1574,20 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 
                     if ~isempty(selection.DixonGroup)
                         dlg.Message = 'Building Dixon volumes...';
+                        % Augment group using floor-based family lookup (same as
+                        % switchDixonFamily) so that Water/Fat child series
+                        % (e.g. S401/S402 when anchor=S4) are always included
+                        % even when findRelatedDixon assigned them to a
+                        % separate signature family.
+                        try
+                            anchorNum = double(selection.DixonGroup(1).SeriesNumber);
+                            numGrp = buildDixonGroupForFamily(exam.Series, anchorNum);
+                            if numel(numGrp) > numel(selection.DixonGroup)
+                                selection.DixonGroup = numGrp;
+                                app.AppData.Selection.DixonGroup = numGrp;
+                            end
+                        catch
+                        end
                         app.AppData.Dixon = seg_buildDixonVolume( ...
                             selection.DixonGroup, struct('verbose',false));
                         populateDixonTab(app);
