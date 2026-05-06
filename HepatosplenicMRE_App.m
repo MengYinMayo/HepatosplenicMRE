@@ -2126,15 +2126,37 @@ function updateOfflineReconEnabled(app)
                     return
                 end
 
-                % Find the exe (handles version changes in filename)
-                exeList = dir(fullfile(reconDir, '*.exe'));
-                if isempty(exeList)
-                    uialert(app.UIFigure, ...
-                        sprintf('No .exe found in:\n%s', reconDir), ...
-                        'Offline Recon', 'Icon','error');
-                    return
+                % Find the exe: read bat file first (ground truth for which version
+                % to use), then fall back to mmdi-*.exe, then any *.exe.
+                exePath = '';
+                batFile = fullfile(reconDir, 'mmdi-no-mask-dir.bat');
+                if isfile(batFile)
+                    try
+                        lines = strsplit(fileread(batFile), newline);
+                        for li = 1:numel(lines)
+                            tok = regexp(strtrim(lines{li}), '(?i)(\S+\.exe)', 'tokens', 'once');
+                            if ~isempty(tok)
+                                [~, eName, eExt] = fileparts(tok{1});
+                                candidate = fullfile(reconDir, [eName eExt]);
+                                if isfile(candidate)
+                                    exePath = candidate; break;
+                                end
+                            end
+                        end
+                    catch
+                    end
                 end
-                exePath = fullfile(reconDir, exeList(1).name);
+                if isempty(exePath)
+                    exeList = dir(fullfile(reconDir, 'mmdi-*.exe'));
+                    if isempty(exeList), exeList = dir(fullfile(reconDir, '*.exe')); end
+                    if isempty(exeList)
+                        uialert(app.UIFigure, sprintf('No .exe found in:\n%s', reconDir), ...
+                            'Offline Recon', 'Icon','error');
+                        return
+                    end
+                    [~, newest] = max([exeList.datenum]);
+                    exePath = fullfile(reconDir, exeList(newest).name);
+                end
 
                 % Collect all raw MRE series (any vendor)
                 mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'};
@@ -2166,14 +2188,17 @@ function updateOfflineReconEnabled(app)
                     rawSeries = rawList(idx);
                 end
 
-                % Create a local temp input directory (tempdir is always local)
+                % Save recon input/output alongside other exam data files
+                examDir = '';
+                try, examDir = app.AppData.ExamPath; catch, end
+                if isempty(examDir), examDir = tempdir; end
                 ts = datestr(now, 'yyyymmdd_HHMMSS');
-                inputDir = fullfile(tempdir, sprintf('mmdi_in_%s', ts));
+                inputDir = fullfile(examDir, sprintf('mmdi_in_%s', ts));
                 if ~exist(inputDir, 'dir'), mkdir(inputDir); end
 
                 % Copy DICOM files
                 dlg = uiprogressdlg(app.UIFigure, 'Title','Offline Recon', ...
-                    'Message','Copying DICOM files to temp folder...','Indeterminate','on');
+                    'Message','Copying DICOM files to data folder...','Indeterminate','on');
                 files = rawSeries.Files;
                 if isempty(files)
                     d = dir(rawSeries.Folder);
