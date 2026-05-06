@@ -2096,9 +2096,10 @@ function updateMREPlaybackButtonEnabled(app)
 function updateOfflineReconEnabled(app)
             try
                 hasSeries = false;
+                mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'};
                 ser = app.AppData.Exam.Series;
                 for k = 1:numel(ser)
-                    if strcmp(ser(k).Role, 'PHILIPS_MRE_Raw')
+                    if any(strcmp(ser(k).Role, mreRawRoles))
                         hasSeries = true; break;
                     end
                 end
@@ -2113,30 +2114,40 @@ function updateOfflineReconEnabled(app)
 
         function onOfflineReconBtn(app)
             try
-                % Locate bat file in MATLAB user directory
+                % Locate the mmdi recon folder in the MATLAB user directory
                 up = strtrim(strsplit(userpath, pathsep));
-                batDir  = fullfile(up{1}, 'mmdi-offline-recon-wo-masking');
-                batFile = fullfile(batDir, 'mmdi-no-mask-dir.bat');
-                if ~isfile(batFile)
+                reconDir = fullfile(up{1}, 'mmdi-offline-recon-wo-masking');
+                if ~isfolder(reconDir)
                     uialert(app.UIFigure, ...
-                        sprintf(['Bat file not found:\n%s\n\n' ...
-                        'Copy the mmdi-offline-recon-wo-masking folder into your MATLAB user directory:\n%s'], ...
-                        batFile, up{1}), ...
+                        sprintf(['Recon folder not found:\n%s\n\n' ...
+                        'Copy the mmdi-offline-recon-wo-masking folder into:\n%s'], ...
+                        reconDir, up{1}), ...
                         'Offline Recon', 'Icon','error');
                     return
                 end
 
-                % Collect all PHILIPS_MRE_Raw series
+                % Find the exe (handles version changes in filename)
+                exeList = dir(fullfile(reconDir, '*.exe'));
+                if isempty(exeList)
+                    uialert(app.UIFigure, ...
+                        sprintf('No .exe found in:\n%s', reconDir), ...
+                        'Offline Recon', 'Icon','error');
+                    return
+                end
+                exePath = fullfile(reconDir, exeList(1).name);
+
+                % Collect all raw MRE series (any vendor)
+                mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'};
                 rawList = struct([]);
                 for k = 1:numel(app.AppData.Exam.Series)
                     s = app.AppData.Exam.Series(k);
-                    if strcmp(s.Role, 'PHILIPS_MRE_Raw')
+                    if any(strcmp(s.Role, mreRawRoles))
                         if isempty(rawList), rawList = s; else, rawList(end+1) = s; end %#ok<AGROW>
                     end
                 end
                 if isempty(rawList)
                     uialert(app.UIFigure, ...
-                        'No Philips MRE raw series found in the loaded exam.', ...
+                        'No MRE raw series found in the loaded exam.', ...
                         'Offline Recon', 'Icon','warning');
                     return
                 end
@@ -2155,7 +2166,7 @@ function updateOfflineReconEnabled(app)
                     rawSeries = rawList(idx);
                 end
 
-                % Create a local temp input directory
+                % Create a local temp input directory (tempdir is always local)
                 ts = datestr(now, 'yyyymmdd_HHMMSS');
                 inputDir = fullfile(tempdir, sprintf('mmdi_in_%s', ts));
                 if ~exist(inputDir, 'dir'), mkdir(inputDir); end
@@ -2173,18 +2184,28 @@ function updateOfflineReconEnabled(app)
                     copyfile(files{k}, inputDir);
                 end
 
-                % Run offline reconstruction (blocking — UI pauses during computation)
+                % Set DCMDICTPATH so the exe finds its dictionary files.
+                % Using setenv avoids bat-file quoting issues with paths that
+                % contain spaces (e.g. OneDrive paths).
+                dicFile1 = fullfile(reconDir, 'dicom.dic');
+                dicFile2 = fullfile(reconDir, 'mre_recon.dic');
+                if isfile(dicFile1)
+                    setenv('DCMDICTPATH', [dicFile1 ';' dicFile2]);
+                end
+
+                % Run the exe directly — path is quoted so spaces are safe.
                 dlg.Message = sprintf('Running mmdi offline recon...\n(%d DICOMs copied, please wait)', numel(files));
                 drawnow;
-                cmd = sprintf('cmd /c ""%s" "%s""', batFile, inputDir);
+                cmd = sprintf('"%s" +no-mask +use-no-post-mask +save-mu-storage +save-mu-loss -user_ack -mrequant "%s"', ...
+                    exePath, inputDir);
                 setStatus(app, sprintf('Running offline recon on S%d...', rawSeries.SeriesNumber));
                 [status, cmdOut] = system(cmd);
 
                 if isvalid(dlg), close(dlg); end
 
                 % Report results
-                quantDir  = fullfile(inputDir, 'quant');
-                s00Files  = dir(fullfile(quantDir, 'S00*'));
+                quantDir = fullfile(inputDir, 'quant');
+                s00Files = dir(fullfile(quantDir, 'S00*'));
 
                 if status ~= 0 || ~isfolder(quantDir)
                     uialert(app.UIFigure, ...
@@ -2218,7 +2239,6 @@ function updateOfflineReconEnabled(app)
                     end
                 end
 
-                % Store output dir for the next loading step
                 app.AppData.PhilipsMREQuantDir = quantDir;
                 setStatus(app, sprintf('Offline recon done: %s  (%d S00* files)', quantDir, nS00));
 
