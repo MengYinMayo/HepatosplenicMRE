@@ -1291,11 +1291,11 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             workflowLbl.Layout.Row = 11;
             app.BtnOfflineRecon = uibutton(rg,'push');
             app.BtnOfflineRecon.Layout.Row = 12;
-            app.BtnOfflineRecon.Text = 'Offline Recon (Philips)';
+            app.BtnOfflineRecon.Text = 'Offline Recon w/o Mask';
             app.BtnOfflineRecon.FontSize = 12; app.BtnOfflineRecon.FontWeight = 'bold';
             app.BtnOfflineRecon.BackgroundColor = [0.35 0.20 0.65];
             app.BtnOfflineRecon.FontColor = [1 1 1];
-            app.BtnOfflineRecon.Tooltip = 'Run mmdi offline reconstruction on Philips MRE raw series and save output to temp folder';
+            app.BtnOfflineRecon.Tooltip = 'Run mmdi offline reconstruction on raw MRE series without masking';
             app.BtnOfflineRecon.Enable = 'off';
             app.BtnOfflineRecon.ButtonPushedFcn = @(~,~)app.onOfflineReconBtn();
 
