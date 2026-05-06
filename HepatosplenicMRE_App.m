@@ -320,6 +320,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
         EdtMuscleConfThresh matlab.ui.control.NumericEditField
         EdtFatConfThresh    matlab.ui.control.NumericEditField
         BtnClearMREROIs     matlab.ui.control.Button
+        BtnOfflineRecon     matlab.ui.control.Button
 
         % Results tab
         ResultsTab              matlab.ui.container.Tab
@@ -1217,8 +1218,8 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             roiPnl = uipanel(app.MREGrid,'Title','MRE ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[13 1]);
-            rg.RowHeight   = {24,36,24,36,24,36,24,36,24,22,24,'1x',36};
+            rg = uigridlayout(roiPnl,[14 1]);
+            rg.RowHeight   = {24,36,24,36,24,36,24,36,24,22,24,36,'1x',36};
             rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
             uilabel(rg,'Text','Stiffness ROIs (same-slice, any panel):','FontSize',11, ...
@@ -1288,8 +1289,18 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             workflowLbl = uilabel(rg,'Text','Workflow:','FontSize',11, ...
                 'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
             workflowLbl.Layout.Row = 11;
+            app.BtnOfflineRecon = uibutton(rg,'push');
+            app.BtnOfflineRecon.Layout.Row = 12;
+            app.BtnOfflineRecon.Text = 'Offline Recon (Philips)';
+            app.BtnOfflineRecon.FontSize = 12; app.BtnOfflineRecon.FontWeight = 'bold';
+            app.BtnOfflineRecon.BackgroundColor = [0.35 0.20 0.65];
+            app.BtnOfflineRecon.FontColor = [1 1 1];
+            app.BtnOfflineRecon.Tooltip = 'Run mmdi offline reconstruction on Philips MRE raw series and save output to temp folder';
+            app.BtnOfflineRecon.Enable = 'off';
+            app.BtnOfflineRecon.ButtonPushedFcn = @(~,~)app.onOfflineReconBtn();
+
             app.LblMREInfo = uilabel(rg);
-            app.LblMREInfo.Layout.Row=12;
+            app.LblMREInfo.Layout.Row=13;
             app.LblMREInfo.Text = sprintf(['Choose organ, click target panel, hotkeys:' char(10) ...
                 'F = freehand → edit polygon → dbl-click confirm' char(10) ...
                 'D = seed + auto on Magnitude' char(10) ...
@@ -1298,7 +1309,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
             app.LblMREInfo.FontSize=11; app.LblMREInfo.WordWrap='on';
             app.LblMREInfo.FontColor=[0.45 0.45 0.45];
 
-            app.BtnClearMREROIs = roiBtn(rg,13,'Clear this slice', ...
+            app.BtnClearMREROIs = roiBtn(rg,14,'Clear this slice',...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearMREROIs.ButtonPushedFcn = @(~,~)app.clearMRESlice();
         end
@@ -1619,6 +1630,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
                     app.BtnConfirmL12.Enable   = 'on';
 
                     updateStudyBrowser(app, exam, selection);
+                    updateOfflineReconEnabled(app);
                     setStatus(app,sprintf('Loaded: %s — %s | %d series', ...
                         exam.PatientID, exam.StudyDate, numel(exam.Series)));
                 end
@@ -2078,6 +2090,142 @@ function updateMREPlaybackButtonEnabled(app)
             try
                 app.BtnMREPlay.Enable = state;
             catch
+            end
+        end
+
+function updateOfflineReconEnabled(app)
+            try
+                hasSeries = false;
+                ser = app.AppData.Exam.Series;
+                for k = 1:numel(ser)
+                    if strcmp(ser(k).Role, 'PHILIPS_MRE_Raw')
+                        hasSeries = true; break;
+                    end
+                end
+                if hasSeries
+                    app.BtnOfflineRecon.Enable = 'on';
+                else
+                    app.BtnOfflineRecon.Enable = 'off';
+                end
+            catch
+            end
+        end
+
+        function onOfflineReconBtn(app)
+            try
+                % Locate bat file in MATLAB user directory
+                up = strtrim(strsplit(userpath, pathsep));
+                batDir  = fullfile(up{1}, 'mmdi-offline-recon-wo-masking');
+                batFile = fullfile(batDir, 'mmdi-no-mask-dir.bat');
+                if ~isfile(batFile)
+                    uialert(app.UIFigure, ...
+                        sprintf(['Bat file not found:\n%s\n\n' ...
+                        'Copy the mmdi-offline-recon-wo-masking folder into your MATLAB user directory:\n%s'], ...
+                        batFile, up{1}), ...
+                        'Offline Recon', 'Icon','error');
+                    return
+                end
+
+                % Collect all PHILIPS_MRE_Raw series
+                rawList = struct([]);
+                for k = 1:numel(app.AppData.Exam.Series)
+                    s = app.AppData.Exam.Series(k);
+                    if strcmp(s.Role, 'PHILIPS_MRE_Raw')
+                        if isempty(rawList), rawList = s; else, rawList(end+1) = s; end %#ok<AGROW>
+                    end
+                end
+                if isempty(rawList)
+                    uialert(app.UIFigure, ...
+                        'No Philips MRE raw series found in the loaded exam.', ...
+                        'Offline Recon', 'Icon','warning');
+                    return
+                end
+
+                % Let user pick if multiple raw series exist
+                rawSeries = rawList(1);
+                if numel(rawList) > 1
+                    descs = arrayfun(@(s) sprintf('S%d  %s  (%d images)', ...
+                        s.SeriesNumber, s.SeriesDescription, s.nImages), ...
+                        rawList, 'UniformOutput', false);
+                    [idx, ok] = listdlg('ListString', descs, ...
+                        'SelectionMode','single', ...
+                        'PromptString','Select MRE raw series to recon:', ...
+                        'Name','Offline Recon', 'ListSize',[400 150]);
+                    if ~ok, return; end
+                    rawSeries = rawList(idx);
+                end
+
+                % Create a local temp input directory
+                ts = datestr(now, 'yyyymmdd_HHMMSS');
+                inputDir = fullfile(tempdir, sprintf('mmdi_in_%s', ts));
+                if ~exist(inputDir, 'dir'), mkdir(inputDir); end
+
+                % Copy DICOM files
+                dlg = uiprogressdlg(app.UIFigure, 'Title','Offline Recon', ...
+                    'Message','Copying DICOM files to temp folder...','Indeterminate','on');
+                files = rawSeries.Files;
+                if isempty(files)
+                    d = dir(rawSeries.Folder);
+                    d = d(~[d.isdir]);
+                    files = cellfun(@(n) fullfile(rawSeries.Folder, n), {d.name}, 'UniformOutput', false);
+                end
+                for k = 1:numel(files)
+                    copyfile(files{k}, inputDir);
+                end
+
+                % Run offline reconstruction (blocking — UI pauses during computation)
+                dlg.Message = sprintf('Running mmdi offline recon...\n(%d DICOMs copied, please wait)', numel(files));
+                drawnow;
+                cmd = sprintf('cmd /c ""%s" "%s""', batFile, inputDir);
+                setStatus(app, sprintf('Running offline recon on S%d...', rawSeries.SeriesNumber));
+                [status, cmdOut] = system(cmd);
+
+                if isvalid(dlg), close(dlg); end
+
+                % Report results
+                quantDir  = fullfile(inputDir, 'quant');
+                s00Files  = dir(fullfile(quantDir, 'S00*'));
+
+                if status ~= 0 || ~isfolder(quantDir)
+                    uialert(app.UIFigure, ...
+                        sprintf('Recon returned error code %d.\n\nCommand:\n%s\n\nOutput:\n%s', ...
+                        status, cmd, cmdOut), ...
+                        'Offline Recon Failed', 'Icon','error');
+                    setStatus(app, 'Offline recon failed — see error dialog.');
+                    return
+                end
+
+                nS00 = numel(s00Files);
+                msg  = sprintf(['Offline recon completed.\n\n' ...
+                    'Input:  %s\nOutput: %s\n\n' ...
+                    'S00* (shear modulus):    %d files\n' ...
+                    'S21* (loss modulus):     %d files\n' ...
+                    'S22* (storage modulus):  %d files\n\n' ...
+                    'Open the output folder?'], ...
+                    inputDir, quantDir, nS00, ...
+                    numel(dir(fullfile(quantDir,'S21*'))), ...
+                    numel(dir(fullfile(quantDir,'S22*'))));
+                answer = uiconfirm(app.UIFigure, msg, 'Offline Recon Complete', ...
+                    'Options',{'Open folder','Close'}, ...
+                    'DefaultOption','Open folder','Icon','success');
+                if strcmp(answer,'Open folder')
+                    if ispc
+                        system(sprintf('explorer "%s"', quantDir));
+                    elseif ismac
+                        system(sprintf('open "%s"', quantDir));
+                    else
+                        system(sprintf('xdg-open "%s"', quantDir));
+                    end
+                end
+
+                % Store output dir for the next loading step
+                app.AppData.PhilipsMREQuantDir = quantDir;
+                setStatus(app, sprintf('Offline recon done: %s  (%d S00* files)', quantDir, nS00));
+
+            catch ME
+                try, if exist('dlg','var') && isvalid(dlg), close(dlg); end; catch, end
+                uialert(app.UIFigure, ME.message, 'Offline Recon Error', 'Icon','error');
+                setStatus(app, ['Offline recon error: ' ME.message]);
             end
         end
 
