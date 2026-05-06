@@ -173,7 +173,7 @@ end
 function sig = idealSignature(s)
     desc = lower(char(s.SeriesDescription));
     sig = normalizeSignature(desc);
-    sig = regexprep(sig, '\bfatfrac\b|\bpdff\b|\bwater\b|\bfat\b|\bt2\b|\br2\*?\b|\braw\b', ' ');
+    sig = regexprep(sig, '\bfatfrac\b|\bpdff\b|\bwater\b|\bfat\b|\bt2star\b|\br2star\b|\bt2\b|\br2\*?\b|\braw\b|\bff\b', ' ');
     % Strip bare numeric tokens (e.g. "1" from "R2*(1/s)") and the "s" unit
     % residual that normalizeSignature produces from the "(1/s)" denominator.
     sig = regexprep(sig, '\b\d+\b', ' ');
@@ -197,7 +197,8 @@ function sig = normalizeSignature(desc)
 end
 
 function tf = isFatFracDesc(desc)
-    tf = contains(desc,'fatfrac') || contains(desc,'fat frac') || contains(desc,'pdff');
+    tf = contains(desc,'fatfrac') || contains(desc,'fat frac') || contains(desc,'pdff') || ...
+         startsWith(strtrim(desc),'ff_') || startsWith(strtrim(desc),'ff ');
 end
 
 function tf = isWaterDesc(desc)

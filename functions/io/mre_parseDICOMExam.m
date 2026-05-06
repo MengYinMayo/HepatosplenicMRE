@@ -81,6 +81,7 @@ function exam = mre_parseDICOMExam(examRootDir, opts)
             exam.PatientID    = safeStr(hdr, 'PatientID');
             exam.StudyDate    = safeStr(hdr, 'StudyDate');
             exam.ScannerModel = safeStr(hdr, 'ManufacturerModelName');
+            exam.Manufacturer = safeStr(hdr, 'Manufacturer');
         end
 
         entry = buildEntry(folder, files, hdr);
@@ -289,16 +290,30 @@ function entry = classifySeries(entry)
     isMRELike = hit(desc, {'mre','epimre','elastograph'}) || ...
                 hit(seq,  {'epimre','epi_mre','fgremre','gremre'}) || ...
                 hit(fnam, {'epimre','epi_mre'});
+    % ── Philips MRE (SWIP/WWIP stiffness/wave and SE-EPI with _g<freq>) ─
+    % Checked before IDEAL-IQ so the MRE series are not misrouted as Dixon.
+    if startsWith(strtrim(desc), 'swip')
+        entry.Role = 'PHILIPS_MRE_Stiffness'; return
+    end
+    if startsWith(strtrim(desc), 'wwip')
+        entry.Role = 'PHILIPS_MRE_ProcWave'; return
+    end
+    % Philips MRE raw: SE-EPI series with driver-frequency suffix _g<N>
+    if ~isempty(regexp(strtrim(desc), '^se\d+.*_g\d+$', 'once'))
+        entry.Role = 'PHILIPS_MRE_Raw'; return
+    end
+
     if ~isMRELike && ...
        (hit(seq,  {'ideal3darc','ideal3d','idealarc','ideal'}) || ...
         hit(desc, {'ideal','idealiq','ideal-iq','fat frac','fatfrac', ...
-                   'pdff','water','t2*:','r2star','r2*','r2 map','r2map'}) || ...
+                   'pdff','water','t2*:','r2star','r2*','r2 map','r2map','mdixon'}) || ...
         strcmp(desc,'r2') || strcmp(desc,'fat') || ...
         hit(fnam, {'ideal','idealiq','dixon','pdff','water'}))
 
-        % Sub-classify within IDEAL-IQ.
+        % Sub-classify within IDEAL-IQ / Philips mDIXON.
         if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
-           hit(fnam,{'pdff','fatfrac'})
+           hit(fnam,{'pdff','fatfrac'}) || ...
+           startsWith(strtrim(desc),'ff_') || startsWith(strtrim(desc),'ff ')
             entry.Role = 'IDEALIQ_PDFF';
 
         elseif hit(desc,{'t2*','t2star','t2_star','r2star','r2*','r2 map','r2map'}) || ...
@@ -329,6 +344,12 @@ function entry = classifySeries(entry)
             % Matched as prefix/underscore-delimited token to handle
             % GE names like 's0202_FAT__Ax_IDEAL_IQ_BH' and 's15993_T2_Fat_...'.
             entry.Role = 'IDEALIQ_Fat';
+
+        elseif contains(desc,'mdixon')
+            % Philips mDIXON source series (no contrast prefix) — treat as
+            % single-contrast raw rather than multi-contrast stack so that
+            % readMultiContrast is not attempted on a single-echo source.
+            entry.Role = 'IDEALIQ_Raw';
 
         else
             % Multi-contrast stack or unclassified IDEAL-IQ product.
@@ -619,19 +640,21 @@ end
 
 function mreType = detectMREType(sl)
     if isempty(sl), mreType = 'none'; return; end
-    roles  = {sl.Role};
-    hasEPI = any(contains(roles,'EPI_'));
-    hasGRE = any(contains(roles,'GRE_'));
-    if hasEPI && hasGRE,  mreType = 'both';
-    elseif hasEPI,        mreType = 'EPI';
-    elseif hasGRE,        mreType = 'GRE';
-    else,                 mreType = 'none';
+    roles      = {sl.Role};
+    hasEPI     = any(contains(roles,'EPI_'));
+    hasGRE     = any(contains(roles,'GRE_'));
+    hasPhilips = any(strcmp(roles,'PHILIPS_MRE_Raw'));
+    if hasEPI && hasGRE,    mreType = 'both';
+    elseif hasEPI,          mreType = 'EPI';
+    elseif hasGRE,          mreType = 'GRE';
+    elseif hasPhilips,      mreType = 'Philips';
+    else,                   mreType = 'none';
     end
 end
 
 function exam = initExamStruct(dir_)
     exam = struct('ExamRootDir',dir_,'PatientID','','StudyDate','', ...
-                  'ScannerModel','','MREType','none','Series',struct([]));
+                  'ScannerModel','','Manufacturer','','MREType','none','Series',struct([]));
 end
 
 function v = safeStr(hdr, field)

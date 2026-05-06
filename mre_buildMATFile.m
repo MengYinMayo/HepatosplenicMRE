@@ -403,14 +403,20 @@ function matPath = buildFromSelection(sel, opts)
         grp = filterMREGroupToAnchorFamily(grp, sel.MRE);
         if isempty(grp), grp = sel.MRE; end
 
+        isPhilips = false;
         isEPI = false;
         try
             roles = {grp.Role};
-            isEPI = any(startsWith(roles, 'EPI_')) || startsWith(sel.MRE.Role, 'EPI_');
+            isPhilips = any(startsWith(roles,'PHILIPS_')) || startsWith(sel.MRE.Role,'PHILIPS_');
+            isEPI     = ~isPhilips && (any(startsWith(roles,'EPI_')) || startsWith(sel.MRE.Role,'EPI_'));
         catch
         end
 
-        if isEPI
+        if isPhilips
+            vprint(opts, 'Philips MRE raw reconstruction not yet supported — skipping MAT build.');
+            matPath = '';
+            return
+        elseif isEPI
             [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionEPI(grp, opts);
         else
             % -------- Existing GRE / legacy path unchanged --------

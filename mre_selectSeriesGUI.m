@@ -228,7 +228,8 @@ function groups = buildGroups(seriesList)
 
     % ── MRE: one anchor per inferred raw-series family ───────────────
     mreRoles = {'EPI_WaveMag_Raw','EPI_WaveMag_Proc','EPI_WaveMag','EPI_Stiffness','EPI_ConfMap','EPI_ProcWave','EPI_RawIQ', ...
-                'GRE_WaveMag_Raw','GRE_WaveMag_Proc','GRE_WaveMag','GRE_Stiffness','GRE_ConfMap','GRE_ProcWave'};
+                'GRE_WaveMag_Raw','GRE_WaveMag_Proc','GRE_WaveMag','GRE_Stiffness','GRE_ConfMap','GRE_ProcWave', ...
+                'PHILIPS_MRE_Raw','PHILIPS_MRE_Stiffness','PHILIPS_MRE_ProcWave'};
     seen = containers.Map();
     for k = 1:numel(seriesList)
         s = seriesList(k);
@@ -294,7 +295,8 @@ function populateTree(tree, seriesList, colType)
                       'EPI_WaveMag','GRE_WaveMag', ...        % legacy
                       'EPI_Stiffness','GRE_Stiffness', ...
                       'EPI_ConfMap','GRE_ConfMap', ...
-                      'EPI_ProcWave','GRE_ProcWave','EPI_RawIQ'};
+                      'EPI_ProcWave','GRE_ProcWave','EPI_RawIQ', ...
+                      'PHILIPS_MRE_Raw','PHILIPS_MRE_Stiffness','PHILIPS_MRE_ProcWave'};
             labels = {'EPI Wave+Mag (raw 4-phase)', ...
                       'GRE Wave+Mag (raw 4-phase)', ...
                       'EPI Wave processed (8-phase)', ...
@@ -302,7 +304,8 @@ function populateTree(tree, seriesList, colType)
                       'EPI Wave+Mag','GRE Wave+Mag', ...
                       'EPI Stiffness (Pa)','GRE Stiffness (Pa)', ...
                       'EPI Confidence','GRE Confidence', ...
-                      'EPI Processed','GRE Processed','EPI Raw I/Q'};
+                      'EPI Processed','GRE Processed','EPI Raw I/Q', ...
+                      'Philips MRE raw (SE-EPI)','Philips Stiffness (SWIP)','Philips Wave (WWIP)'};
     end
 
     % Insert uncategorised entries under 'Other'
@@ -461,6 +464,26 @@ function anchorNum = inferMREFamilyAnchor(seriesList, s)
     typePrefix = s.Role(1:3);
     freq       = extractFreq(s.SeriesDescription);
     sNumStr    = sprintf('%d', s.SeriesNumber);
+
+    % -------- Philips MRE: anchor to PHILIPS_MRE_Raw in same hundred group ----
+    if strcmp(typePrefix, 'PHI')
+        sFloor = floor(double(s.SeriesNumber) / 100);
+        rawNums = [];
+        for ii = 1:numel(seriesList)
+            g = seriesList(ii);
+            if ~strcmp(g.Role, 'PHILIPS_MRE_Raw'), continue; end
+            gFreq = extractFreq(g.SeriesDescription);
+            if freq > 0 && gFreq > 0 && abs(freq - gFreq) >= 1, continue; end
+            gFloor = floor(double(g.SeriesNumber) / 100);
+            if gFloor == sFloor || sFloor == 0 || gFloor == 0
+                rawNums(end+1) = g.SeriesNumber; %#ok<AGROW>
+            end
+        end
+        if ~isempty(rawNums)
+            anchorNum = min(rawNums);
+        end
+        return
+    end
 
     % -------- EPI: anchor to raw IQ root only --------
     if strcmp(typePrefix, 'EPI')
@@ -702,6 +725,12 @@ function freq = extractFreq(descStr)
     tok = regexp(char(descStr), '(\d+)\s*[Hh][Zz]', 'tokens');
     if ~isempty(tok)
         freq = str2double(tok{1}{1});
+        return
+    end
+    % Philips MRE encodes driver frequency as _g<N> (e.g. _g36 = 36 Hz)
+    tok = regexp(char(descStr), '_g(\d+)', 'tokens');
+    if ~isempty(tok)
+        freq = str2double(tok{end}{1});
     else
         freq = 0;
     end
