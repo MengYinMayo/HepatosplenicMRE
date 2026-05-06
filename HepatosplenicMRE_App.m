@@ -2226,13 +2226,12 @@ function updateOfflineReconEnabled(app)
                 setStatus(app, sprintf('Running offline recon on S%d...', rawSeries.SeriesNumber));
                 [status, cmdOut] = system(cmd);
 
-                if isvalid(dlg), close(dlg); end
-
                 % Report results
                 quantDir = fullfile(inputDir, 'quant');
                 s00Files = dir(fullfile(quantDir, 'S00*'));
 
                 if status ~= 0 || ~isfolder(quantDir)
+                    try, if isvalid(dlg), close(dlg); end; catch, end
                     uialert(app.UIFigure, ...
                         sprintf('Recon returned error code %d.\n\nCommand:\n%s\n\nOutput:\n%s', ...
                         status, cmd, cmdOut), ...
@@ -2242,13 +2241,52 @@ function updateOfflineReconEnabled(app)
                 end
 
                 nS00 = numel(s00Files);
-                msg  = sprintf(['Offline recon completed.\n\n' ...
+
+                % Load new stiffness and wave from quant DICOMs and replace
+                % the currently displayed (online/masked) versions.
+                dlg.Message = 'Loading offline recon stiffness and wave...';
+                drawnow;
+                newS = loadOfflineReconStiffness(quantDir, app.AppData.MRE);
+                newW = loadOfflineReconWave(quantDir, app.AppData.MRE);
+                loadedFields = {};
+                if ~isempty(newS)
+                    app.AppData.MRE.S = newS;
+                    loadedFields{end+1} = 'S (stiffness)';
+                end
+                if ~isempty(newW)
+                    app.AppData.MRE.W = newW;
+                    loadedFields{end+1} = 'W (wave)';
+                end
+
+                % Persist updated S / W to the MAT file.
+                matPath_ = '';
+                try, matPath_ = app.AppData.MATPath; catch, end
+                if ~isempty(matPath_) && isfile(matPath_) && ~isempty(loadedFields)
+                    S = app.AppData.MRE.S; %#ok<NASGU>
+                    W = app.AppData.MRE.W; %#ok<NASGU>
+                    try
+                        save(matPath_, 'S', 'W', '-append');
+                    catch
+                    end
+                end
+
+                % Refresh MRE display panels.
+                if isvalid(dlg), close(dlg); end
+                if ~isempty(loadedFields)
+                    populateMRETab(app);
+                end
+
+                loadNote = '';
+                if ~isempty(loadedFields)
+                    loadNote = sprintf('\n\nReplaced in MRE tab: %s', strjoin(loadedFields,', '));
+                end
+                msg  = sprintf(['Offline recon completed.%s\n\n' ...
                     'Input:  %s\nOutput: %s\n\n' ...
                     'S00* (shear modulus):    %d files\n' ...
                     'S21* (loss modulus):     %d files\n' ...
                     'S22* (storage modulus):  %d files\n\n' ...
                     'Open the output folder?'], ...
-                    inputDir, quantDir, nS00, ...
+                    loadNote, inputDir, quantDir, nS00, ...
                     numel(dir(fullfile(quantDir,'S21*'))), ...
                     numel(dir(fullfile(quantDir,'S22*'))));
                 answer = uiconfirm(app.UIFigure, msg, 'Offline Recon Complete', ...
@@ -8556,6 +8594,180 @@ function grp = findRelatedDixonGroup(seriesList, anchor)
     if ~isempty(grp)
         [~, idx] = sort([grp.SeriesNumber]);
         grp = grp(idx);
+    end
+end
+
+% =========================================================================
+%  OFFLINE RECON HELPERS — load stiffness / wave from mmdi-quant output
+% =========================================================================
+
+function newS = loadOfflineReconStiffness(quantDir, mreRef)
+% LOADOFFLINERECONSSTIFFNESS  Load stiffness volume from mmdi-quant output.
+%
+% Scans quantDir for DICOM files whose SeriesDescription contains
+% '_Stiffness'.  Files are sorted by SliceLocation.  Raw pixel values are
+% assumed to be in Pa and are divided by 1000 to convert to kPa, matching
+% the convention used for online GE stiffness DICOMs.
+%
+% Returns [] if no matching series is found.
+
+    newS = [];
+    try
+        allFiles = listDicomFiles(quantDir);
+        if isempty(allFiles), return; end
+
+        stiffFiles = filterByDescKeyword(allFiles, '_stiffness');
+        if isempty(stiffFiles), return; end
+
+        stiffFiles = sortFilesBySliceLoc(stiffFiles);
+
+        % Determine target dimensions from existing stiffness or wave data.
+        [nR, nC, nZ] = refDims(mreRef);
+
+        nF = numel(stiffFiles);
+        if nZ == 0, nZ = nF; end
+        vol = zeros(nR, nC, nZ, 'double');
+        for k = 1:min(nF, nZ)
+            try
+                img = double(dicomread(stiffFiles{k}));
+                if size(img,1) ~= nR || size(img,2) ~= nC
+                    img = imresize(img, [nR nC], 'bilinear');
+                end
+                vol(:,:,k) = img;
+            catch
+            end
+        end
+        % Convert Pa → kPa (same as online GE stiffness convention).
+        newS = vol / 1000.0;
+    catch
+        newS = [];
+    end
+end
+
+function newW = loadOfflineReconWave(quantDir, mreRef)
+% LOADOFFLINERECONWAVE  Load processed-wave volume from mmdi-quant output.
+%
+% Scans quantDir for DICOM files whose SeriesDescription contains
+% '_Shear Wave'.  Files are grouped by slice (SliceLocation) and sorted by
+% InstanceNumber within each slice to recover the phase ordering.
+%
+% Returns [] if no matching series is found.
+
+    newW = [];
+    try
+        allFiles = listDicomFiles(quantDir);
+        if isempty(allFiles), return; end
+
+        waveFiles = filterByDescKeyword(allFiles, '_shear wave');
+        if isempty(waveFiles), return; end
+
+        [nR, nC, nZ] = refDims(mreRef);
+        nRefPh = 1;
+        if isfield(mreRef,'W') && ~isempty(mreRef.W)
+            nRefPh = size(mreRef.W, 4);
+        end
+
+        % Read headers to determine slice locations and instance numbers.
+        nF = numel(waveFiles);
+        sliceLoc  = zeros(1, nF);
+        instNums  = zeros(1, nF);
+        for k = 1:nF
+            try
+                info = dicominfo(waveFiles{k}, 'UseDictionaryVR', true);
+                if isfield(info,'SliceLocation'), sliceLoc(k) = double(info.SliceLocation); else, sliceLoc(k) = 0; end
+                if isfield(info,'InstanceNumber'), instNums(k)  = double(info.InstanceNumber);  else, instNums(k)  = k; end
+                if k == 1
+                    nR = double(info.Rows);
+                    nC = double(info.Columns);
+                end
+            catch
+                sliceLoc(k) = k;
+                instNums(k)  = k;
+            end
+        end
+
+        uniqueLocs = unique(sliceLoc);
+        nSlices = numel(uniqueLocs);
+        if nZ == 0, nZ = nSlices; end
+        nPh = max(1, round(nF / max(1, nSlices)));
+        if nRefPh > 1 && nPh ~= nRefPh
+            nPh = nRefPh;
+        end
+
+        vol = zeros(nR, nC, nSlices, nPh, 'double');
+        for si = 1:nSlices
+            sel  = (sliceLoc == uniqueLocs(si));
+            fSel = waveFiles(sel);
+            iSel = instNums(sel);
+            [~, ord] = sort(iSel);
+            fSel = fSel(ord);
+            for ph = 1:min(numel(fSel), nPh)
+                try
+                    img = double(dicomread(fSel{ph}));
+                    if size(img,1) ~= nR || size(img,2) ~= nC
+                        img = imresize(img, [nR nC], 'bilinear');
+                    end
+                    vol(:,:,si,ph) = img;
+                catch
+                end
+            end
+        end
+        newW = vol;
+    catch
+        newW = [];
+    end
+end
+
+function files = listDicomFiles(folder)
+% Return full paths of all files directly in folder (no subfolders).
+    files = {};
+    d = dir(folder);
+    d = d(~[d.isdir]);
+    for k = 1:numel(d)
+        files{end+1} = fullfile(folder, d(k).name); %#ok<AGROW>
+    end
+end
+
+function out = filterByDescKeyword(files, keyword)
+% Keep only DICOM files whose SeriesDescription contains keyword (case-insensitive).
+    out = {};
+    for k = 1:numel(files)
+        try
+            info = dicominfo(files{k}, 'UseDictionaryVR', true);
+            if isfield(info,'SeriesDescription') && ...
+                    contains(lower(char(info.SeriesDescription)), keyword)
+                out{end+1} = files{k}; %#ok<AGROW>
+            end
+        catch
+        end
+    end
+end
+
+function files = sortFilesBySliceLoc(files)
+% Sort file list by SliceLocation (ascending).
+    locs = zeros(1, numel(files));
+    for k = 1:numel(files)
+        try
+            info = dicominfo(files{k}, 'UseDictionaryVR', true);
+            if isfield(info,'SliceLocation'), locs(k) = double(info.SliceLocation); else, locs(k) = k; end
+        catch
+            locs(k) = k;
+        end
+    end
+    [~, idx] = sort(locs);
+    files = files(idx);
+end
+
+function [nR, nC, nZ] = refDims(mreRef)
+% Get reference dimensions from existing MRE struct.
+    nR = 0; nC = 0; nZ = 0;
+    if isempty(mreRef) || ~isstruct(mreRef), return; end
+    for fld = {'S','W','M'}
+        if isfield(mreRef, fld{1}) && ~isempty(mreRef.(fld{1}))
+            sz = size(mreRef.(fld{1}));
+            nR = sz(1); nC = sz(2); nZ = sz(3);
+            return;
+        end
     end
 end
 
