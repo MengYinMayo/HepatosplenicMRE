@@ -2242,12 +2242,13 @@ function updateOfflineReconEnabled(app)
 
                 nS00 = numel(s00Files);
 
-                % Load new stiffness and wave from quant DICOMs and replace
-                % the currently displayed (online/masked) versions.
-                dlg.Message = 'Loading offline recon stiffness and wave...';
+                % Load new stiffness, wave, and confidence from quant DICOMs
+                % and replace the currently displayed (online/masked) versions.
+                dlg.Message = 'Loading offline recon stiffness, wave and confidence...';
                 drawnow;
-                newS = loadOfflineReconStiffness(quantDir, app.AppData.MRE);
-                newW = loadOfflineReconWave(quantDir, app.AppData.MRE);
+                newS    = loadOfflineReconStiffness(quantDir, app.AppData.MRE);
+                newW    = loadOfflineReconWave(quantDir, app.AppData.MRE);
+                newLapC = loadOfflineReconConfidence(quantDir, app.AppData.MRE);
                 loadedFields = {};
                 if ~isempty(newS)
                     app.AppData.MRE.S = newS;
@@ -2257,15 +2258,20 @@ function updateOfflineReconEnabled(app)
                     app.AppData.MRE.W = newW;
                     loadedFields{end+1} = 'W (wave)';
                 end
+                if ~isempty(newLapC)
+                    app.AppData.MRE.LapC = newLapC;
+                    loadedFields{end+1} = 'LapC (confidence)';
+                end
 
-                % Persist updated S / W to the MAT file.
+                % Persist updated S / W / LapC to the MAT file.
                 matPath_ = '';
                 try, matPath_ = app.AppData.MATPath; catch, end
                 if ~isempty(matPath_) && isfile(matPath_) && ~isempty(loadedFields)
-                    S = app.AppData.MRE.S; %#ok<NASGU>
-                    W = app.AppData.MRE.W; %#ok<NASGU>
+                    S    = app.AppData.MRE.S;    %#ok<NASGU>
+                    W    = app.AppData.MRE.W;    %#ok<NASGU>
+                    LapC = app.AppData.MRE.LapC; %#ok<NASGU>
                     try
-                        save(matPath_, 'S', 'W', '-append');
+                        save(matPath_, 'S', 'W', 'LapC', '-append');
                     catch
                     end
                 end
@@ -8715,6 +8721,47 @@ function newW = loadOfflineReconWave(quantDir, mreRef)
         newW = vol;
     catch
         newW = [];
+    end
+end
+
+function newLapC = loadOfflineReconConfidence(quantDir, mreRef)
+% LOADOFFLINERECONCONFIDENCE  Load confidence map from mmdi-quant output.
+%
+% Scans quantDir for DICOM files whose SeriesDescription contains
+% '_Confidence'.  Files are sorted by SliceLocation.  Raw pixel values are
+% assumed to be in the 0–999 range and are divided by 1000 to give 0–1,
+% matching the convention used for online GE confidence DICOMs.
+%
+% Returns [] if no matching series is found.
+
+    newLapC = [];
+    try
+        allFiles = listDicomFiles(quantDir);
+        if isempty(allFiles), return; end
+
+        confFiles = filterByDescKeyword(allFiles, '_confidence');
+        if isempty(confFiles), return; end
+
+        confFiles = sortFilesBySliceLoc(confFiles);
+
+        [nR, nC, nZ] = refDims(mreRef);
+        nF = numel(confFiles);
+        if nZ == 0, nZ = nF; end
+        vol = zeros(nR, nC, nZ, 'double');
+        for k = 1:min(nF, nZ)
+            try
+                img = double(dicomread(confFiles{k}));
+                if size(img,1) ~= nR || size(img,2) ~= nC
+                    img = imresize(img, [nR nC], 'bilinear');
+                end
+                vol(:,:,k) = img;
+            catch
+            end
+        end
+        % Convert 0–999 → 0–1 (same as online GE confidence convention).
+        newLapC = vol / 1000.0;
+    catch
+        newLapC = [];
     end
 end
 
