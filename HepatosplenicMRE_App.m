@@ -6007,6 +6007,10 @@ function tf = shouldBypassGlobalHotkeys(app)
                     app.SldrLocSag.Value = sl;
                     app.LblLocSag.Text   = sprintf('%d/%d', sl, nMax);
                     refreshLocSagittal(app);
+                case 'dixon'
+                    app.nudgeDixonSlice(delta);
+                case 'mre'
+                    app.nudgeMRESlice(delta);
             end
         end
 
@@ -6064,7 +6068,7 @@ function tf = shouldBypassGlobalHotkeys(app)
                 app.LblCursorVal.Text = '';
             end
 
-            % ── 2. Localizer scroll-wheel routing ─────────────────────────
+            % ── 2. Scroll-wheel routing — Localizer, Dixon, MRE ───────────
             try
                 cp = app.AxLocCoronal.CurrentPoint;
                 xl = app.AxLocCoronal.XLim;
@@ -6083,6 +6087,26 @@ function tf = shouldBypassGlobalHotkeys(app)
                    cp(1,2) >= yl(1) && cp(1,2) <= yl(2)
                     app.AppData.LocHoverAxes = 'sag';
                     return
+                end
+            catch; end
+            try
+                for dxAx = {app.AxDixonPDFF, app.AxDixonIP, app.AxDixonWater}
+                    ax = dxAx{1};
+                    cp = ax.CurrentPoint; xl = ax.XLim; yl = ax.YLim;
+                    if cp(1,1) >= xl(1) && cp(1,1) <= xl(2) && cp(1,2) >= yl(1) && cp(1,2) <= yl(2)
+                        app.AppData.LocHoverAxes = 'dixon';
+                        return
+                    end
+                end
+            catch; end
+            try
+                for mrAx = {app.AxMREStiff, app.AxMREWave, app.AxMREMag, app.AxMRERawWave}
+                    ax = mrAx{1};
+                    cp = ax.CurrentPoint; xl = ax.XLim; yl = ax.YLim;
+                    if cp(1,1) >= xl(1) && cp(1,1) <= xl(2) && cp(1,2) >= yl(1) && cp(1,2) <= yl(2)
+                        app.AppData.LocHoverAxes = 'mre';
+                        return
+                    end
                 end
             catch; end
             app.AppData.LocHoverAxes = '';
