@@ -1653,10 +1653,32 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                     % Save pdff_data.mat now (with Dixon images + Localizer) so the
                     % fast-path reload works even before any ROI is accepted.
                     % Then re-apply any previously saved landmarks/ROIs on top.
+                    % Capture freshly loaded Dixon before potentially overwriting
+                    % with stale mat data (e.g. when OneDrive holds the file and
+                    % movefile fails, leaving the old mat on disk).
+                    freshDix = app.AppData.Dixon;
                     dlg.Message = 'Saving pdff_data.mat...';
                     app.savePDFFMat();
                     if hasPdff
                         loadPDFFMat(app, folderPath);
+                        % If the old mat had empty Water/Fat but the fresh load
+                        % populated them, restore the fresh images so the user
+                        % sees correct data without having to click a series.
+                        if ~isempty(freshDix)
+                            fieldsToRestore = {'Water','Fat','InPhase','OutPhase'};
+                            restored = false;
+                            for fi = 1:numel(fieldsToRestore)
+                                fn = fieldsToRestore{fi};
+                                if isfield(freshDix,fn) && ~isempty(freshDix.(fn)) && ...
+                                   isfield(app.AppData.Dixon,fn) && isempty(app.AppData.Dixon.(fn))
+                                    app.AppData.Dixon.(fn) = freshDix.(fn);
+                                    restored = true;
+                                end
+                            end
+                            if restored
+                                populateDixonTab(app);
+                            end
+                        end
                     end
 
                     if ~isempty(matPath) && isfile(matPath)
@@ -4591,6 +4613,9 @@ function setStiffScale(app, newClim)
                     updateStudyBrowser(app, app.AppData.Exam, app.AppData.Selection);
                 catch
                 end
+                % Persist the newly loaded Dixon (including Water/Fat) so the
+                % next session can load them directly from pdff_data.mat.
+                try, app.savePDFFMat(); catch, end
             catch ME
                 try, if isvalid(dlg), close(dlg); end; catch, end
                 setStatus(app, ['Dixon switch failed: ' ME.message]);
