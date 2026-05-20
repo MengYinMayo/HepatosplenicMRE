@@ -1,4 +1,4 @@
-repoRoot = fileparts(which('HepatosplenicMRE_App'));
+repoRoot = fileparts(which('AbdominalMRE_App'));
 
 addpath(repoRoot);
 addpath(fullfile(repoRoot,'functions','io'));
@@ -9,4 +9,4 @@ clear classes
 close all force
 rehash
 
-app = HepatosplenicMRE_App;
+app = AbdominalMRE_App;

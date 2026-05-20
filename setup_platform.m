@@ -1,12 +1,12 @@
-%% SETUP_PLATFORM  Configure MATLAB path for the HepatosplenicMRE platform.
+%% SETUP_PLATFORM  Configure MATLAB path for the AbdominalMRE platform.
 %
 % Use this version instead of addpath(genpath(...)). It avoids accidentally
 % adding old patch folders or extracted ZIP folders that contain duplicate
-% copies of HepatosplenicMRE_App.m.
+% copies of AbdominalMRE_App.m.
 
 clc;
 fprintf('============================================================\n');
-fprintf('  HepatosplenicMRE Analysis Platform — Clean Setup\n');
+fprintf('  AbdominalMRE Analysis Platform — Clean Setup\n');
 fprintf('============================================================\n\n');
 
 scriptDir = fileparts(mfilename('fullpath'));
@@ -36,11 +36,11 @@ for k = 1:numel(pathsToAdd)
 end
 
 fprintf('\nActive app copy:\n');
-which HepatosplenicMRE_App -all
+which AbdominalMRE_App -all
 
 fprintf('\nActive setup copy:\n');
 which setup_platform -all
 
 fprintf('\n============================================================\n');
-fprintf('Run next: clear classes; rehash; app = HepatosplenicMRE_App;\n');
+fprintf('Run next: clear classes; rehash; app = AbdominalMRE_App;\n');
 fprintf('============================================================\n');

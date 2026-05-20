@@ -1,31 +1,34 @@
-classdef HepatosplenicMRE_App < matlab.apps.AppBase
-% HepatosplenicMRE_App  —  Abdominal MRI / MRE Analysis Platform
-% Version 1.0  |  Meng Yin, PhD  |  Mayo Clinic Radiology  |  April 2026
+classdef AbdominalMRE_App < matlab.apps.AppBase
+% AbdominalMRE_App  —  Abdominal MRI / MRE Analysis Platform
+% Version 1.0  |  Meng Yin, PhD  |  Mayo Clinic Radiology  |  May 2026
 % =========================================================================
 %
 % OVERVIEW
 %   Single-window MATLAB App Designer application for quantitative analysis
-%   of hepatosplenic MRI (Dixon / PDFF) and MR Elastography (MRE).
+%   of Abdominal MRI (Dixon / PDFF) and MR Elastography (MRE).
 %   All image viewing, landmark placement, manual ROI drawing, and results
 %   export are handled within this one class.
 %
 %   The application is launched by running:
-%       app = HepatosplenicMRE_App;
+%       app = AbdominalMRE_App;
 %
 % =========================================================================
 % TABS
 % =========================================================================
 %   Localizer   Scrollable coronal + sagittal reformats.  Click "Place L1"
 %               and "Place L2" (or the disc-level buttons T9/10 → L3/4) to
-%               mark vertebral levels used for muscle / SAT ROI slices.
+%               mark vertebral levels used for muscle and adipose tissues.
 %
-%   Dixon       Three-panel viewer: PDFF (colorED), Water, and Fat images.
+%   Dixon       Three-panel viewer: PDFF (Colored), Water, and Fat images.
+%               If water and fat are not available, calculate or refresh
+%               by selecting any series (IP/OP or one of mDixon series)
 %               Organ ROI buttons appear on the right.  ROI drawing uses a
 %               magnified popup window (see workflow below).
 %
 %   MRE         Four-panel viewer: Magnitude, Wave (animated), Stiffness,
 %               Raw wave.  ROI buttons for Liver, Spleen, Muscle, Fat.
 %               ROI drawing also uses a magnified popup (see below).
+%               If MRE recon is not available, calculate by offline recon.
 %
 %   Results     Summary table: volume, mean PDFF, mean stiffness per organ
 %               per slice.  Export buttons for PDFF and MRE radiomics CSVs.
@@ -37,12 +40,12 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %      (Liver, Spleen, Psoas, Other Skeletal Muscles, SAT, VAT, …).
 %      The status bar confirms "Workflow started for <Organ> on slice N."
 %
-%   2. Use the slice slider (or arrow keys) to navigate to the target slice.
+%   2. Use the scrollable mouse (or arrow keys) to navigate through slice.
 %
 %   3. CLICK the desired image panel (PDFF / Water / Fat) to select which
 %      magnified drawing popup for that panel. After selecting panel,
-%        press  "F"  to open the popup on the currently
-%        selected panel for free-hand ROI drawing.
+%      !! press  "F" !! to open the popup magnified window on the currently
+%      selected panel for free-hand ROI drawing.
 %
 %   4. DRAW the organ contour in the magnified popup using the mouse.
 %      Hold the left mouse button and trace around the organ.
@@ -67,7 +70,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %
 %   6. Press  A  (or Enter) in the popup to ACCEPT the ROI.
 %      The popup closes, the ROI is stored, and the status bar shows
-%      "<Organ> ROI accepted on slice N."
+%      "<Organ> ROI accepted on slice N." Once you leave popup by selecting
+%      A (or Enter), no further modification can be made unless entering R
+%      (re-edit) mode in a new popup for vertice adjustment. Inclusion and
+%      Exclusion are no longer available.
 %      — Press  Esc  instead to DISCARD the drawing and cancel.
 %
 %   7. Repeat steps 2–6 for additional slices or organs.
@@ -91,12 +97,13 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %   3. CLICK an MRE panel (Stiffness / Wave / Magnitude / Raw wave) to
 %      select which image will appear in the magnified popup.
 %      — Clicking a panel here ONLY selects the view axis; it does NOT
-%        open the popup automatically.  This is intentional — you may want
+%        open the popup automatically. This is intentional — you may want
 %        to browse slices first before committing to a draw.
 %
 %   4. Press  F  to open the magnified drawing popup on the selected panel.
 %      (Press  D  instead to use seed + automatic grow on the Magnitude
-%      image — useful as a starting point to refine manually.)
+%      image — useful as a starting point to refine manually. Also a
+%       placeholder for future deep learning automated segmentation)
 %
 %   5. DRAW the organ contour in the popup.  Hold mouse + trace + DOUBLE-
 %      CLICK to finish.
@@ -129,8 +136,10 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 % =========================================================================
 % OFFLINE RECON W/O MASK — SETUP
 % =========================================================================
-%   The "Offline Recon w/o Mask" button runs the mmdi-quant reconstruction
-%   executable on the raw Philips MRE series (magnitude + wave images).
+%   The "Offline Recon w/o Mask" button runs Roger's mmdi-quant reconstruction
+%   executable on the raw Philips MRE series (magnitude + wave images) or GE
+%   MRE series that need to remove magnitude-based masking to expose subcutaneous
+%   fat tissue for ROI placement and consequent stiffness measurement.
 %   It produces stiffness, shear-wave, and confidence-map DICOM series and
 %   loads them automatically into the MRE tab.
 %
@@ -225,7 +234,7 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %
 % =========================================================================
 %   AUTHOR   Meng Yin, PhD  |  Radiology, Mayo Clinic  |  Yin.Meng@mayo.edu
-%   DATE     April 2026
+%   DATE     May 2026
 % =========================================================================
 
     % =====================================================================
@@ -4433,8 +4442,8 @@ function setStiffScale(app, newClim)
         end
 
         function saveSession(app)
-            [fname, fpath] = uiputfile('*.mat', 'Save HepatosplenicMRE Session', ...
-                'HepatosplenicMRE_session.mat');
+            [fname, fpath] = uiputfile('*.mat', 'Save AbdominalMRE Session', ...
+                'AbdominalMRE_session.mat');
             if isequal(fname, 0), return; end
             try
                 session        = struct();
@@ -4453,7 +4462,7 @@ function setStiffScale(app, newClim)
         end
 
         function loadSession(app)
-            [fname, fpath] = uigetfile('*.mat', 'Load HepatosplenicMRE Session');
+            [fname, fpath] = uigetfile('*.mat', 'Load AbdominalMRE Session');
             if isequal(fname, 0), return; end
             try
                 S = load(fullfile(fpath, fname), 'session');
@@ -6432,7 +6441,7 @@ function tf = shouldBypassGlobalHotkeys(app)
     %  CONSTRUCTOR / DESTRUCTOR
     % =====================================================================
     methods (Access = public)
-        function app = HepatosplenicMRE_App()
+        function app = AbdominalMRE_App()
             ensureRepoPath(app);
             createComponents(app);
             registerApp(app, app.UIFigure);
