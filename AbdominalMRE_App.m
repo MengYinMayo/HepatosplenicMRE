@@ -1580,6 +1580,14 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                     end
 
                     app.BtnConfirmL12.Enable  = 'on';
+                    % Clear any stale study browser content from a prior DICOM
+                    % session — we have no series list to show here.
+                    try
+                        delete(app.StudyTree.Children);
+                        uitreenode(app.StudyTree, 'Text', ...
+                            sprintf('[Loaded from mat]  %s', folderPath));
+                    catch
+                    end
                     setStatus(app, 'Session restored from saved data.');
                     try, app.updateResultsTable(); catch, end
                     % Surface any pre-existing radiomics exports in this folder
@@ -1647,6 +1655,30 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                         end
                         app.AppData.Dixon = seg_buildDixonVolume( ...
                             selection.DixonGroup, struct('verbose',false));
+                        % If Water/Fat are still empty, try the role-based
+                        % collector (findRelatedDixonGroup), which gathers ALL
+                        % IDEALIQ_* series from the exam regardless of signature
+                        % family. This handles old GE IDEAL-IQ and Philips mDIXON
+                        % cases where raw and recon series land in different
+                        % signature families even after the BH/FB suffix fix.
+                        if ~isempty(app.AppData.Dixon) && ...
+                           isempty(app.AppData.Dixon.Water) && ...
+                           isempty(app.AppData.Dixon.Fat)
+                            try
+                                relGrp = findRelatedDixonGroup( ...
+                                    exam.Series, selection.DixonGroup(1));
+                                if numel(relGrp) > numel(selection.DixonGroup)
+                                    tmpDix = seg_buildDixonVolume( ...
+                                        relGrp, struct('verbose',false));
+                                    if ~isempty(tmpDix) && ...
+                                       (~isempty(tmpDix.Water) || ~isempty(tmpDix.Fat))
+                                        app.AppData.Dixon = tmpDix;
+                                        app.AppData.Selection.DixonGroup = relGrp;
+                                    end
+                                end
+                            catch
+                            end
+                        end
                         populateDixonTab(app);
                     end
 

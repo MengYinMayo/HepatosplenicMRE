@@ -178,6 +178,10 @@ function sig = idealSignature(s)
     % residual that normalizeSignature produces from the "(1/s)" denominator.
     sig = regexprep(sig, '\b\d+\b', ' ');
     sig = regexprep(sig, '\bs\b', ' ');
+    % Strip trailing acquisition-mode abbreviations (e.g. BH=breath-hold,
+    % FB=free-breathing) so that Philips mDIXON raw series ("mDIXON-Quant_BH")
+    % and derived recon series ("Water_mDIXON-Quant") map to the same family.
+    sig = regexprep(sig, '\s+[a-z]{1,3}$', '');
     sig = regexprep(sig, '\s+', ' ');
     sig = strtrim(sig);
 end
