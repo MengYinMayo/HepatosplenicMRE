@@ -403,14 +403,31 @@ function matPath = buildFromSelection(sel, opts)
         grp = filterMREGroupToAnchorFamily(grp, sel.MRE);
         if isempty(grp), grp = sel.MRE; end
 
+        isPhilips = false;
         isEPI = false;
         try
             roles = {grp.Role};
-            isEPI = any(startsWith(roles, 'EPI_')) || startsWith(sel.MRE.Role, 'EPI_');
+            isPhilips = any(startsWith(roles,'PHILIPS_')) || startsWith(sel.MRE.Role,'PHILIPS_');
+            isEPI     = ~isPhilips && (any(startsWith(roles,'EPI_')) || startsWith(sel.MRE.Role,'EPI_'));
         catch
         end
 
-        if isEPI
+        if isPhilips
+            rawSeries = sel.MRE;
+            rawInGrp = findRoleInGroup(grp, {'PHILIPS_MRE_Raw'});
+            if ~isempty(rawInGrp), rawSeries = rawInGrp(1); end
+            vprint(opts, 'Philips MRE raw: loading from S%d  %s', ...
+                rawSeries.SeriesNumber, rawSeries.SeriesDescription);
+            [M_raw, W_raw, M] = loadPhilipsMRERawSplit(rawSeries);
+            if isempty(W_raw)
+                vprint(opts, 'Could not read Philips MRE raw files — skipping MAT build.');
+                matPath = '';
+                return
+            end
+            W = W_raw;
+            H = struct();
+            try, H = buildHeaderStruct(rawSeries.Header, struct()); catch, end
+        elseif isEPI
             [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionEPI(grp, opts);
         else
             % -------- Existing GRE / legacy path unchanged --------
@@ -942,5 +959,49 @@ function [ok, score] = scoreProcCandidate(g, rawSlices)
     catch
         ok = false;
         score = -inf;
+    end
+end
+
+function [M_raw, W_raw, M] = loadPhilipsMRERawSplit(rawSeries)
+    M_raw = []; W_raw = []; M = [];
+    files = rawSeries.Files;
+    nF = numel(files);
+    if nF < 2, return; end
+    instNums = zeros(1,nF); sliceLocs = zeros(1,nF); nR = 0; nC = 0;
+    for k = 1:nF
+        try
+            info = dicominfo(files{k}, 'UseDictionaryVR', true);
+            if isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
+                instNums(k) = double(info.InstanceNumber); else, instNums(k) = k; end
+            if isfield(info,'SliceLocation') && ~isempty(info.SliceLocation)
+                sliceLocs(k) = double(info.SliceLocation); end
+            if nR == 0 && isfield(info,'Rows')
+                nR = double(info.Rows); nC = double(info.Columns); end
+        catch, instNums(k) = k; end
+    end
+    if nR == 0, nR = 256; nC = 256; end
+    [~, sortIdx] = sort(instNums);
+    sortedFiles = files(sortIdx); sortedLocs = sliceLocs(sortIdx);
+    half = floor(nF/2);
+    M_raw = philipsOrganise4D(sortedFiles(1:half),    sortedLocs(1:half),    nR, nC);
+    W_raw = philipsOrganise4D(sortedFiles(half+1:end), sortedLocs(half+1:end), nR, nC);
+    if ~isempty(M_raw), M = mean(M_raw, 4); end
+end
+
+function vol = philipsOrganise4D(files, locs, nR, nC)
+    nF = numel(files);
+    if nF == 0, vol = []; return; end
+    uniqueLocs = unique(locs); nSlices = numel(uniqueLocs);
+    nPhases = max(1, round(nF / max(1, nSlices)));
+    vol = zeros(nR, nC, nSlices, nPhases, 'double');
+    for si = 1:nSlices
+        sel = (locs == uniqueLocs(si)); fSel = files(sel);
+        for ph = 1:min(numel(fSel), nPhases)
+            try
+                img = double(dicomread(fSel{ph}));
+                if size(img,1)~=nR || size(img,2)~=nC, img=imresize(img,[nR nC],'bilinear'); end
+                vol(:,:,si,ph) = img;
+            catch, end
+        end
     end
 end

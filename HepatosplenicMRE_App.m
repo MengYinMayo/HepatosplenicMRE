@@ -2271,15 +2271,43 @@ function updateOfflineReconEnabled(app)
                     loadedFields{end+1} = 'LapC (confidence)';
                 end
 
-                % Persist updated S / W / LapC to the MAT file.
+                % Load magnitude and raw wave from the input DICOMs (first half =
+                % magnitude, second half = raw wave by InstanceNumber sort).
+                [newM, newM_raw, newW_raw] = loadRawMRESplitFromDir(inputDir);
+                if ~isempty(newM)
+                    app.AppData.MRE.M     = newM;
+                    app.AppData.MRE.M_raw = newM_raw;
+                    loadedFields{end+1} = 'M (magnitude)';
+                end
+                if ~isempty(newW_raw)
+                    app.AppData.MRE.W_raw = newW_raw;
+                    loadedFields{end+1} = 'W_raw (raw wave)';
+                end
+
+                % Persist S / W / LapC / M / W_raw to the MAT file.
                 matPath_ = '';
                 try, matPath_ = app.AppData.MATPath; catch, end
-                if ~isempty(matPath_) && isfile(matPath_) && ~isempty(loadedFields)
-                    S    = app.AppData.MRE.S;    %#ok<NASGU>
-                    W    = app.AppData.MRE.W;    %#ok<NASGU>
-                    LapC = app.AppData.MRE.LapC; %#ok<NASGU>
+                if isempty(matPath_)
+                    examDir2 = '';
+                    try, examDir2 = app.AppData.ExamPath; catch, end
+                    if ~isempty(examDir2)
+                        matPath_ = fullfile(examDir2, 'mre_data.mat');
+                        app.AppData.MATPath = matPath_;
+                    end
+                end
+                if ~isempty(matPath_) && ~isempty(loadedFields)
+                    S     = app.AppData.MRE.S;     %#ok<NASGU>
+                    W     = app.AppData.MRE.W;     %#ok<NASGU>
+                    LapC  = app.AppData.MRE.LapC;  %#ok<NASGU>
+                    M     = app.AppData.MRE.M;     %#ok<NASGU>
+                    M_raw = app.AppData.MRE.M_raw; %#ok<NASGU>
+                    W_raw = app.AppData.MRE.W_raw; %#ok<NASGU>
                     try
-                        save(matPath_, 'S', 'W', 'LapC', '-append');
+                        if isfile(matPath_)
+                            save(matPath_, 'S', 'W', 'LapC', 'M', 'M_raw', 'W_raw', '-append');
+                        else
+                            save(matPath_, 'S', 'W', 'LapC', 'M', 'M_raw', 'W_raw');
+                        end
                     catch
                     end
                 end
@@ -8632,6 +8660,88 @@ function grp = findRelatedDixonGroup(seriesList, anchor)
     if ~isempty(grp)
         [~, idx] = sort([grp.SeriesNumber]);
         grp = grp(idx);
+    end
+end
+
+% =========================================================================
+%  RAW MRE SPLIT HELPER — load magnitude + raw wave from input DICOMs
+% =========================================================================
+
+function [newM, newM_raw, newW_raw] = loadRawMRESplitFromDir(inputDir)
+% LOADRAWMRESPLITFROMDIR  Split mmdi input DICOMs into magnitude and raw wave.
+%
+% The inputDir contains the original Philips MRE raw files that were copied
+% before running offline recon.  Philips stores all phases in one series:
+% first half by InstanceNumber = magnitude, second half = phase/wave.
+% Each half is organised into [nR × nC × nSlices × nPhases].
+
+    newM = []; newM_raw = []; newW_raw = [];
+    try
+        d = dir(inputDir);
+        d = d(~[d.isdir]);
+        if isempty(d), return; end
+        files = cellfun(@(n) fullfile(inputDir,n), {d.name}, 'UniformOutput',false);
+        nF = numel(files);
+        if nF < 2, return; end
+
+        instNums  = zeros(1,nF);
+        sliceLocs = zeros(1,nF);
+        nR = 0; nC = 0;
+        for k = 1:nF
+            try
+                info = dicominfo(files{k}, 'UseDictionaryVR', true);
+                if isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
+                    instNums(k) = double(info.InstanceNumber);
+                else
+                    instNums(k) = k;
+                end
+                if isfield(info,'SliceLocation') && ~isempty(info.SliceLocation)
+                    sliceLocs(k) = double(info.SliceLocation);
+                end
+                if nR == 0 && isfield(info,'Rows')
+                    nR = double(info.Rows); nC = double(info.Columns);
+                end
+            catch
+                instNums(k) = k;
+            end
+        end
+        if nR == 0, nR = 256; nC = 256; end
+
+        [~, sortIdx]  = sort(instNums);
+        sortedFiles   = files(sortIdx);
+        sortedLocs    = sliceLocs(sortIdx);
+
+        half     = floor(nF / 2);
+        newM_raw = rawMRE4D(sortedFiles(1:half),    sortedLocs(1:half),    nR, nC);
+        newW_raw = rawMRE4D(sortedFiles(half+1:end), sortedLocs(half+1:end), nR, nC);
+        if ~isempty(newM_raw)
+            newM = mean(newM_raw, 4);
+        end
+    catch
+        newM = []; newM_raw = []; newW_raw = [];
+    end
+end
+
+function vol = rawMRE4D(files, locs, nR, nC)
+    nF = numel(files);
+    if nF == 0, vol = []; return; end
+    uniqueLocs = unique(locs);
+    nSlices = numel(uniqueLocs);
+    nPhases = max(1, round(nF / max(1, nSlices)));
+    vol = zeros(nR, nC, nSlices, nPhases, 'double');
+    for si = 1:nSlices
+        sel = (locs == uniqueLocs(si));
+        fSel = files(sel);
+        for ph = 1:min(numel(fSel), nPhases)
+            try
+                img = double(dicomread(fSel{ph}));
+                if size(img,1)~=nR || size(img,2)~=nC
+                    img = imresize(img,[nR nC],'bilinear');
+                end
+                vol(:,:,si,ph) = img;
+            catch
+            end
+        end
     end
 end
 
