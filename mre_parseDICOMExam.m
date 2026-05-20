@@ -303,14 +303,47 @@ function entry = classifySeries(entry)
         entry.Role = 'PHILIPS_MRE_Raw'; return
     end
 
+    % ── Philips mDIXON-Quant Dixon ────────────────────────────────────
+    % Handled as a fully separate layer before the GE IDEAL-IQ block so
+    % that GE classification logic is never touched by Philips series.
+    % Triggered solely by the 'mdixon' token in the description.
+    if ~isMRELike && contains(desc,'mdixon')
+        if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
+           startsWith(strtrim(desc),'ff_') || startsWith(strtrim(desc),'ff ')
+            entry.Role = 'IDEALIQ_PDFF';
+        elseif hit(desc,{'t2*','t2star','t2_star','r2star','r2*','r2 map','r2map'}) || ...
+               contains(desc,'_r2') || strcmp(desc,'r2')
+            entry.Role = 'IDEALIQ_T2s';
+        elseif contains(desc,'water')
+            entry.Role = 'IDEALIQ_Water';
+        elseif contains(desc,'_fat') || contains(desc,' fat') || ...
+               startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat')
+            entry.Role = 'IDEALIQ_Fat';
+        elseif contains(desc,'inphase') || contains(desc,'in_phase') || ...
+               contains(desc,'in phase') || contains(desc,'in-phase')
+            entry.Role = 'IDEALIQ_InPhase';
+        elseif contains(desc,'outphase') || contains(desc,'out_phase') || ...
+               contains(desc,'out phase') || contains(desc,'out-of-phase') || ...
+               contains(desc,'outofphase')
+            entry.Role = 'IDEALIQ_OutPhase';
+        else
+            % Source / combined mDIXON series without a contrast prefix.
+            entry.Role = 'IDEALIQ_Raw';
+        end
+        return
+    end
+
+    % ── GE IDEAL-IQ ───────────────────────────────────────────────────
+    % Outer trigger: GE private seq tag, description keywords, or folder name.
+    % 'mdixon' is intentionally excluded — Philips mDIXON is handled above.
     if ~isMRELike && ...
        (hit(seq,  {'ideal3darc','ideal3d','idealarc','ideal'}) || ...
         hit(desc, {'ideal','idealiq','ideal-iq','fat frac','fatfrac', ...
-                   'pdff','water','t2*:','r2star','r2*','r2 map','r2map','mdixon'}) || ...
+                   'pdff','water','t2*:','r2star','r2*','r2 map','r2map'}) || ...
         strcmp(desc,'r2') || strcmp(desc,'fat') || ...
         hit(fnam, {'ideal','idealiq','dixon','pdff','water'}))
 
-        % Sub-classify within IDEAL-IQ / Philips mDIXON.
+        % Sub-classify within GE IDEAL-IQ.  Logic unchanged from original.
         if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
            hit(fnam,{'pdff','fatfrac'}) || ...
            startsWith(strtrim(desc),'ff_') || startsWith(strtrim(desc),'ff ')
@@ -328,17 +361,9 @@ function entry = classifySeries(entry)
                startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat') || ...
                contains(desc,'inphase') || contains(desc,'in_phase') || ...
                contains(desc,'outphase') || contains(desc,'out_phase')
-            % Single-contrast recon: Water, T2*-corrected Water/Fat,
-            % standalone Fat, InPhase, or OutPhase volume.
-            % Fat is matched as a token (prefix/underscore-delimited) to handle
+            % Single-contrast recon: Water, Fat, InPhase, or OutPhase volume.
+            % Fat matched as prefix/underscore-delimited token to handle
             % GE names like 's0202_FAT__Ax_IDEAL_IQ_BH' and 's15993_T2_Fat_...'.
-            % fatfrac/pdff were already caught above.
-            entry.Role = 'IDEALIQ_Raw';
-
-        elseif contains(desc,'mdixon') && ~contains(desc,'multi')
-            % Philips mDIXON source series (no contrast prefix) — treat as
-            % single-contrast raw rather than multi-contrast stack so that
-            % readMultiContrast is not attempted on a single-echo source.
             entry.Role = 'IDEALIQ_Raw';
 
         else
