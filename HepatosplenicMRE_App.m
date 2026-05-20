@@ -2250,6 +2250,14 @@ function updateOfflineReconEnabled(app)
                 newW    = loadOfflineReconWave(quantDir, app.AppData.MRE);
                 newLapC = loadOfflineReconConfidence(quantDir, app.AppData.MRE);
                 loadedFields = {};
+
+                % If no MRE was loaded before (Philips raw-only case), initialise
+                % the struct with empty standard fields so populateMRETab won't crash.
+                if isempty(app.AppData.MRE)
+                    app.AppData.MRE = struct('M',[],'M_raw',[],'W',[],'W_raw',[], ...
+                                            'S',[],'LapC',[],'H',[]);
+                end
+
                 if ~isempty(newS)
                     app.AppData.MRE.S = newS;
                     loadedFields{end+1} = 'S (stiffness)';
@@ -5075,8 +5083,8 @@ function tf = shouldBypassGlobalHotkeys(app)
         function populateMRETab(app)
             mre = app.AppData.MRE;
             if isempty(mre), return; end
-            nZM = size(mre.M, 3);
-            nZW = size(mre.W, 3);
+            nZM = 0; if isfield(mre,'M') && ~isempty(mre.M), nZM = size(mre.M,3); end
+            nZW = 0; if isfield(mre,'W') && ~isempty(mre.W), nZW = size(mre.W,3); end
             nZR = nZW;
             if isfield(mre,'W_raw') && ~isempty(mre.W_raw)
                 nZR = size(mre.W_raw, 3);

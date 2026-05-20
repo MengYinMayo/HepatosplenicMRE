@@ -800,10 +800,12 @@ end
 function [pdffVol, sinfo] = readPDFFSeries(series, opts)
 %READPDFFERIES  Read a dedicated PDFF series and scale to 0-100%.
 %
-% Handles both GE IDEAL-IQ and Philips mDIXON-Quant encoding:
-%   GE:     raw 0-1000, RescaleSlope=0.1, RescaleIntercept=0  → ×0.1 → 0-100%
-%   Philips: raw 0-1000 or 0-10000 with appropriate RescaleSlope/Intercept,
-%            OR stored as 0-1 fraction (detected automatically → ×100).
+% Applies the standard DICOM pixel value transform:
+%   output = stored_pixel_value * RescaleSlope + RescaleIntercept
+%
+% Philips mDIXON-Quant FF: values already 0-100 (%), slope=1, intercept=0 → no-op.
+% GE IDEAL-IQ PDFF:        values 0-1000,            slope=0.1, intercept=0 → ×0.1.
+% Fraction encoding (rare): values 0-1 → detected post-transform and ×100.
     vprint(opts,'Reading PDFF series S%d...', series.SeriesNumber);
     files = series.Files;
     pdffVol = readSingleContrast(files, opts);
@@ -815,7 +817,7 @@ function [pdffVol, sinfo] = readPDFFSeries(series, opts)
         hdr1  = dicominfo(files{1}, 'UseDictionaryVR', true);
         sinfo = io_extractSpatialInfo(files, hdr1, size(pdffVol,3), 1);
 
-        % Standard DICOM pixel value transform: output = raw * slope + intercept
+        % Standard DICOM transform.
         slope     = 1;
         intercept = 0;
         if isfield(hdr1,'RescaleSlope')     && ~isempty(hdr1.RescaleSlope)
@@ -826,14 +828,9 @@ function [pdffVol, sinfo] = readPDFFSeries(series, opts)
         end
         pdffVol = double(pdffVol) .* slope + intercept;
 
-        % Auto-detect encoding range and normalise to 0-100 (%).
-        rawMax = max(pdffVol(:));
-        if rawMax <= 1.5
-            % Values in 0-1 fraction range (e.g. some Philips variants) → ×100.
+        % Only special-case: 0-1 fraction encoding → convert to percent.
+        if max(pdffVol(:)) <= 1.5
             pdffVol = pdffVol * 100;
-        elseif rawMax > 100 && rawMax <= 1100
-            % Values in 0-1000 range without a rescale tag → ÷10.
-            pdffVol = pdffVol / 10;
         end
 
         pdffVol = max(0, min(100, pdffVol));
