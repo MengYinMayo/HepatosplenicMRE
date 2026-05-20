@@ -127,6 +127,43 @@ classdef HepatosplenicMRE_App < matlab.apps.AppBase
 %     through acceptance; the confidence mask does not refill them.
 %
 % =========================================================================
+% OFFLINE RECON W/O MASK — SETUP
+% =========================================================================
+%   The "Offline Recon w/o Mask" button runs the mmdi-quant reconstruction
+%   executable on the raw Philips MRE series (magnitude + wave images).
+%   It produces stiffness, shear-wave, and confidence-map DICOM series and
+%   loads them automatically into the MRE tab.
+%
+%   REQUIRED FOLDER LOCATION
+%   Place the mmdi-offline-recon-wo-masking folder inside your MATLAB user
+%   folder (the directory returned by MATLAB's  userpath  command):
+%
+%       Windows  C:\Users\<you>\Documents\MATLAB\mmdi-offline-recon-wo-masking\
+%       macOS    /Users/<you>/Documents/MATLAB/mmdi-offline-recon-wo-masking/
+%       Linux    /home/<you>/Documents/MATLAB/mmdi-offline-recon-wo-masking/
+%
+%   The folder must contain the mmdi-quant executable.  The app searches
+%   for it in this order:
+%       1. Reads  mmdi-no-mask-dir.bat  (if present) to find the versioned
+%          exe name referenced in the batch file.
+%       2. Falls back to the newest  mmdi-*.exe  in the folder.
+%       3. Falls back to any  *.exe  in the folder.
+%
+%   A typical folder layout looks like:
+%       mmdi-offline-recon-wo-masking/
+%         mmdi-quant-2.x.x-win64.exe   ← reconstruction executable
+%         mmdi-no-mask-dir.bat          ← (optional) points to the exe above
+%         dcmdata/                      ← DICOM dictionary files (if required)
+%
+%   NOTE  The folder path must not contain spaces.  If your MATLAB user
+%   folder is on OneDrive or another cloud-sync path with spaces, create
+%   the folder in a local path and add it to userpath manually, e.g.:
+%       addpath('C:\mmdi-offline-recon-wo-masking')
+%   then move the folder there.  Alternatively, run the following once to
+%   change userpath permanently:
+%       userpath('C:\MyMATLABPath')
+%
+% =========================================================================
 % COMMON CONFUSION POINTS FOR NEW USERS
 % =========================================================================
 %   Q: "The program seems frozen / nothing happens after I draw."
