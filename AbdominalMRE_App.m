@@ -342,12 +342,15 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
         % MRE tab
         MRETab              matlab.ui.container.Tab
         MREGrid             matlab.ui.container.GridLayout
+        MRELeftGrid         matlab.ui.container.GridLayout
         AxMREMag            matlab.ui.control.UIAxes
         AxMRERawWave        matlab.ui.control.UIAxes
         AxMREWave           matlab.ui.control.UIAxes
         AxMREStiff          matlab.ui.control.UIAxes
+        AxMRELoss           matlab.ui.control.UIAxes
         AxMREWaveBar        matlab.ui.control.UIAxes
         AxMREStiffBar       matlab.ui.control.UIAxes
+        AxMRELossBar        matlab.ui.control.UIAxes
         SldrMRE             matlab.ui.control.Slider
         LblMRESlice         matlab.ui.control.Label
         LblMREInfo          matlab.ui.control.Label
@@ -497,6 +500,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'MRERefreshBusy', false, ...
             'MREROIBusy',  false, ...
             'StiffCLim',    [0 8], ...
+            'LossCLim',     [0 4], ...
             'WaveMax',      2000, ... % default processed-wave half-range (W/L)
             'DixonContrast', 'PDFF', ...  % 'PDFF'|'Water'|'Fat'|'T2star'|'InPhase'|'OutPhase'
             'DixonCmap',    'hot', ...   % colormap name for current contrast
@@ -505,6 +509,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'DispWave',     [], ...   % current processed-wave slice for cursor readout
             'DispWaveRaw',  [], ...   % current raw-wave slice
             'DispStiff',    [], ...   % current stiffness slice
+            'DispLoss',     [], ...   % current loss modulus slice (offline recon only)
             'DispDixon',    [], ...   % current Dixon PDFF slice (PDFF panel)
             'DispDixonIP',  [], ...   % current Dixon Water/InPhase slice
             'DispDixonOP',  [], ...   % current Dixon Fat/OutPhase slice
@@ -1145,11 +1150,31 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             imgG.ColumnSpacing = 4;
             imgG.RowSpacing    = 4;
 
-            app.AxMREStiff = uiaxes(imgG);
-            app.AxMREStiff.Layout.Row=[1 3]; app.AxMREStiff.Layout.Column=1;
+            % Left column: stiffness + optional loss modulus (shown only after
+            % offline recon loads S21 output).  A nested grid allows the loss
+            % modulus row to be revealed/hidden by changing RowHeight at runtime.
+            leftColPnl = uipanel(imgG,'BorderType','none');
+            leftColPnl.Layout.Row = [1 3]; leftColPnl.Layout.Column = 1;
+            app.MRELeftGrid = uigridlayout(leftColPnl, [3 1]);
+            app.MRELeftGrid.RowHeight   = {'1x', 0, 0};
+            app.MRELeftGrid.ColumnWidth = {'1x'};
+            app.MRELeftGrid.Padding     = [0 0 0 0];
+            app.MRELeftGrid.RowSpacing  = 2;
+
+            app.AxMREStiff = uiaxes(app.MRELeftGrid);
+            app.AxMREStiff.Layout.Row = 1; app.AxMREStiff.Layout.Column = 1;
             setupDarkAxes(app.AxMREStiff,'Stiffness (kPa)');
             colormap(app.AxMREStiff, mreStiffCmap());
             app.AxMREStiff.ButtonDownFcn = @(~,~)app.onMREPanelClick('stiff');
+
+            app.AxMRELoss = uiaxes(app.MRELeftGrid);
+            app.AxMRELoss.Layout.Row = 2; app.AxMRELoss.Layout.Column = 1;
+            setupDarkAxes(app.AxMRELoss,'Loss Modulus (kPa)');
+            colormap(app.AxMRELoss, mreStiffCmap());
+
+            app.AxMRELossBar = uiaxes(app.MRELeftGrid);
+            app.AxMRELossBar.Layout.Row = 3; app.AxMRELossBar.Layout.Column = 1;
+            setupColorStripAxes(app.AxMRELossBar);
 
             app.AxMREWave = uiaxes(imgG);
             app.AxMREWave.Layout.Row=[1 3]; app.AxMREWave.Layout.Column=2;
@@ -1571,6 +1596,11 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                         tmp = load(mreMatPath,'M','M_raw','W','W_raw','S','LapC','H');
                         if ~isfield(tmp,'W_raw') || isempty(tmp.W_raw)
                             tmp.W_raw = tmp.W;
+                        end
+                        try
+                            tmpEx = load(mreMatPath,'LossModulus');
+                            if isfield(tmpEx,'LossModulus'), tmp.LossModulus = tmpEx.LossModulus; end
+                        catch
                         end
                         tmp = normalizeMREStruct(app, tmp);
                         app.AppData.MRE = tmp;
@@ -2349,13 +2379,14 @@ function updateOfflineReconEnabled(app)
                 newS    = loadOfflineReconStiffness(quantDir, app.AppData.MRE);
                 newW    = loadOfflineReconWave(quantDir, app.AppData.MRE);
                 newLapC = loadOfflineReconConfidence(quantDir, app.AppData.MRE);
+                newLoss = loadOfflineReconLossModulus(quantDir, app.AppData.MRE);
                 loadedFields = {};
 
                 % If no MRE was loaded before (Philips raw-only case), initialise
                 % the struct with empty standard fields so populateMRETab won't crash.
                 if isempty(app.AppData.MRE)
                     app.AppData.MRE = struct('M',[],'M_raw',[],'W',[],'W_raw',[], ...
-                                            'S',[],'LapC',[],'H',[]);
+                                            'S',[],'LapC',[],'H',[],'LossModulus',[]);
                 end
 
                 if ~isempty(newS)
@@ -2369,6 +2400,10 @@ function updateOfflineReconEnabled(app)
                 if ~isempty(newLapC)
                     app.AppData.MRE.LapC = newLapC;
                     loadedFields{end+1} = 'LapC (confidence)';
+                end
+                if ~isempty(newLoss)
+                    app.AppData.MRE.LossModulus = newLoss;
+                    loadedFields{end+1} = 'LossModulus (loss modulus)';
                 end
 
                 % Load magnitude and raw wave from the input DICOMs (first half =
@@ -2410,12 +2445,28 @@ function updateOfflineReconEnabled(app)
                         end
                     catch
                     end
+                    % Persist LossModulus separately (optional field — may be absent).
+                    if isfield(app.AppData.MRE,'LossModulus') && ~isempty(app.AppData.MRE.LossModulus)
+                        LossModulus = app.AppData.MRE.LossModulus; %#ok<NASGU>
+                        try, save(matPath_, 'LossModulus', '-append'); catch, end
+                    end
                 end
 
                 % Refresh MRE display panels.
                 if isvalid(dlg), close(dlg); end
                 if ~isempty(loadedFields)
                     populateMRETab(app);
+                    % Show loss modulus row when S21 data was loaded.
+                    try
+                        hasLoss = isfield(app.AppData.MRE,'LossModulus') && ...
+                                  ~isempty(app.AppData.MRE.LossModulus);
+                        if hasLoss
+                            app.MRELeftGrid.RowHeight = {'1x', '1x', 44};
+                        else
+                            app.MRELeftGrid.RowHeight = {'1x', 0, 0};
+                        end
+                    catch
+                    end
                 end
 
                 loadNote = '';
@@ -4301,6 +4352,7 @@ function setStiffScale(app, newClim)
             app.AppData.MRE      = [];
             app.AppData.Localizer= [];
             app.AppData.ExamPath = '';
+            try, app.MRELeftGrid.RowHeight = {'1x', 0, 0}; catch, end
         end
 
         function savePDFFMat(app)
@@ -5231,6 +5283,16 @@ function tf = shouldBypassGlobalHotkeys(app)
             end
             app.AppData.MRESlice = mreMid;
             app.LblMRESlice.Text = sprintf('%d/%d', mreMid, nZ);
+            % Show loss modulus row when the field is populated (offline recon only).
+            try
+                hasLoss = isfield(mre,'LossModulus') && ~isempty(mre.LossModulus);
+                if hasLoss
+                    app.MRELeftGrid.RowHeight = {'1x', '1x', 44};
+                else
+                    app.MRELeftGrid.RowHeight = {'1x', 0, 0};
+                end
+            catch
+            end
             refreshMRE(app);
         end
 
@@ -5335,6 +5397,22 @@ function tf = shouldBypassGlobalHotkeys(app)
                     hh = overlayCheckerMask(app.AxMREStiff, lowConf, 0.42);
                     try; hh.Tag = 'MRERefreshOverlay'; hh.HitTest='off'; hh.PickableParts='none'; catch; end
                 end
+            end
+
+            % Loss modulus — rendered only when S21 offline recon output is loaded.
+            if isfield(mre,'LossModulus') && ~isempty(mre.LossModulus)
+                nZLoss = size(mre.LossModulus, 3);
+                slLoss = min(sl, max(1, nZLoss));
+                Lmod   = double(squeeze(mre.LossModulus(:,:,slLoss)));
+                lossMap = mreStiffCmap();
+                safeMREAxesImage(app.AxMRELoss, Lmod, app.AppData.LossCLim, lossMap, 'MREBaseLoss');
+                try; colormap(app.AxMRELoss, lossMap); catch; end
+                title(app.AxMRELoss, ...
+                    sprintf('Loss Modulus (kPa)  sl %d/%d', slLoss, nZLoss), ...
+                    'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+                renderColorStrip(app.AxMRELossBar, lossMap, app.AppData.LossCLim, []);
+                try; colormap(app.AxMRELossBar, lossMap); catch; end
+                app.AppData.DispLoss = Lmod;
             end
 
             app.AppData.DispWave    = Wproc;
@@ -5969,8 +6047,10 @@ function tf = shouldBypassGlobalHotkeys(app)
                             vol  = nVox * mreVoxVol;
                             stiffMean = NaN;
                             if sl >= 1 && sl <= size(mre.S,3)
-                                st = double(mre.S(:,:,sl));
-                                stiffMean = mean(st(mask(:)));
+                                st    = double(mre.S(:,:,sl));
+                                stVals = st(mask(:));
+                                stVals = stVals(isfinite(stVals));
+                                if ~isempty(stVals), stiffMean = mean(stVals); end
                             end
                             slLocTxt = sprintf('Sl%d', sl);
                             if ~isempty(mreSliceZ) && sl <= numel(mreSliceZ)
@@ -9060,6 +9140,55 @@ function [nR, nC, nZ] = refDims(mreRef)
             nR = sz(1); nC = sz(2); nZ = sz(3);
             return;
         end
+    end
+end
+
+function newLoss = loadOfflineReconLossModulus(quantDir, mreRef)
+% LOADOFFLINERECONLOSSMODULUS  Load loss modulus from mmdi-quant S21* output.
+%
+% Scans quantDir for DICOM files whose SeriesDescription contains '_loss'.
+% Falls back to matching by file name prefix 'S21' when the description
+% keyword is absent (handles vendors that omit the keyword).
+% Raw pixel values are assumed to be in Pa and are converted to kPa.
+%
+% Returns [] if no S21 files are found.
+
+    newLoss = [];
+    try
+        allFiles = listDicomFiles(quantDir);
+        if isempty(allFiles), return; end
+
+        lossFiles = filterByDescKeyword(allFiles, '_loss');
+        if isempty(lossFiles)
+            % Fallback: match by file name prefix S21 (mmdi-quant convention).
+            lossFiles = {};
+            for k = 1:numel(allFiles)
+                [~, fname] = fileparts(allFiles{k});
+                if startsWith(upper(fname), 'S21')
+                    lossFiles{end+1} = allFiles{k}; %#ok<AGROW>
+                end
+            end
+        end
+        if isempty(lossFiles), return; end
+
+        lossFiles = sortFilesBySliceLoc(lossFiles);
+        [nR, nC, nZ] = refDims(mreRef);
+        nF = numel(lossFiles);
+        if nZ == 0, nZ = nF; end
+        vol = zeros(nR, nC, nZ, 'double');
+        for k = 1:min(nF, nZ)
+            try
+                img = double(dicomread(lossFiles{k}));
+                if size(img,1) ~= nR || size(img,2) ~= nC
+                    img = imresize(img, [nR nC], 'bilinear');
+                end
+                vol(:,:,k) = img;
+            catch
+            end
+        end
+        newLoss = vol / 1000.0;   % Pa → kPa
+    catch
+        newLoss = [];
     end
 end
 
