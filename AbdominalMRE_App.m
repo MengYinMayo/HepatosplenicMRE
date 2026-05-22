@@ -6175,7 +6175,8 @@ function tf = shouldBypassGlobalHotkeys(app)
             if isempty(examPath) || ~isfolder(examPath)
                 uialert(app.UIFigure,'No exam folder set — load a study first.','Export'); return
             end
-            outFile = fullfile(examPath, 'mre_radiomics.csv');
+            hasLoss = isfield(mre,'LossModulus') && ~isempty(mre.LossModulus);
+            outFile = fullfile(examPath, 'mre_radiomics.xlsx');
             try
                 setStatus(app,'Computing MRE radiomics features (this may take a moment)...');
                 drawnow;
@@ -6185,8 +6186,14 @@ function tf = shouldBypassGlobalHotkeys(app)
                 mreSliceZ = [];
                 try, mreSliceZ = buildSliceZFromSinfo(mre.SpatialInfo); catch, end
                 organs = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
-                hdr = radiomicsCSVHeader();
-                lines = {hdr, radiomicsCSVUnits('kPa')};
+
+                hdrCells  = strsplit(radiomicsCSVHeader(), ',');
+                unitCells = strsplit(radiomicsCSVUnits('kPa'), ',');
+                % Sheet 1: all ROI pixels, no negative loss modulus guard.
+                allSheet  = [hdrCells; unitCells];
+                % Sheet 2: pixels with negative loss modulus excluded.
+                filtSheet = [hdrCells; unitCells];
+
                 for oi = 1:numel(organs)
                     rn = organs{oi};
                     if ~isfield(app.AppData.ROIs,rn), continue; end
@@ -6197,17 +6204,34 @@ function tf = shouldBypassGlobalHotkeys(app)
                         mask = logical(app.AppData.ROIs.(rn).Slices.(key));
                         if ~any(mask(:)) || sl < 1 || sl > size(mre.S,3), continue; end
                         img2d = double(mre.S(:,:,sl));
-                        vals  = img2d(mask(:));
                         slZ   = NaN;
                         if ~isempty(mreSliceZ) && sl <= numel(mreSliceZ), slZ = mreSliceZ(sl); end
-                        row = buildRadiomicsRow(rn, sl, slZ, vals, mask, img2d, mreDx, mreDy, mreDz);
-                        lines{end+1} = row; %#ok<AGROW>
+
+                        % Tab 1: all ROI pixels (no guard).
+                        vals1 = img2d(mask(:));
+                        row1  = strsplit(buildRadiomicsRow(rn, sl, slZ, vals1, mask, img2d, mreDx, mreDy, mreDz), ',');
+                        allSheet = [allSheet; row1]; %#ok<AGROW>
+
+                        % Tab 2: exclude pixels where loss modulus < 0.
+                        if hasLoss && sl <= size(mre.LossModulus, 3)
+                            lossSlice = double(mre.LossModulus(:,:,sl));
+                            filtMask  = mask & (lossSlice >= 0);
+                            vals2 = img2d(filtMask(:));
+                            row2  = strsplit(buildRadiomicsRow(rn, sl, slZ, vals2, filtMask, img2d, mreDx, mreDy, mreDz), ',');
+                        else
+                            row2 = row1;
+                        end
+                        filtSheet = [filtSheet; row2]; %#ok<AGROW>
                     end
                 end
-                fid = fopen(outFile,'w');
-                fprintf(fid,'%s\n',lines{:});
-                fclose(fid);
-                setStatus(app,sprintf('MRE radiomics saved → %s', outFile));
+
+                % Write xlsx with 1 or 2 sheets (delete first to avoid stale sheets).
+                if isfile(outFile), delete(outFile); end
+                writecell(allSheet,  outFile, 'Sheet', 'All Pixels');
+                if hasLoss
+                    writecell(filtSheet, outFile, 'Sheet', 'Neg Loss Excl');
+                end
+                setStatus(app, sprintf('MRE radiomics saved → %s', outFile));
             catch ME
                 uialert(app.UIFigure, ME.message,'Export Error','Icon','error');
                 setStatus(app,['MRE radiomics export failed: ' ME.message]);
