@@ -1156,7 +1156,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             leftColPnl = uipanel(imgG,'BorderType','none');
             leftColPnl.Layout.Row = [1 3]; leftColPnl.Layout.Column = 1;
             app.MRELeftGrid = uigridlayout(leftColPnl, [3 1]);
-            app.MRELeftGrid.RowHeight   = {'1x', 0, 0};
+            app.MRELeftGrid.RowHeight   = {'1x', 1, 1};
             app.MRELeftGrid.ColumnWidth = {'1x'};
             app.MRELeftGrid.Padding     = [0 0 0 0];
             app.MRELeftGrid.RowSpacing  = 2;
@@ -1171,10 +1171,12 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             app.AxMRELoss.Layout.Row = 2; app.AxMRELoss.Layout.Column = 1;
             setupDarkAxes(app.AxMRELoss,'Loss Modulus (kPa)');
             colormap(app.AxMRELoss, mreStiffCmap());
+            app.AxMRELoss.Visible = 'off';
 
             app.AxMRELossBar = uiaxes(app.MRELeftGrid);
             app.AxMRELossBar.Layout.Row = 3; app.AxMRELossBar.Layout.Column = 1;
             setupColorStripAxes(app.AxMRELossBar);
+            app.AxMRELossBar.Visible = 'off';
 
             app.AxMREWave = uiaxes(imgG);
             app.AxMREWave.Layout.Row=[1 3]; app.AxMREWave.Layout.Column=2;
@@ -1598,8 +1600,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                             tmp.W_raw = tmp.W;
                         end
                         try
-                            tmpEx = load(mreMatPath,'LossModulus');
-                            if isfield(tmpEx,'LossModulus'), tmp.LossModulus = tmpEx.LossModulus; end
+                            tmpEx = load(mreMatPath,'L');
+                            if isfield(tmpEx,'L'), tmp.LossModulus = tmpEx.L; end
                         catch
                         end
                         tmp = normalizeMREStruct(app, tmp);
@@ -1748,6 +1750,11 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                         tmp = load(matPath,'M','M_raw','W','W_raw','S','LapC','H');
                         if ~isfield(tmp,'W_raw') || isempty(tmp.W_raw)
                             tmp.W_raw = tmp.W;
+                        end
+                        try
+                            tmpEx = load(matPath,'L');
+                            if isfield(tmpEx,'L'), tmp.LossModulus = tmpEx.L; end
+                        catch
                         end
                         tmp = normalizeMREStruct(app, tmp);
                         app.AppData.MRE = tmp;
@@ -2445,10 +2452,10 @@ function updateOfflineReconEnabled(app)
                         end
                     catch
                     end
-                    % Persist LossModulus separately (optional field — may be absent).
+                    % Persist L (loss modulus) separately — optional field, may be absent.
                     if isfield(app.AppData.MRE,'LossModulus') && ~isempty(app.AppData.MRE.LossModulus)
-                        LossModulus = app.AppData.MRE.LossModulus; %#ok<NASGU>
-                        try, save(matPath_, 'LossModulus', '-append'); catch, end
+                        L = app.AppData.MRE.LossModulus; %#ok<NASGU>
+                        try, save(matPath_, 'L', '-append'); catch, end
                     end
                 end
 
@@ -2462,8 +2469,12 @@ function updateOfflineReconEnabled(app)
                                   ~isempty(app.AppData.MRE.LossModulus);
                         if hasLoss
                             app.MRELeftGrid.RowHeight = {'1x', '1x', 44};
+                            app.AxMRELoss.Visible    = 'on';
+                            app.AxMRELossBar.Visible = 'on';
                         else
-                            app.MRELeftGrid.RowHeight = {'1x', 0, 0};
+                            app.MRELeftGrid.RowHeight = {'1x', 1, 1};
+                            app.AxMRELoss.Visible    = 'off';
+                            app.AxMRELossBar.Visible = 'off';
                         end
                     catch
                     end
@@ -4352,7 +4363,11 @@ function setStiffScale(app, newClim)
             app.AppData.MRE      = [];
             app.AppData.Localizer= [];
             app.AppData.ExamPath = '';
-            try, app.MRELeftGrid.RowHeight = {'1x', 0, 0}; catch, end
+            try
+                app.MRELeftGrid.RowHeight = {'1x', 1, 1};
+                app.AxMRELoss.Visible    = 'off';
+                app.AxMRELossBar.Visible = 'off';
+            catch, end
         end
 
         function savePDFFMat(app)
@@ -5288,8 +5303,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                 hasLoss = isfield(mre,'LossModulus') && ~isempty(mre.LossModulus);
                 if hasLoss
                     app.MRELeftGrid.RowHeight = {'1x', '1x', 44};
+                    app.AxMRELoss.Visible    = 'on';
+                    app.AxMRELossBar.Visible = 'on';
                 else
-                    app.MRELeftGrid.RowHeight = {'1x', 0, 0};
+                    app.MRELeftGrid.RowHeight = {'1x', 1, 1};
+                    app.AxMRELoss.Visible    = 'off';
+                    app.AxMRELossBar.Visible = 'off';
                 end
             catch
             end
@@ -7250,79 +7269,13 @@ function pts = mreROIMaskToPolygon(mask)
 end
 
 function cmap = mreWaveCmap()
-% Standard MRE wave displacement colormap (awave), embedded from mmdi_roi_gui.
-    m = 256;
-    aw = [ ...
-        'ff';'ff';'00';'ff';'fc';'00';'ff';'fa';'00';'ff';'f7';'00'; ...
-        'ff';'f4';'00';'ff';'f2';'00';'ff';'ef';'00';'ff';'ec';'00'; ...
-        'ff';'ea';'00';'ff';'e7';'00';'ff';'e4';'00';'ff';'e1';'00'; ...
-        'ff';'df';'00';'ff';'dc';'00';'ff';'d9';'00';'ff';'d7';'00'; ...
-        'ff';'d4';'00';'ff';'d1';'00';'ff';'cf';'00';'ff';'cc';'00'; ...
-        'ff';'c9';'00';'ff';'c7';'00';'ff';'c4';'00';'ff';'c1';'00'; ...
-        'ff';'bf';'00';'ff';'bc';'00';'ff';'b9';'00';'ff';'b7';'00'; ...
-        'ff';'b4';'00';'ff';'b1';'00';'ff';'ae';'00';'ff';'ac';'00'; ...
-        'ff';'a9';'00';'ff';'a6';'00';'ff';'a4';'00';'ff';'a1';'00'; ...
-        'ff';'9e';'00';'ff';'9c';'00';'ff';'99';'00';'ff';'96';'00'; ...
-        'ff';'94';'00';'ff';'91';'00';'ff';'8e';'00';'ff';'8c';'00'; ...
-        'ff';'89';'00';'ff';'86';'00';'ff';'84';'00';'ff';'81';'00'; ...
-        'ff';'7e';'00';'ff';'7b';'00';'ff';'79';'00';'ff';'76';'00'; ...
-        'ff';'73';'00';'ff';'71';'00';'ff';'6e';'00';'ff';'6b';'00'; ...
-        'ff';'69';'00';'ff';'66';'00';'ff';'63';'00';'ff';'61';'00'; ...
-        'ff';'5e';'00';'ff';'5b';'00';'ff';'59';'00';'ff';'56';'00'; ...
-        'ff';'53';'00';'ff';'51';'00';'ff';'4e';'00';'ff';'4b';'00'; ...
-        'ff';'48';'00';'ff';'46';'00';'ff';'43';'00';'ff';'40';'00'; ...
-        'ff';'3e';'00';'ff';'3b';'00';'ff';'38';'00';'ff';'36';'00'; ...
-        'ff';'33';'00';'ff';'30';'00';'ff';'2e';'00';'ff';'2b';'00'; ...
-        'ff';'28';'00';'ff';'26';'00';'ff';'23';'00';'ff';'20';'00'; ...
-        'ff';'1e';'00';'ff';'1b';'00';'ff';'18';'00';'ff';'15';'00'; ...
-        'ff';'13';'00';'ff';'10';'00';'ff';'0d';'00';'ff';'0b';'00'; ...
-        'ff';'08';'00';'ff';'05';'00';'ff';'03';'00';'ff';'00';'00'; ...
-        'f7';'00';'00';'ef';'00';'00';'e7';'00';'00';'df';'00';'00'; ...
-        'd7';'00';'00';'cf';'00';'00';'c7';'00';'00';'bf';'00';'00'; ...
-        'b7';'00';'00';'af';'00';'00';'a7';'00';'00';'9f';'00';'00'; ...
-        '97';'00';'00';'8f';'00';'00';'87';'00';'00';'80';'00';'00'; ...
-        '78';'00';'00';'70';'00';'00';'68';'00';'00';'60';'00';'00'; ...
-        '58';'00';'00';'50';'00';'00';'48';'00';'00';'40';'00';'00'; ...
-        '38';'00';'00';'30';'00';'00';'28';'00';'00';'20';'00';'00'; ...
-        '18';'00';'00';'10';'00';'00';'08';'00';'00';'00';'00';'00'; ...
-        '00';'00';'00';'00';'00';'08';'00';'00';'10';'00';'00';'18'; ...
-        '00';'00';'20';'00';'00';'28';'00';'00';'30';'00';'00';'38'; ...
-        '00';'00';'40';'00';'00';'48';'00';'00';'50';'00';'00';'58'; ...
-        '00';'00';'60';'00';'00';'68';'00';'00';'70';'00';'00';'78'; ...
-        '00';'00';'80';'00';'00';'87';'00';'00';'8f';'00';'00';'97'; ...
-        '00';'00';'9f';'00';'00';'a7';'00';'00';'af';'00';'00';'b7'; ...
-        '00';'00';'bf';'00';'00';'c7';'00';'00';'cf';'00';'00';'d7'; ...
-        '00';'00';'df';'00';'00';'e7';'00';'00';'ef';'00';'00';'f7'; ...
-        '00';'00';'ff';'00';'03';'ff';'00';'05';'ff';'00';'08';'ff'; ...
-        '00';'0b';'ff';'00';'0d';'ff';'00';'10';'ff';'00';'13';'ff'; ...
-        '00';'15';'ff';'00';'18';'ff';'00';'1b';'ff';'00';'1e';'ff'; ...
-        '00';'20';'ff';'00';'23';'ff';'00';'26';'ff';'00';'28';'ff'; ...
-        '00';'2b';'ff';'00';'2e';'ff';'00';'30';'ff';'00';'33';'ff'; ...
-        '00';'36';'ff';'00';'38';'ff';'00';'3b';'ff';'00';'3e';'ff'; ...
-        '00';'40';'ff';'00';'43';'ff';'00';'46';'ff';'00';'48';'ff'; ...
-        '00';'4b';'ff';'00';'4e';'ff';'00';'51';'ff';'00';'53';'ff'; ...
-        '00';'56';'ff';'00';'59';'ff';'00';'5b';'ff';'00';'5e';'ff'; ...
-        '00';'61';'ff';'00';'63';'ff';'00';'66';'ff';'00';'69';'ff'; ...
-        '00';'6b';'ff';'00';'6e';'ff';'00';'71';'ff';'00';'73';'ff'; ...
-        '00';'76';'ff';'00';'79';'ff';'00';'7b';'ff';'00';'7e';'ff'; ...
-        '00';'81';'ff';'00';'84';'ff';'00';'86';'ff';'00';'89';'ff'; ...
-        '00';'8c';'ff';'00';'8e';'ff';'00';'91';'ff';'00';'94';'ff'; ...
-        '00';'96';'ff';'00';'99';'ff';'00';'9c';'ff';'00';'9e';'ff'; ...
-        '00';'a1';'ff';'00';'a4';'ff';'00';'a6';'ff';'00';'a9';'ff'; ...
-        '00';'ac';'ff';'00';'ae';'ff';'00';'b1';'ff';'00';'b4';'ff'; ...
-        '00';'b7';'ff';'00';'b9';'ff';'00';'bc';'ff';'00';'bf';'ff'; ...
-        '00';'c1';'ff';'00';'c4';'ff';'00';'c7';'ff';'00';'c9';'ff'; ...
-        '00';'cc';'ff';'00';'cf';'ff';'00';'d1';'ff';'00';'d4';'ff'; ...
-        '00';'d7';'ff';'00';'d9';'ff';'00';'dc';'ff';'00';'df';'ff'; ...
-        '00';'e1';'ff';'00';'e4';'ff';'00';'e7';'ff';'00';'ea';'ff'; ...
-        '00';'ec';'ff';'00';'ef';'ff';'00';'f2';'ff';'00';'f4';'ff'; ...
-        '00';'f7';'ff';'00';'fa';'ff';'00';'fc';'ff';'00';'ff';'ff'];
-    aw = hex2dec(aw);
-    naw = reshape(aw, 3, 256) ./ 255;
-    cmap = [naw(1,:)', naw(2,:)', naw(3,:)'];
-    cmap = flip(cmap, 1);
-    idx = round(linspace(1, 256, m));
-    cmap = cmap(idx, :);
+% Diverging wave colormap: blue (negative) → black (zero) → red (positive).
+    n   = 256;
+    mid = n / 2;
+    lo  = linspace(1, 0, mid)';       % blue channel: 1→0
+    hi  = linspace(0, 1, n - mid)';   % red channel:  0→1
+    cmap = [zeros(mid,1),    zeros(mid,1),    lo; ...
+            hi,              zeros(n-mid,1),  zeros(n-mid,1)];
 end
 
 function cmap = mreStiffCmap()
@@ -9146,28 +9099,27 @@ end
 function newLoss = loadOfflineReconLossModulus(quantDir, mreRef)
 % LOADOFFLINERECONLOSSMODULUS  Load loss modulus from mmdi-quant S21* output.
 %
-% Scans quantDir for DICOM files whose SeriesDescription contains '_loss'.
-% Falls back to matching by file name prefix 'S21' when the description
-% keyword is absent (handles vendors that omit the keyword).
+% Primary: glob for S21* files in quantDir (mmdi-quant naming convention).
+% Fallback: scan all DICOM files for SeriesDescription containing '_loss'.
 % Raw pixel values are assumed to be in Pa and are converted to kPa.
 %
 % Returns [] if no S21 files are found.
 
     newLoss = [];
     try
-        allFiles = listDicomFiles(quantDir);
-        if isempty(allFiles), return; end
-
-        lossFiles = filterByDescKeyword(allFiles, '_loss');
-        if isempty(lossFiles)
-            % Fallback: match by file name prefix S21 (mmdi-quant convention).
-            lossFiles = {};
-            for k = 1:numel(allFiles)
-                [~, fname] = fileparts(allFiles{k});
-                if startsWith(upper(fname), 'S21')
-                    lossFiles{end+1} = allFiles{k}; %#ok<AGROW>
-                end
+        % Primary: filename glob — same approach used in the completion counter.
+        d = dir(fullfile(quantDir, 'S21*'));
+        lossFiles = {};
+        for k = 1:numel(d)
+            if ~d(k).isdir
+                lossFiles{end+1} = fullfile(quantDir, d(k).name); %#ok<AGROW>
             end
+        end
+
+        if isempty(lossFiles)
+            % Fallback: description keyword search across all DICOMs.
+            allFiles = listDicomFiles(quantDir);
+            lossFiles = filterByDescKeyword(allFiles, '_loss');
         end
         if isempty(lossFiles), return; end
 
