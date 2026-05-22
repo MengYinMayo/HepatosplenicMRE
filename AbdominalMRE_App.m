@@ -358,6 +358,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
         LblMREInfo          matlab.ui.control.Label
         BtnMREPlay          matlab.ui.control.Button
         EdtWaveMax          matlab.ui.control.NumericEditField
+        EdtLossMax          matlab.ui.control.NumericEditField
         BtnStiff8           matlab.ui.control.Button
         BtnStiff20          matlab.ui.control.Button
         BtnConfMap          matlab.ui.control.StateButton
@@ -504,6 +505,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'StiffCLim',    [0 8], ...
             'LossCLim',     [-4 4], ...
             'WaveMax',      2000, ... % default processed-wave half-range (W/L)
+            'LossMax',      4, ...    % default loss modulus display half-range (W/L)
             'DixonContrast', 'PDFF', ...  % 'PDFF'|'Water'|'Fat'|'T2star'|'InPhase'|'OutPhase'
             'DixonCmap',    'hot', ...   % colormap name for current contrast
             'DixonClimMin', 0, ...       % display range min
@@ -1149,7 +1151,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             % 4-row grid: images (top), nav row, images (bottom), controls.
             % Colorbars live inside the left and middle nested panels.
             imgG = uigridlayout(imgArea,[4 3]);
-            imgG.RowHeight   = {'1x',42,'1x',56};
+            imgG.RowHeight   = {'1x',42,'1x',64};
             imgG.ColumnWidth = {'1x','1x','1x'};
             imgG.Padding     = [0 0 0 0];
             imgG.ColumnSpacing = 4;
@@ -1211,14 +1213,22 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             app.AxMRELossBar.Visible = 'off';
 
             % ── Right column: magnitude (top), nav (middle), raw wave (bottom) ──
-            app.AxMREMag = uiaxes(imgG);
-            app.AxMREMag.Layout.Row=1; app.AxMREMag.Layout.Column=3;
+            rightColPnl = uipanel(imgG,'BorderType','none');
+            rightColPnl.Layout.Row = [1 3]; rightColPnl.Layout.Column = 3;
+            rightColG = uigridlayout(rightColPnl, [3 1]);
+            rightColG.RowHeight   = {'1x', 42, '1x'};
+            rightColG.ColumnWidth = {'1x'};
+            rightColG.Padding     = [0 0 0 0];
+            rightColG.RowSpacing  = 2;
+
+            app.AxMREMag = uiaxes(rightColG);
+            app.AxMREMag.Layout.Row = 1; app.AxMREMag.Layout.Column = 1;
             setupDarkAxes(app.AxMREMag,'Magnitude');
             colormap(app.AxMREMag,'gray');
             app.AxMREMag.ButtonDownFcn = @(~,~)app.onMREPanelClick('mag');
 
-            navG = uigridlayout(imgG,[1 3]);
-            navG.Layout.Row = 2; navG.Layout.Column = 3;
+            navG = uigridlayout(rightColG,[1 3]);
+            navG.Layout.Row = 2; navG.Layout.Column = 1;
             navG.ColumnWidth = {64,'1x',64};
             navG.Padding = [4 10 4 10];
             navG.ColumnSpacing = 10;
@@ -1242,18 +1252,22 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             nextBtn.FontSize = 12; nextBtn.FontWeight = 'bold'; nextBtn.BackgroundColor = [1.00 0.93 0.25]; nextBtn.FontColor = [0.75 0.10 0.10]; nextBtn.Tooltip = 'Next slice';
             nextBtn.ButtonPushedFcn = @(~,~)app.nudgeMRESlice(1);
 
-            app.AxMRERawWave = uiaxes(imgG);
-            app.AxMRERawWave.Layout.Row=3; app.AxMRERawWave.Layout.Column=3;
+            app.AxMRERawWave = uiaxes(rightColG);
+            app.AxMRERawWave.Layout.Row = 3; app.AxMRERawWave.Layout.Column = 1;
             setupDarkAxes(app.AxMRERawWave,'Raw wave');
             colormap(app.AxMRERawWave,'gray');
             app.AxMRERawWave.ButtonDownFcn = @(~,~)app.onMREPanelClick('raw');
 
-            ctrlG = uigridlayout(imgG,[1 8]);
-            ctrlG.Layout.Row=4; ctrlG.Layout.Column=[1 3];
-            ctrlG.ColumnWidth={92,64,64,80,80,88,24,64};
-            ctrlG.Padding=[0 4 0 4];
+            % ── Control row: three separate grids aligned under each image column ──
 
-            app.BtnMREPlay = uibutton(ctrlG,'push');
+            % Left column controls: Play | 0-8 kPa | 0-20 kPa
+            ctrlL = uigridlayout(imgG,[1 3]);
+            ctrlL.Layout.Row=4; ctrlL.Layout.Column=1;
+            ctrlL.ColumnWidth={92,'1x','1x'};
+            ctrlL.Padding=[0 4 0 4];
+            ctrlL.ColumnSpacing=4;
+
+            app.BtnMREPlay = uibutton(ctrlL,'push');
             app.BtnMREPlay.Layout.Column=1;
             app.BtnMREPlay.Text='▶ Play wave';
             app.BtnMREPlay.FontSize=12; app.BtnMREPlay.FontWeight='bold';
@@ -1261,45 +1275,72 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             app.BtnMREPlay.FontColor=[1 1 1];
             app.BtnMREPlay.ButtonPushedFcn = @(~,~)app.toggleMREPlay();
 
-            wlbl = uilabel(ctrlG); wlbl.Layout.Column=2;
-            wlbl.Text='Waves W/L'; wlbl.FontSize=11; wlbl.HorizontalAlignment='right';
-
-            app.EdtWaveMax = uieditfield(ctrlG,'numeric');
-            app.EdtWaveMax.Layout.Column=3;
-            app.EdtWaveMax.Value=2000; app.EdtWaveMax.Limits=[0 Inf];
-            app.EdtWaveMax.FontSize=11;
-            app.EdtWaveMax.Tooltip='Processed-wave half-range for display (default 2000). Raw wave uses automatic native scaling.';
-            app.EdtWaveMax.ValueChangedFcn = @(src,~)app.onWaveMaxChange(src);
-
-            app.BtnStiff8 = uibutton(ctrlG,'push');
-            app.BtnStiff8.Layout.Column=4;
+            app.BtnStiff8 = uibutton(ctrlL,'push');
+            app.BtnStiff8.Layout.Column=2;
             app.BtnStiff8.Text='0-8 kPa';
             app.BtnStiff8.FontSize=12; app.BtnStiff8.FontWeight='bold';
             app.BtnStiff8.BackgroundColor=[0.25 0.55 0.85];
             app.BtnStiff8.FontColor=[1 1 1];
             app.BtnStiff8.ButtonPushedFcn = @(~,~)app.setStiffScale([0 8]);
 
-            app.BtnStiff20 = uibutton(ctrlG,'push');
-            app.BtnStiff20.Layout.Column=5;
+            app.BtnStiff20 = uibutton(ctrlL,'push');
+            app.BtnStiff20.Layout.Column=3;
             app.BtnStiff20.Text='0-20 kPa';
             app.BtnStiff20.FontSize=12;
             app.BtnStiff20.BackgroundColor=[0.70 0.88 0.70];
             app.BtnStiff20.FontColor=[0.1 0.3 0.1];
             app.BtnStiff20.ButtonPushedFcn = @(~,~)app.setStiffScale([0 20]);
 
-            app.BtnConfMap = uibutton(ctrlG,'state');
-            app.BtnConfMap.Layout.Column=6;
+            % Middle column controls: Waves W/L | [EdtWaveMax] / Loss W/L | [EdtLossMax]
+            ctrlM = uigridlayout(imgG,[2 2]);
+            ctrlM.Layout.Row=4; ctrlM.Layout.Column=2;
+            ctrlM.ColumnWidth={'1x',72};
+            ctrlM.RowHeight={'1x','1x'};
+            ctrlM.Padding=[4 4 4 4];
+            ctrlM.ColumnSpacing=4;
+            ctrlM.RowSpacing=4;
+
+            wlbl = uilabel(ctrlM); wlbl.Layout.Row=1; wlbl.Layout.Column=1;
+            wlbl.Text='Waves W/L'; wlbl.FontSize=11; wlbl.HorizontalAlignment='right';
+
+            app.EdtWaveMax = uieditfield(ctrlM,'numeric');
+            app.EdtWaveMax.Layout.Row=1; app.EdtWaveMax.Layout.Column=2;
+            app.EdtWaveMax.Value=2000; app.EdtWaveMax.Limits=[0 Inf];
+            app.EdtWaveMax.FontSize=11;
+            app.EdtWaveMax.Tooltip='Processed-wave half-range for display (default 2000). Raw wave uses automatic native scaling.';
+            app.EdtWaveMax.ValueChangedFcn = @(src,~)app.onWaveMaxChange(src);
+
+            llbl = uilabel(ctrlM); llbl.Layout.Row=2; llbl.Layout.Column=1;
+            llbl.Text='Loss W/L'; llbl.FontSize=11; llbl.HorizontalAlignment='right';
+
+            app.EdtLossMax = uieditfield(ctrlM,'numeric');
+            app.EdtLossMax.Layout.Row=2; app.EdtLossMax.Layout.Column=2;
+            app.EdtLossMax.Value=4; app.EdtLossMax.Limits=[0 Inf];
+            app.EdtLossMax.FontSize=11;
+            app.EdtLossMax.Enable='off';
+            app.EdtLossMax.Tooltip='Loss modulus (Im(G*)) display half-range. Enabled after offline recon.';
+            app.EdtLossMax.ValueChangedFcn = @(src,~)app.onLossMaxChange(src);
+
+            % Right column controls: Conf. mask | ≥ | threshold
+            ctrlR = uigridlayout(imgG,[1 3]);
+            ctrlR.Layout.Row=4; ctrlR.Layout.Column=3;
+            ctrlR.ColumnWidth={'1x',20,56};
+            ctrlR.Padding=[0 4 0 4];
+            ctrlR.ColumnSpacing=4;
+
+            app.BtnConfMap = uibutton(ctrlR,'state');
+            app.BtnConfMap.Layout.Column=1;
             app.BtnConfMap.Text='Conf. mask';
             app.BtnConfMap.FontSize=12;
             app.BtnConfMap.Value=false;
             app.BtnConfMap.Tooltip = 'Overlay low-confidence pixels on the stiffness map';
             app.BtnConfMap.ValueChangedFcn = @(~,~)app.toggleConfMask();
 
-            clbl = uilabel(ctrlG); clbl.Layout.Column=7;
+            clbl = uilabel(ctrlR); clbl.Layout.Column=2;
             clbl.Text='≥'; clbl.FontSize=12; clbl.HorizontalAlignment='center';
 
-            app.EdtConfThresh = uieditfield(ctrlG,'numeric');
-            app.EdtConfThresh.Layout.Column=8;
+            app.EdtConfThresh = uieditfield(ctrlR,'numeric');
+            app.EdtConfThresh.Layout.Column=3;
             app.EdtConfThresh.Limits = [0 1];
             app.EdtConfThresh.Value  = 0.50;
             app.EdtConfThresh.FontSize = 11;
@@ -4254,6 +4295,13 @@ function I = getMREMagnitudeForROI(app, sl)
             end
         end
 
+        function onLossMaxChange(app, src)
+            app.AppData.LossMax = max(0, src.Value);
+            if ~isempty(app.AppData.MRE)
+                refreshMRE(app);
+            end
+        end
+
         
 function onConfThreshChange(app, src)
     app.AppData.ConfThresh = min(1, max(0, src.Value));
@@ -4385,6 +4433,7 @@ function setStiffScale(app, newClim)
                 app.MREMidGrid.RowHeight  = {'1x', 44, 1, 1};
                 app.AxMRELoss.Visible    = 'off';
                 app.AxMRELossBar.Visible = 'off';
+                app.EdtLossMax.Enable    = 'off';
             catch, end
         end
 
@@ -5331,10 +5380,23 @@ function tf = shouldBypassGlobalHotkeys(app)
                     app.MREMidGrid.RowHeight = {'1x', 44, '1x', 44};
                     app.AxMRELoss.Visible    = 'on';
                     app.AxMRELossBar.Visible = 'on';
+                    try
+                        allLoss = double(mre.LossModulus(:));
+                        allLoss = allLoss(isfinite(allLoss));
+                        autoMax = prctile(abs(allLoss), 95);
+                        if ~isfinite(autoMax) || autoMax <= 0, autoMax = 4; end
+                        app.AppData.LossMax  = autoMax;
+                        app.EdtLossMax.Value = autoMax;
+                    catch
+                        app.AppData.LossMax  = 4;
+                        app.EdtLossMax.Value = 4;
+                    end
+                    app.EdtLossMax.Enable = 'on';
                 else
                     app.MREMidGrid.RowHeight = {'1x', 44, 1, 1};
                     app.AxMRELoss.Visible    = 'off';
                     app.AxMRELossBar.Visible = 'off';
+                    app.EdtLossMax.Enable    = 'off';
                 end
             catch
             end
@@ -5461,12 +5523,10 @@ function tf = shouldBypassGlobalHotkeys(app)
                 nZLoss = size(mre.LossModulus, 3);
                 slLoss = min(sl, max(1, nZLoss));
                 Lmod   = double(squeeze(mre.LossModulus(:,:,slLoss)));
-                lossMap = mreWaveCmap();
-                % Auto symmetric CLim from 95th percentile of absolute values.
-                lossVals = Lmod(isfinite(Lmod(:)));
-                absMax = prctile(abs(lossVals), 95);
-                if ~isfinite(absMax) || absMax <= 0, absMax = 4; end
-                lossCLim = [-absMax absMax];
+                lossMap  = mreWaveCmap();
+                lossHalf = app.AppData.LossMax;
+                if ~isfinite(lossHalf) || lossHalf <= 0, lossHalf = 4; end
+                lossCLim = [-lossHalf lossHalf];
                 app.AppData.LossCLim = lossCLim;
                 safeMREAxesImage(app.AxMRELoss, Lmod, lossCLim, lossMap, 'MREBaseLoss');
                 try; colormap(app.AxMRELoss, lossMap); catch; end
