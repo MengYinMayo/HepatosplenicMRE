@@ -363,6 +363,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
         BtnStiff20          matlab.ui.control.Button
         BtnConfMap          matlab.ui.control.StateButton
         EdtConfThresh       matlab.ui.control.NumericEditField
+        EdtMagWinLo         matlab.ui.control.NumericEditField
+        EdtMagWinHi         matlab.ui.control.NumericEditField
         BtnROI_LiverMRE     matlab.ui.control.Button
         BtnROI_SpleenMRE    matlab.ui.control.Button
         BtnROI_MuscleMRE    matlab.ui.control.Button
@@ -520,6 +522,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'DispDixonOP',  [], ...   % current Dixon Fat/OutPhase slice
             'ShowConfMask', true, ...
             'ConfThresh',   0.90, ...
+            'MagWinLo',     0, ...
+            'MagWinHi',     0, ...
             'MREObjectConf', struct('LiverMRE',0.90,'SpleenMRE',0.75,'MuscleMRE',0.50,'FatMRE',0.90), ...
             'MRETechFailure', struct('LiverMRE',false,'SpleenMRE',false,'MuscleMRE',false,'FatMRE',false), ...
             'MREROIActive', false, ...
@@ -1325,31 +1329,59 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             app.EdtLossMax.Tooltip='Loss modulus (Im(G*)) display half-range. Enabled after offline recon.';
             app.EdtLossMax.ValueChangedFcn = @(src,~)app.onLossMaxChange(src);
 
-            % Right column controls: Conf. mask | ≥ | threshold
-            ctrlR = uigridlayout(imgG,[1 3]);
+            % Right column controls: row1=Conf.mask | ≥ | threshold, row2=Mag W/L
+            ctrlR = uigridlayout(imgG,[2 3]);
             ctrlR.Layout.Row=4; ctrlR.Layout.Column=3;
             ctrlR.ColumnWidth={'1x',20,56};
-            ctrlR.Padding=[0 4 0 4];
+            ctrlR.RowHeight={'1x','1x'};
+            ctrlR.Padding=[0 2 0 2];
+            ctrlR.RowSpacing=2;
             ctrlR.ColumnSpacing=4;
 
             app.BtnConfMap = uibutton(ctrlR,'state');
-            app.BtnConfMap.Layout.Column=1;
+            app.BtnConfMap.Layout.Row=1; app.BtnConfMap.Layout.Column=1;
             app.BtnConfMap.Text='Conf. mask';
-            app.BtnConfMap.FontSize=12;
+            app.BtnConfMap.FontSize=11;
             app.BtnConfMap.Value=true;
             app.BtnConfMap.Tooltip = 'Overlay low-confidence pixels on the stiffness map';
             app.BtnConfMap.ValueChangedFcn = @(~,~)app.toggleConfMask();
 
-            clbl = uilabel(ctrlR); clbl.Layout.Column=2;
+            clbl = uilabel(ctrlR); clbl.Layout.Row=1; clbl.Layout.Column=2;
             clbl.Text='≥'; clbl.FontSize=12; clbl.HorizontalAlignment='center';
 
             app.EdtConfThresh = uieditfield(ctrlR,'numeric');
-            app.EdtConfThresh.Layout.Column=3;
+            app.EdtConfThresh.Layout.Row=1; app.EdtConfThresh.Layout.Column=3;
             app.EdtConfThresh.Limits = [0 1];
             app.EdtConfThresh.Value  = 0.90;
             app.EdtConfThresh.FontSize = 11;
             app.EdtConfThresh.Tooltip = 'General confidence threshold for the overlay checkbox on the elastogram';
             app.EdtConfThresh.ValueChangedFcn = @(src,~)app.onConfThreshChange(src);
+
+            % Row 2: Magnitude W/L  (Lo – Hi)
+            magWLGrid = uigridlayout(ctrlR,[1 4]);
+            magWLGrid.Layout.Row=2; magWLGrid.Layout.Column=[1 3];
+            magWLGrid.ColumnWidth={'1x',46,14,46};
+            magWLGrid.Padding=[0 0 0 0]; magWLGrid.ColumnSpacing=2;
+
+            mwlbl = uilabel(magWLGrid); mwlbl.Layout.Column=1;
+            mwlbl.Text='Mag W/L'; mwlbl.FontSize=10; mwlbl.HorizontalAlignment='center';
+
+            app.EdtMagWinLo = uieditfield(magWLGrid,'numeric');
+            app.EdtMagWinLo.Layout.Column=2;
+            app.EdtMagWinLo.Value=0; app.EdtMagWinLo.Limits=[-Inf Inf];
+            app.EdtMagWinLo.FontSize=10;
+            app.EdtMagWinLo.Tooltip='Magnitude display min (0=auto)';
+            app.EdtMagWinLo.ValueChangedFcn = @(src,~)app.onMagWinChange(src);
+
+            mdsh = uilabel(magWLGrid); mdsh.Layout.Column=3;
+            mdsh.Text='–'; mdsh.FontSize=11; mdsh.HorizontalAlignment='center';
+
+            app.EdtMagWinHi = uieditfield(magWLGrid,'numeric');
+            app.EdtMagWinHi.Layout.Column=4;
+            app.EdtMagWinHi.Value=0; app.EdtMagWinHi.Limits=[-Inf Inf];
+            app.EdtMagWinHi.FontSize=10;
+            app.EdtMagWinHi.Tooltip='Magnitude display max (0=auto)';
+            app.EdtMagWinHi.ValueChangedFcn = @(src,~)app.onMagWinChange(src);
 
             % ROI panel
             roiPnl = uipanel(app.MREGrid,'Title','MRE ROI Tools', ...
@@ -4336,6 +4368,16 @@ function I = getMREMagnitudeForROI(app, sl)
             end
         end
 
+        function onMagWinChange(app, ~)
+            lo = app.EdtMagWinLo.Value;
+            hi = app.EdtMagWinHi.Value;
+            app.AppData.MagWinLo = lo;
+            app.AppData.MagWinHi = hi;
+            if ~isempty(app.AppData.MRE)
+                refreshMRE(app);
+            end
+        end
+
         
 function onConfThreshChange(app, src)
     app.AppData.ConfThresh = min(1, max(0, src.Value));
@@ -4468,6 +4510,10 @@ function setStiffScale(app, newClim)
                 app.AxMRELoss.Visible    = 'off';
                 app.AxMRELossBar.Visible = 'off';
                 app.EdtLossMax.Enable    = 'off';
+                app.AppData.MagWinLo = 0;
+                app.AppData.MagWinHi = 0;
+                app.EdtMagWinLo.Value = 0;
+                app.EdtMagWinHi.Value = 0;
             catch, end
             try, populateLocalizerTab(app); catch, end
             try, populateDixonTab(app);    catch, end
@@ -5091,8 +5137,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                 otherwise  % 'mag'
                     I = getMREMagnitudeForROI(app, sl);
                     if isempty(I), return; end
-                    [lo,hi] = robustCLim(I,1,99,false);
-                    climVals = [lo hi];
+                    magLo = app.AppData.MagWinLo;
+                    magHi = app.AppData.MagWinHi;
+                    if magHi <= magLo
+                        [magLo,magHi] = robustCLim(I,1,99,false);
+                    end
+                    climVals = [magLo magHi];
                     cmapData = gray(256);
             end
             imgData = I;
@@ -5534,7 +5584,19 @@ function tf = shouldBypassGlobalHotkeys(app)
                 magTitle = sprintf('Magnitude  sl %d/%d', slM, nZM);
             end
             if ~strcmp(freezeKey,'mag')
-                showNativeGray(app.AxMREMag, Msl, magTitle, 1, 99, 'MREBaseMag');
+                magLo = app.AppData.MagWinLo;
+                magHi = app.AppData.MagWinHi;
+                if magHi <= magLo
+                    % Auto-compute and update fields
+                    [magLo, magHi] = robustCLim(Msl, 1, 99, false);
+                    app.AppData.MagWinLo = magLo;
+                    app.AppData.MagWinHi = magHi;
+                    try; app.EdtMagWinLo.Value = magLo; catch; end
+                    try; app.EdtMagWinHi.Value = magHi; catch; end
+                end
+                safeMREAxesImage(app.AxMREMag, Msl, [magLo magHi], 'gray', 'MREBaseMag');
+                title(app.AxMREMag, sprintf('%s\n[display %.0f to %.0f]', magTitle, magLo, magHi), ...
+                    'FontSize', 9, 'Interpreter', 'none');
             end
 
             if ~strcmp(freezeKey,'raw')
