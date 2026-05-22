@@ -1177,6 +1177,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             setupDarkAxes(app.AxMREStorage,"G' (kPa)");
             colormap(app.AxMREStorage, mreStiffCmap());
             app.AxMREStorage.Visible = 'off';
+            app.AxMREStorage.ButtonDownFcn = @(~,~)app.onMREPanelClick('storage');
 
             app.AxMREStiffBar = uiaxes(app.MRELeftGrid);
             app.AxMREStiffBar.Layout.Row = 3; app.AxMREStiffBar.Layout.Column = 1;
@@ -1207,6 +1208,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             setupDarkAxes(app.AxMRELoss,'Im(G*) (kPa)');
             colormap(app.AxMRELoss, mreWaveCmap());
             app.AxMRELoss.Visible = 'off';
+            app.AxMRELoss.ButtonDownFcn = @(~,~)app.onMREPanelClick('loss');
 
             app.AxMRELossBar = uiaxes(app.MREMidGrid);
             app.AxMRELossBar.Layout.Row = 4; app.AxMRELossBar.Layout.Column = 1;
@@ -1217,7 +1219,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             rightColPnl = uipanel(imgG,'BorderType','none');
             rightColPnl.Layout.Row = [1 3]; rightColPnl.Layout.Column = 3;
             rightColG = uigridlayout(rightColPnl, [3 1]);
-            rightColG.RowHeight   = {'1x', 28, '1x'};
+            rightColG.RowHeight   = {'1x', '1x', 44};
             rightColG.ColumnWidth = {'1x'};
             rightColG.Padding     = [0 0 0 0];
             rightColG.RowSpacing  = 2;
@@ -1228,43 +1230,44 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             colormap(app.AxMREMag,'gray');
             app.AxMREMag.ButtonDownFcn = @(~,~)app.onMREPanelClick('mag');
 
+            app.AxMRERawWave = uiaxes(rightColG);
+            app.AxMRERawWave.Layout.Row = 2; app.AxMRERawWave.Layout.Column = 1;
+            setupDarkAxes(app.AxMRERawWave,'Raw wave');
+            colormap(app.AxMRERawWave,'gray');
+            app.AxMRERawWave.ButtonDownFcn = @(~,~)app.onMREPanelClick('raw');
+
+            % Nav row at row 3 (44 px) — same height as colorbars in left/mid columns
             navG = uigridlayout(rightColG,[1 3]);
-            navG.Layout.Row = 2; navG.Layout.Column = 1;
-            navG.ColumnWidth = {48,'1x',48};
-            navG.Padding = [2 2 2 2];
-            navG.ColumnSpacing = 6;
+            navG.Layout.Row = 3; navG.Layout.Column = 1;
+            navG.ColumnWidth = {64,'1x',64};
+            navG.Padding = [4 6 4 6];
+            navG.ColumnSpacing = 8;
 
             prevBtn = uibutton(navG,'push');
             prevBtn.Layout.Column = 1;
-            prevBtn.Text = '◀ Prev';
-            prevBtn.FontSize = 10; prevBtn.BackgroundColor = [1.00 0.93 0.25]; prevBtn.FontColor = [0.75 0.10 0.10]; prevBtn.Tooltip = 'Previous slice';
+            prevBtn.Text = 'Prev';
+            prevBtn.FontSize = 12; prevBtn.FontWeight = 'bold'; prevBtn.BackgroundColor = [1.00 0.93 0.25]; prevBtn.FontColor = [0.75 0.10 0.10]; prevBtn.Tooltip = 'Previous slice';
             prevBtn.ButtonPushedFcn = @(~,~)app.nudgeMRESlice(-1);
 
             app.LblMRESlice = uilabel(navG);
             app.LblMRESlice.Layout.Column = 2;
             app.LblMRESlice.Text = '2/4';
-            app.LblMRESlice.FontSize = 11;
+            app.LblMRESlice.FontSize = 12;
             app.LblMRESlice.FontWeight = 'bold';
             app.LblMRESlice.HorizontalAlignment = 'center';
 
             nextBtn = uibutton(navG,'push');
             nextBtn.Layout.Column = 3;
-            nextBtn.Text = 'Next ▶';
-            nextBtn.FontSize = 10; nextBtn.BackgroundColor = [1.00 0.93 0.25]; nextBtn.FontColor = [0.75 0.10 0.10]; nextBtn.Tooltip = 'Next slice';
+            nextBtn.Text = 'Next';
+            nextBtn.FontSize = 12; nextBtn.FontWeight = 'bold'; nextBtn.BackgroundColor = [1.00 0.93 0.25]; nextBtn.FontColor = [0.75 0.10 0.10]; nextBtn.Tooltip = 'Next slice';
             nextBtn.ButtonPushedFcn = @(~,~)app.nudgeMRESlice(1);
-
-            app.AxMRERawWave = uiaxes(rightColG);
-            app.AxMRERawWave.Layout.Row = 3; app.AxMRERawWave.Layout.Column = 1;
-            setupDarkAxes(app.AxMRERawWave,'Raw wave');
-            colormap(app.AxMRERawWave,'gray');
-            app.AxMRERawWave.ButtonDownFcn = @(~,~)app.onMREPanelClick('raw');
 
             % ── Control row: three separate grids aligned under each image column ──
 
-            % Left column controls: 0-8 kPa | 0-20 kPa | ▶ Play wave
-            ctrlL = uigridlayout(imgG,[1 3]);
+            % Left column controls: 0-8 kPa | 0-20 kPa
+            ctrlL = uigridlayout(imgG,[1 2]);
             ctrlL.Layout.Row=4; ctrlL.Layout.Column=1;
-            ctrlL.ColumnWidth={'1x','1x','1x'};
+            ctrlL.ColumnWidth={'1x','1x'};
             ctrlL.Padding=[0 4 0 4];
             ctrlL.ColumnSpacing=4;
 
@@ -1284,38 +1287,38 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             app.BtnStiff20.FontColor=[0.1 0.3 0.1];
             app.BtnStiff20.ButtonPushedFcn = @(~,~)app.setStiffScale([0 20]);
 
-            app.BtnMREPlay = uibutton(ctrlL,'push');
-            app.BtnMREPlay.Layout.Column=3;
-            app.BtnMREPlay.Text='▶ Play wave';
-            app.BtnMREPlay.FontSize=11;
-            app.BtnMREPlay.BackgroundColor=[0.18 0.60 0.34];
-            app.BtnMREPlay.FontColor=[1 1 1];
-            app.BtnMREPlay.ButtonPushedFcn = @(~,~)app.toggleMREPlay();
-
-            % Middle column controls: Waves W/L | [val] (row 1) / Loss W/L | [val] (row 2)
-            ctrlM = uigridlayout(imgG,[2 2]);
+            % Middle column controls: ▶ Play wave (left, spanning rows) | Waves W/L [val] / Loss W/L [val]
+            ctrlM = uigridlayout(imgG,[2 3]);
             ctrlM.Layout.Row=4; ctrlM.Layout.Column=2;
-            ctrlM.ColumnWidth={'1x',72};
+            ctrlM.ColumnWidth={86,'1x',72};
             ctrlM.RowHeight={'1x','1x'};
             ctrlM.Padding=[4 4 4 4];
             ctrlM.ColumnSpacing=4;
             ctrlM.RowSpacing=4;
 
-            wlbl = uilabel(ctrlM); wlbl.Layout.Row=1; wlbl.Layout.Column=1;
+            app.BtnMREPlay = uibutton(ctrlM,'push');
+            app.BtnMREPlay.Layout.Row=[1 2]; app.BtnMREPlay.Layout.Column=1;
+            app.BtnMREPlay.Text='▶ Play wave';
+            app.BtnMREPlay.FontSize=11; app.BtnMREPlay.FontWeight='bold';
+            app.BtnMREPlay.BackgroundColor=[0.18 0.60 0.34];
+            app.BtnMREPlay.FontColor=[1 1 1];
+            app.BtnMREPlay.ButtonPushedFcn = @(~,~)app.toggleMREPlay();
+
+            wlbl = uilabel(ctrlM); wlbl.Layout.Row=1; wlbl.Layout.Column=2;
             wlbl.Text='Waves W/L'; wlbl.FontSize=11; wlbl.HorizontalAlignment='right';
 
             app.EdtWaveMax = uieditfield(ctrlM,'numeric');
-            app.EdtWaveMax.Layout.Row=1; app.EdtWaveMax.Layout.Column=2;
+            app.EdtWaveMax.Layout.Row=1; app.EdtWaveMax.Layout.Column=3;
             app.EdtWaveMax.Value=2000; app.EdtWaveMax.Limits=[0 Inf];
             app.EdtWaveMax.FontSize=11;
             app.EdtWaveMax.Tooltip='Processed-wave half-range for display (default 2000). Raw wave uses automatic native scaling.';
             app.EdtWaveMax.ValueChangedFcn = @(src,~)app.onWaveMaxChange(src);
 
-            llbl = uilabel(ctrlM); llbl.Layout.Row=2; llbl.Layout.Column=1;
+            llbl = uilabel(ctrlM); llbl.Layout.Row=2; llbl.Layout.Column=2;
             llbl.Text='Loss W/L'; llbl.FontSize=11; llbl.HorizontalAlignment='right';
 
             app.EdtLossMax = uieditfield(ctrlM,'numeric');
-            app.EdtLossMax.Layout.Row=2; app.EdtLossMax.Layout.Column=2;
+            app.EdtLossMax.Layout.Row=2; app.EdtLossMax.Layout.Column=3;
             app.EdtLossMax.Value=2; app.EdtLossMax.Limits=[0 Inf];
             app.EdtLossMax.FontSize=11;
             app.EdtLossMax.Enable='off';
@@ -2742,7 +2745,7 @@ function setCurrentMRETargetAxis(app, axisKey)
     if nargin < 2 || isempty(axisKey)
         axisKey = 'mag';
     end
-    validKeys = {'mag','raw','proc','stiff'};
+    validKeys = {'mag','raw','proc','stiff','storage','loss'};
     if ~any(strcmp(axisKey, validKeys))
         axisKey = 'mag';
     end
@@ -2768,6 +2771,10 @@ function axisKey = inferCurrentMRETargetAxis(app)
                 axisKey = 'proc'; break
             elseif isequal(obj, app.AxMREStiff)
                 axisKey = 'stiff'; break
+            elseif isequal(obj, app.AxMREStorage)
+                axisKey = 'storage'; break
+            elseif isequal(obj, app.AxMRELoss)
+                axisKey = 'loss'; break
             end
             try
                 obj = obj.Parent;
@@ -2787,6 +2794,10 @@ function ax = getMREAxisByKey(app, axisKey)
             ax = app.AxMREWave;
         case 'stiff'
             ax = app.AxMREStiff;
+        case 'storage'
+            ax = app.AxMREStorage;
+        case 'loss'
+            ax = app.AxMRELoss;
         otherwise
             ax = app.AxMREMag;
     end
@@ -2800,6 +2811,10 @@ function label = getMREAxisLabel(app, axisKey)
             label = 'Processed wave';
         case 'stiff'
             label = 'Elastogram';
+        case 'storage'
+            label = "G' (Storage modulus)";
+        case 'loss'
+            label = 'Im(G*) (Loss modulus)';
         otherwise
             label = 'Magnitude';
     end
@@ -5429,17 +5444,8 @@ function tf = shouldBypassGlobalHotkeys(app)
                     app.MREMidGrid.RowHeight = {'1x', 1, '1x', 44};
                     app.AxMRELoss.Visible    = 'on';
                     app.AxMRELossBar.Visible = 'on';
-                    try
-                        allLoss = double(mre.LossModulus(:));
-                        allLoss = allLoss(isfinite(allLoss));
-                        autoMax = prctile(abs(allLoss), 95);
-                        if ~isfinite(autoMax) || autoMax <= 0, autoMax = 2; end
-                        app.AppData.LossMax  = autoMax;
-                        app.EdtLossMax.Value = autoMax;
-                    catch
-                        app.AppData.LossMax  = 2;
-                        app.EdtLossMax.Value = 2;
-                    end
+                    app.AppData.LossMax  = 2;
+                    app.EdtLossMax.Value = 2;
                     app.EdtLossMax.Enable = 'on';
                 else
                     app.MREMidGrid.RowHeight = {'1x', 1, 1, 1};
