@@ -343,10 +343,12 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
         MRETab              matlab.ui.container.Tab
         MREGrid             matlab.ui.container.GridLayout
         MRELeftGrid         matlab.ui.container.GridLayout
+        MREMidGrid          matlab.ui.container.GridLayout
         AxMREMag            matlab.ui.control.UIAxes
         AxMRERawWave        matlab.ui.control.UIAxes
         AxMREWave           matlab.ui.control.UIAxes
         AxMREStiff          matlab.ui.control.UIAxes
+        AxMREStorage        matlab.ui.control.UIAxes
         AxMRELoss           matlab.ui.control.UIAxes
         AxMREWaveBar        matlab.ui.control.UIAxes
         AxMREStiffBar       matlab.ui.control.UIAxes
@@ -500,7 +502,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'MRERefreshBusy', false, ...
             'MREROIBusy',  false, ...
             'StiffCLim',    [0 8], ...
-            'LossCLim',     [0 4], ...
+            'LossCLim',     [-4 4], ...
             'WaveMax',      2000, ... % default processed-wave half-range (W/L)
             'DixonContrast', 'PDFF', ...  % 'PDFF'|'Water'|'Fat'|'T2star'|'InPhase'|'OutPhase'
             'DixonCmap',    'hot', ...   % colormap name for current contrast
@@ -510,6 +512,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'DispWaveRaw',  [], ...   % current raw-wave slice
             'DispStiff',    [], ...   % current stiffness slice
             'DispLoss',     [], ...   % current loss modulus slice (offline recon only)
+            'DispStorage',  [], ...   % current storage modulus slice (offline recon only)
             'DispDixon',    [], ...   % current Dixon PDFF slice (PDFF panel)
             'DispDixonIP',  [], ...   % current Dixon Water/InPhase slice
             'DispDixonOP',  [], ...   % current Dixon Fat/OutPhase slice
@@ -1143,47 +1146,71 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             % with dedicated color strips below and controls at the bottom.
             imgArea = uipanel(app.MREGrid,'BorderType','none');
             imgArea.Layout.Column = 1;
-            imgG = uigridlayout(imgArea,[5 3]);
-            imgG.RowHeight   = {'1x',42,'1x',66,56};
+            % 4-row grid: images (top), nav row, images (bottom), controls.
+            % Colorbars live inside the left and middle nested panels.
+            imgG = uigridlayout(imgArea,[4 3]);
+            imgG.RowHeight   = {'1x',42,'1x',56};
             imgG.ColumnWidth = {'1x','1x','1x'};
             imgG.Padding     = [0 0 0 0];
             imgG.ColumnSpacing = 4;
             imgG.RowSpacing    = 4;
 
-            % Left column: stiffness + optional loss modulus (shown only after
-            % offline recon loads S21 output).  A nested grid allows the loss
-            % modulus row to be revealed/hidden by changing RowHeight at runtime.
+            % ── Left column: stiffness + optional storage modulus + shared colorbar ──
             leftColPnl = uipanel(imgG,'BorderType','none');
             leftColPnl.Layout.Row = [1 3]; leftColPnl.Layout.Column = 1;
             app.MRELeftGrid = uigridlayout(leftColPnl, [3 1]);
-            app.MRELeftGrid.RowHeight   = {'1x', 1, 1};
+            app.MRELeftGrid.RowHeight   = {'1x', 1, 44};
             app.MRELeftGrid.ColumnWidth = {'1x'};
             app.MRELeftGrid.Padding     = [0 0 0 0];
             app.MRELeftGrid.RowSpacing  = 2;
 
             app.AxMREStiff = uiaxes(app.MRELeftGrid);
             app.AxMREStiff.Layout.Row = 1; app.AxMREStiff.Layout.Column = 1;
-            setupDarkAxes(app.AxMREStiff,'Stiffness (kPa)');
+            setupDarkAxes(app.AxMREStiff,'G* (kPa)');
             colormap(app.AxMREStiff, mreStiffCmap());
             app.AxMREStiff.ButtonDownFcn = @(~,~)app.onMREPanelClick('stiff');
 
-            app.AxMRELoss = uiaxes(app.MRELeftGrid);
-            app.AxMRELoss.Layout.Row = 2; app.AxMRELoss.Layout.Column = 1;
-            setupDarkAxes(app.AxMRELoss,'Loss Modulus (kPa)');
-            colormap(app.AxMRELoss, mreStiffCmap());
-            app.AxMRELoss.Visible = 'off';
+            app.AxMREStorage = uiaxes(app.MRELeftGrid);
+            app.AxMREStorage.Layout.Row = 2; app.AxMREStorage.Layout.Column = 1;
+            setupDarkAxes(app.AxMREStorage,"G' (kPa)");
+            colormap(app.AxMREStorage, mreStiffCmap());
+            app.AxMREStorage.Visible = 'off';
 
-            app.AxMRELossBar = uiaxes(app.MRELeftGrid);
-            app.AxMRELossBar.Layout.Row = 3; app.AxMRELossBar.Layout.Column = 1;
-            setupColorStripAxes(app.AxMRELossBar);
-            app.AxMRELossBar.Visible = 'off';
+            app.AxMREStiffBar = uiaxes(app.MRELeftGrid);
+            app.AxMREStiffBar.Layout.Row = 3; app.AxMREStiffBar.Layout.Column = 1;
+            setupColorStripAxes(app.AxMREStiffBar);
 
-            app.AxMREWave = uiaxes(imgG);
-            app.AxMREWave.Layout.Row=[1 3]; app.AxMREWave.Layout.Column=2;
+            % ── Middle column: processed wave + wave colorbar + optional loss modulus ──
+            midColPnl = uipanel(imgG,'BorderType','none');
+            midColPnl.Layout.Row = [1 3]; midColPnl.Layout.Column = 2;
+            app.MREMidGrid = uigridlayout(midColPnl, [4 1]);
+            app.MREMidGrid.RowHeight   = {'1x', 44, 1, 1};
+            app.MREMidGrid.ColumnWidth = {'1x'};
+            app.MREMidGrid.Padding     = [0 0 0 0];
+            app.MREMidGrid.RowSpacing  = 2;
+
+            app.AxMREWave = uiaxes(app.MREMidGrid);
+            app.AxMREWave.Layout.Row = 1; app.AxMREWave.Layout.Column = 1;
             setupDarkAxes(app.AxMREWave,'Processed wave');
             colormap(app.AxMREWave, mreWaveCmap());
             app.AxMREWave.ButtonDownFcn = @(~,~)app.onMREPanelClick('proc');
 
+            app.AxMREWaveBar = uiaxes(app.MREMidGrid);
+            app.AxMREWaveBar.Layout.Row = 2; app.AxMREWaveBar.Layout.Column = 1;
+            setupColorStripAxes(app.AxMREWaveBar);
+
+            app.AxMRELoss = uiaxes(app.MREMidGrid);
+            app.AxMRELoss.Layout.Row = 3; app.AxMRELoss.Layout.Column = 1;
+            setupDarkAxes(app.AxMRELoss,'Im(G*) (kPa)');
+            colormap(app.AxMRELoss, mreWaveCmap());
+            app.AxMRELoss.Visible = 'off';
+
+            app.AxMRELossBar = uiaxes(app.MREMidGrid);
+            app.AxMRELossBar.Layout.Row = 4; app.AxMRELossBar.Layout.Column = 1;
+            setupColorStripAxes(app.AxMRELossBar);
+            app.AxMRELossBar.Visible = 'off';
+
+            % ── Right column: magnitude (top), nav (middle), raw wave (bottom) ──
             app.AxMREMag = uiaxes(imgG);
             app.AxMREMag.Layout.Row=1; app.AxMREMag.Layout.Column=3;
             setupDarkAxes(app.AxMREMag,'Magnitude');
@@ -1221,16 +1248,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             colormap(app.AxMRERawWave,'gray');
             app.AxMRERawWave.ButtonDownFcn = @(~,~)app.onMREPanelClick('raw');
 
-            app.AxMREStiffBar = uiaxes(imgG);
-            app.AxMREStiffBar.Layout.Row = 4; app.AxMREStiffBar.Layout.Column = 1;
-            setupColorStripAxes(app.AxMREStiffBar);
-
-            app.AxMREWaveBar = uiaxes(imgG);
-            app.AxMREWaveBar.Layout.Row = 4; app.AxMREWaveBar.Layout.Column = 2;
-            setupColorStripAxes(app.AxMREWaveBar);
-
             ctrlG = uigridlayout(imgG,[1 8]);
-            ctrlG.Layout.Row=5; ctrlG.Layout.Column=[1 3];
+            ctrlG.Layout.Row=4; ctrlG.Layout.Column=[1 3];
             ctrlG.ColumnWidth={92,64,64,80,80,88,24,64};
             ctrlG.Padding=[0 4 0 4];
 
@@ -1604,6 +1623,11 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                             if isfield(tmpEx,'L'), tmp.LossModulus = tmpEx.L; end
                         catch
                         end
+                        try
+                            tmpEx = load(mreMatPath,'Gs');
+                            if isfield(tmpEx,'Gs'), tmp.StorageModulus = tmpEx.Gs; end
+                        catch
+                        end
                         tmp = normalizeMREStruct(app, tmp);
                         app.AppData.MRE = tmp;
                         loadMREROIsFromMat(app, mreMatPath);
@@ -1754,6 +1778,11 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                         try
                             tmpEx = load(matPath,'L');
                             if isfield(tmpEx,'L'), tmp.LossModulus = tmpEx.L; end
+                        catch
+                        end
+                        try
+                            tmpEx = load(matPath,'Gs');
+                            if isfield(tmpEx,'Gs'), tmp.StorageModulus = tmpEx.Gs; end
                         catch
                         end
                         tmp = normalizeMREStruct(app, tmp);
@@ -2377,21 +2406,21 @@ function updateOfflineReconEnabled(app)
                     return
                 end
 
-                % Load new stiffness, wave, and confidence from quant DICOMs
-                % and replace the currently displayed (online/masked) versions.
-                dlg.Message = 'Loading offline recon stiffness, wave and confidence...';
+                % Load new stiffness, wave, confidence, loss and storage moduli.
+                dlg.Message = 'Loading offline recon outputs...';
                 drawnow;
-                newS    = loadOfflineReconStiffness(quantDir, app.AppData.MRE);
-                newW    = loadOfflineReconWave(quantDir, app.AppData.MRE);
-                newLapC = loadOfflineReconConfidence(quantDir, app.AppData.MRE);
-                newLoss = loadOfflineReconLossModulus(quantDir, app.AppData.MRE);
+                newS       = loadOfflineReconStiffness(quantDir, app.AppData.MRE);
+                newW       = loadOfflineReconWave(quantDir, app.AppData.MRE);
+                newLapC    = loadOfflineReconConfidence(quantDir, app.AppData.MRE);
+                newLoss    = loadOfflineReconLossModulus(quantDir, app.AppData.MRE);
+                newStorage = loadOfflineReconStorageModulus(quantDir, app.AppData.MRE);
                 loadedFields = {};
 
                 % If no MRE was loaded before (Philips raw-only case), initialise
                 % the struct with empty standard fields so populateMRETab won't crash.
                 if isempty(app.AppData.MRE)
                     app.AppData.MRE = struct('M',[],'M_raw',[],'W',[],'W_raw',[], ...
-                                            'S',[],'LapC',[],'H',[],'LossModulus',[]);
+                                            'S',[],'LapC',[],'H',[],'LossModulus',[],'StorageModulus',[]);
                 end
 
                 if ~isempty(newS)
@@ -2408,7 +2437,11 @@ function updateOfflineReconEnabled(app)
                 end
                 if ~isempty(newLoss)
                     app.AppData.MRE.LossModulus = newLoss;
-                    loadedFields{end+1} = 'LossModulus (loss modulus)';
+                    loadedFields{end+1} = 'L (loss modulus)';
+                end
+                if ~isempty(newStorage)
+                    app.AppData.MRE.StorageModulus = newStorage;
+                    loadedFields{end+1} = 'Gs (storage modulus)';
                 end
 
                 % Load magnitude and raw wave from the input DICOMs (first half =
@@ -2450,10 +2483,14 @@ function updateOfflineReconEnabled(app)
                         end
                     catch
                     end
-                    % Persist L (loss modulus) separately — optional field, may be absent.
+                    % Persist L (loss modulus) and Gs (storage modulus) — optional fields.
                     if isfield(app.AppData.MRE,'LossModulus') && ~isempty(app.AppData.MRE.LossModulus)
                         L = app.AppData.MRE.LossModulus; %#ok<NASGU>
                         try, save(matPath_, 'L', '-append'); catch, end
+                    end
+                    if isfield(app.AppData.MRE,'StorageModulus') && ~isempty(app.AppData.MRE.StorageModulus)
+                        Gs = app.AppData.MRE.StorageModulus; %#ok<NASGU>
+                        try, save(matPath_, 'Gs', '-append'); catch, end
                     end
                 end
 
@@ -2461,21 +2498,6 @@ function updateOfflineReconEnabled(app)
                 if isvalid(dlg), close(dlg); end
                 if ~isempty(loadedFields)
                     populateMRETab(app);
-                    % Show loss modulus row when S21 data was loaded.
-                    try
-                        hasLoss = isfield(app.AppData.MRE,'LossModulus') && ...
-                                  ~isempty(app.AppData.MRE.LossModulus);
-                        if hasLoss
-                            app.MRELeftGrid.RowHeight = {'1x', '1x', 44};
-                            app.AxMRELoss.Visible    = 'on';
-                            app.AxMRELossBar.Visible = 'on';
-                        else
-                            app.MRELeftGrid.RowHeight = {'1x', 1, 1};
-                            app.AxMRELoss.Visible    = 'off';
-                            app.AxMRELossBar.Visible = 'off';
-                        end
-                    catch
-                    end
                 end
 
                 loadNote = '';
@@ -4358,7 +4380,9 @@ function setStiffScale(app, newClim)
             app.AppData.Localizer= [];
             app.AppData.ExamPath = '';
             try
-                app.MRELeftGrid.RowHeight = {'1x', 1, 1};
+                app.MRELeftGrid.RowHeight = {'1x', 1, 44};
+                app.AxMREStorage.Visible = 'off';
+                app.MREMidGrid.RowHeight  = {'1x', 44, 1, 1};
                 app.AxMRELoss.Visible    = 'off';
                 app.AxMRELossBar.Visible = 'off';
             catch, end
@@ -5292,15 +5316,23 @@ function tf = shouldBypassGlobalHotkeys(app)
             end
             app.AppData.MRESlice = mreMid;
             app.LblMRESlice.Text = sprintf('%d/%d', mreMid, nZ);
-            % Show loss modulus row when the field is populated (offline recon only).
+            % Show offline recon rows when fields are populated.
             try
+                hasStorage = isfield(mre,'StorageModulus') && ~isempty(mre.StorageModulus);
+                if hasStorage
+                    app.MRELeftGrid.RowHeight = {'1x', '1x', 44};
+                    app.AxMREStorage.Visible = 'on';
+                else
+                    app.MRELeftGrid.RowHeight = {'1x', 1, 44};
+                    app.AxMREStorage.Visible = 'off';
+                end
                 hasLoss = isfield(mre,'LossModulus') && ~isempty(mre.LossModulus);
                 if hasLoss
-                    app.MRELeftGrid.RowHeight = {'1x', '1x', 44};
+                    app.MREMidGrid.RowHeight = {'1x', 44, '1x', 44};
                     app.AxMRELoss.Visible    = 'on';
                     app.AxMRELossBar.Visible = 'on';
                 else
-                    app.MRELeftGrid.RowHeight = {'1x', 1, 1};
+                    app.MREMidGrid.RowHeight = {'1x', 44, 1, 1};
                     app.AxMRELoss.Visible    = 'off';
                     app.AxMRELossBar.Visible = 'off';
                 end
@@ -5401,9 +5433,21 @@ function tf = shouldBypassGlobalHotkeys(app)
                 stiffMap = mreStiffCmap();
                 safeMREAxesImage(app.AxMREStiff, S, app.AppData.StiffCLim, stiffMap, 'MREBaseStiff');
                 try; colormap(app.AxMREStiff, stiffMap); catch; end
-                title(app.AxMREStiff, sprintf('Stiffness (kPa)  sl %d/%d', slS, nZS), ...
+                title(app.AxMREStiff, sprintf('G*  sl %d/%d', slS, nZS), ...
                     'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
-                renderColorStrip(app.AxMREStiffBar, stiffMap, app.AppData.StiffCLim, []);
+                % Storage modulus — same colormap and scale as stiffness.
+                if isfield(mre,'StorageModulus') && ~isempty(mre.StorageModulus)
+                    nZStor = size(mre.StorageModulus, 3);
+                    slStor = min(sl, max(1, nZStor));
+                    Stor   = double(squeeze(mre.StorageModulus(:,:,slStor)));
+                    safeMREAxesImage(app.AxMREStorage, Stor, app.AppData.StiffCLim, stiffMap, 'MREBaseStorage');
+                    try; colormap(app.AxMREStorage, stiffMap); catch; end
+                    title(app.AxMREStorage, sprintf("G'  sl %d/%d", slStor, nZStor), ...
+                        'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
+                    app.AppData.DispStorage = Stor;
+                end
+                % Shared colorbar for G* and G' (label indicates both).
+                renderColorStrip(app.AxMREStiffBar, stiffMap, app.AppData.StiffCLim, [], 'G*, G'' (kPa)');
                 try; colormap(app.AxMREStiffBar, stiffMap); catch; end
                 if app.AppData.ShowConfMask && isfield(mre,'LapC') && ~isempty(mre.LapC)
                     lowConf = double(squeeze(mre.LapC(:,:,slL))) < app.AppData.ConfThresh;
@@ -5412,18 +5456,23 @@ function tf = shouldBypassGlobalHotkeys(app)
                 end
             end
 
-            % Loss modulus — rendered only when S21 offline recon output is loaded.
+            % Loss modulus — diverging colormap, symmetric auto-scaled CLim.
             if isfield(mre,'LossModulus') && ~isempty(mre.LossModulus)
                 nZLoss = size(mre.LossModulus, 3);
                 slLoss = min(sl, max(1, nZLoss));
                 Lmod   = double(squeeze(mre.LossModulus(:,:,slLoss)));
-                lossMap = mreStiffCmap();
-                safeMREAxesImage(app.AxMRELoss, Lmod, app.AppData.LossCLim, lossMap, 'MREBaseLoss');
+                lossMap = mreWaveCmap();
+                % Auto symmetric CLim from 95th percentile of absolute values.
+                lossVals = Lmod(isfinite(Lmod(:)));
+                absMax = prctile(abs(lossVals), 95);
+                if ~isfinite(absMax) || absMax <= 0, absMax = 4; end
+                lossCLim = [-absMax absMax];
+                app.AppData.LossCLim = lossCLim;
+                safeMREAxesImage(app.AxMRELoss, Lmod, lossCLim, lossMap, 'MREBaseLoss');
                 try; colormap(app.AxMRELoss, lossMap); catch; end
-                title(app.AxMRELoss, ...
-                    sprintf('Loss Modulus (kPa)  sl %d/%d', slLoss, nZLoss), ...
+                title(app.AxMRELoss, sprintf('Im(G*)  sl %d/%d', slLoss, nZLoss), ...
                     'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
-                renderColorStrip(app.AxMRELossBar, lossMap, app.AppData.LossCLim, []);
+                renderColorStrip(app.AxMRELossBar, lossMap, lossCLim, [lossCLim(1) 0 lossCLim(2)], 'Im(G*) (kPa)');
                 try; colormap(app.AxMRELossBar, lossMap); catch; end
                 app.AppData.DispLoss = Lmod;
             end
@@ -7135,7 +7184,7 @@ function setupColorStripAxes(ax)
     try; ax.Interactions = []; catch; end
 end
 
-function renderColorStrip(ax, cmapIn, climVals, tickVals)
+function renderColorStrip(ax, cmapIn, climVals, tickVals, labelStr)
     if isempty(ax) || ~isvalid(ax)
         return
     end
@@ -7169,6 +7218,12 @@ function renderColorStrip(ax, cmapIn, climVals, tickVals)
     tickVals = unique(tickVals);
     ax.XTick = tickVals;
     ax.Box = 'on';
+    if nargin >= 5 && ~isempty(labelStr)
+        try
+            title(ax, labelStr, 'FontSize', 8, 'Color', [0.72 0.72 0.72], 'FontWeight', 'normal');
+        catch
+        end
+    end
 end
 
 function [lo, hi] = robustCLim(img, pctLo, pctHi, symmetric)
@@ -9173,6 +9228,49 @@ function newLoss = loadOfflineReconLossModulus(quantDir, mreRef)
         newLoss = vol / 1000.0;   % Pa → kPa
     catch
         newLoss = [];
+    end
+end
+
+function newStorage = loadOfflineReconStorageModulus(quantDir, mreRef)
+% LOADOFFLINERECONSTORAGEMODULUS  Load storage modulus from mmdi-quant output.
+%
+% GE mmdi-quant uses '_Storage Modulus' in SeriesDescription (real part G').
+% Raw pixel values are assumed to be in Pa and are converted to kPa.
+%
+% Returns [] if no storage modulus series is found.
+
+    newStorage = [];
+    try
+        allFiles = listDicomFiles(quantDir);
+        if isempty(allFiles), return; end
+
+        storFiles = filterByDescKeyword(allFiles, '_storage modulus');
+        if isempty(storFiles)
+            storFiles = filterByDescKeyword(allFiles, '_real');
+        end
+        if isempty(storFiles)
+            storFiles = filterByDescKeyword(allFiles, 'mu_real');
+        end
+        if isempty(storFiles), return; end
+
+        storFiles = sortFilesBySliceLoc(storFiles);
+        [nR, nC, nZ] = refDims(mreRef);
+        nF = numel(storFiles);
+        if nZ == 0, nZ = nF; end
+        vol = zeros(nR, nC, nZ, 'double');
+        for k = 1:min(nF, nZ)
+            try
+                img = double(dicomread(storFiles{k}));
+                if size(img,1) ~= nR || size(img,2) ~= nC
+                    img = imresize(img, [nR nC], 'bilinear');
+                end
+                vol(:,:,k) = img;
+            catch
+            end
+        end
+        newStorage = vol / 1000.0;   % Pa → kPa
+    catch
+        newStorage = [];
     end
 end
 
