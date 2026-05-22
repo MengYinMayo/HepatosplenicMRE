@@ -9125,9 +9125,11 @@ function [newM, newM_raw, newW_raw] = loadRawMRESplitFromDir(inputDir)
         sortedFiles   = files(sortIdx);
         sortedLocs    = sliceLocs(sortIdx);
 
+        % Philips raw MRE: first half (lower InstanceNumbers) = wave/phase,
+        % second half = magnitude.
         half     = floor(nF / 2);
-        newM_raw = rawMRE4D(sortedFiles(1:half),    sortedLocs(1:half),    nR, nC);
-        newW_raw = rawMRE4D(sortedFiles(half+1:end), sortedLocs(half+1:end), nR, nC);
+        newW_raw = rawMRE4D(sortedFiles(1:half),    sortedLocs(1:half),    nR, nC);
+        newM_raw = rawMRE4D(sortedFiles(half+1:end), sortedLocs(half+1:end), nR, nC);
         if ~isempty(newM_raw)
             newM = mean(newM_raw, 4);
         end
