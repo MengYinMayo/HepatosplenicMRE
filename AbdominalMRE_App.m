@@ -1860,6 +1860,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                         if ~isfield(tmp,'W_raw') || isempty(tmp.W_raw)
                             tmp.W_raw = tmp.W;
                         end
+                        ws = warning('off','MATLAB:load:variableNotFound');
                         try
                             tmpEx = load(matPath,'L');
                             if isfield(tmpEx,'L'), tmp.LossModulus = tmpEx.L; end
@@ -1870,6 +1871,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                             if isfield(tmpEx,'Gs'), tmp.StorageModulus = tmpEx.Gs; end
                         catch
                         end
+                        warning(ws);
                         tmp = normalizeMREStruct(app, tmp);
                         app.AppData.MRE = tmp;
                         loadMREROIsFromMat(app, matPath);
