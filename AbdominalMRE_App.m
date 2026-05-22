@@ -4509,6 +4509,7 @@ function setStiffScale(app, newClim)
                 app.MRELeftGrid.RowHeight = {'1x', 1, 44};
                 app.AxMREStorage.Visible = 'off';
                 app.MREMidGrid.RowHeight  = {'1x', 1, 1, 1};
+                app.AxMREWaveBar.Visible = 'off';
                 app.AxMRELoss.Visible    = 'off';
                 app.AxMRELossBar.Visible = 'off';
                 app.EdtLossMax.Enable    = 'off';
@@ -5506,13 +5507,15 @@ function tf = shouldBypassGlobalHotkeys(app)
                 hasLoss = isfield(mre,'LossModulus') && ~isempty(mre.LossModulus);
                 if hasLoss
                     app.MREMidGrid.RowHeight = {'1x', 1, '1x', 44};
+                    app.AxMREWaveBar.Visible = 'off';
                     app.AxMRELoss.Visible    = 'on';
                     app.AxMRELossBar.Visible = 'on';
                     app.AppData.LossMax  = 2;
                     app.EdtLossMax.Value = 2;
                     app.EdtLossMax.Enable = 'on';
                 else
-                    app.MREMidGrid.RowHeight = {'1x', 1, 1, 1};
+                    app.MREMidGrid.RowHeight = {'1x', 44, 1, 1};
+                    app.AxMREWaveBar.Visible = 'on';
                     app.AxMRELoss.Visible    = 'off';
                     app.AxMRELossBar.Visible = 'off';
                     app.EdtLossMax.Enable    = 'off';
@@ -5607,13 +5610,22 @@ function tf = shouldBypassGlobalHotkeys(app)
             end
 
             Wproc = double(squeeze(mre.W(:,:,slW,phProc)));
+            waveMap = mreWaveCmap();
             if ~strcmp(freezeKey,'proc')
-                waveMap = mreWaveCmap();
                 [waveLo, waveHi] = showNativeWave(app.AxMREWave, Wproc, ...
                     sprintf('Processed wave  sl %d/%d  ph %d/%d', slW, nZW, phProc, nPhProc), ...
                     app.AppData.WaveMax, waveMap, 'MREBaseWave');
                 try; colormap(app.AxMREWave, waveMap); catch; end
-                % Wave colorbar hidden by design — no renderColorStrip call needed.
+            else
+                wMax = app.AppData.WaveMax;
+                if wMax > 0; waveLo = -wMax; waveHi = wMax;
+                else; [waveLo, waveHi] = robustCLim(Wproc, 0, 99.5, true); end
+            end
+            % Inline recon: show wave colorbar; offline: loss bar serves both images
+            if ~isfield(mre,'LossModulus') || isempty(mre.LossModulus)
+                renderColorStrip(app.AxMREWaveBar, waveMap, [waveLo waveHi], ...
+                    [waveLo 0 waveHi], 'Wave (μm)');
+                try; colormap(app.AxMREWaveBar, waveMap); catch; end
             end
 
             if isfield(mre,'S') && ~isempty(mre.S)
