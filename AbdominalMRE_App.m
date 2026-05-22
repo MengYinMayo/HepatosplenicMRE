@@ -6319,8 +6319,9 @@ function tf = shouldBypassGlobalHotkeys(app)
             if isempty(examPath) || ~isfolder(examPath)
                 uialert(app.UIFigure,'No exam folder set — load a study first.','Export'); return
             end
-            hasLoss = isfield(mre,'LossModulus') && ~isempty(mre.LossModulus);
-            outFile = fullfile(examPath, 'mre_radiomics.xlsx');
+            hasLoss  = isfield(mre,'LossModulus') && ~isempty(mre.LossModulus);
+            outFile  = fullfile(examPath, 'mre_radiomics.csv');
+            outFile2 = fullfile(examPath, 'mre_radiomics_lossfilt.csv');
             try
                 setStatus(app,'Computing MRE radiomics features (this may take a moment)...');
                 drawnow;
@@ -6331,12 +6332,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                 try, mreSliceZ = buildSliceZFromSinfo(mre.SpatialInfo); catch, end
                 organs = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
 
-                hdrCells  = strsplit(radiomicsCSVHeader(), ',');
-                unitCells = strsplit(radiomicsCSVUnits('kPa'), ',');
-                % Sheet 1: all ROI pixels, no negative loss modulus guard.
-                allSheet  = [hdrCells; unitCells];
-                % Sheet 2: pixels with negative loss modulus excluded.
-                filtSheet = [hdrCells; unitCells];
+                hdr   = radiomicsCSVHeader();
+                units = radiomicsCSVUnits('kPa');
+                % All-pixels CSV (always written).
+                lines1 = {hdr, units};
+                % Loss-filtered CSV (written only when LossModulus available).
+                lines2 = {hdr, units};
 
                 for oi = 1:numel(organs)
                     rn = organs{oi};
@@ -6351,31 +6352,33 @@ function tf = shouldBypassGlobalHotkeys(app)
                         slZ   = NaN;
                         if ~isempty(mreSliceZ) && sl <= numel(mreSliceZ), slZ = mreSliceZ(sl); end
 
-                        % Tab 1: all ROI pixels (no guard).
+                        % All-pixels row.
                         vals1 = img2d(mask(:));
-                        row1  = strsplit(buildRadiomicsRow(rn, sl, slZ, vals1, mask, img2d, mreDx, mreDy, mreDz), ',');
-                        allSheet = [allSheet; row1]; %#ok<AGROW>
+                        lines1{end+1} = buildRadiomicsRow(rn, sl, slZ, vals1, mask, img2d, mreDx, mreDy, mreDz); %#ok<AGROW>
 
-                        % Tab 2: exclude pixels where loss modulus < 0.
+                        % Loss-filtered row: exclude pixels where loss modulus < 0.
                         if hasLoss && sl <= size(mre.LossModulus, 3)
                             lossSlice = double(mre.LossModulus(:,:,sl));
                             filtMask  = mask & (lossSlice >= 0);
-                            vals2 = img2d(filtMask(:));
-                            row2  = strsplit(buildRadiomicsRow(rn, sl, slZ, vals2, filtMask, img2d, mreDx, mreDy, mreDz), ',');
+                            vals2     = img2d(filtMask(:));
+                            lines2{end+1} = buildRadiomicsRow(rn, sl, slZ, vals2, filtMask, img2d, mreDx, mreDy, mreDz); %#ok<AGROW>
                         else
-                            row2 = row1;
+                            lines2{end+1} = lines1{end}; %#ok<AGROW>
                         end
-                        filtSheet = [filtSheet; row2]; %#ok<AGROW>
                     end
                 end
 
-                % Write xlsx with 1 or 2 sheets (delete first to avoid stale sheets).
-                if isfile(outFile), delete(outFile); end
-                writecell(allSheet,  outFile, 'Sheet', 'All Pixels');
+                fid = fopen(outFile,'w');
+                fprintf(fid,'%s\n', lines1{:});
+                fclose(fid);
+                saved = outFile;
                 if hasLoss
-                    writecell(filtSheet, outFile, 'Sheet', 'Neg Loss Excl');
+                    fid2 = fopen(outFile2,'w');
+                    fprintf(fid2,'%s\n', lines2{:});
+                    fclose(fid2);
+                    saved = sprintf('%s  +  %s', outFile, outFile2);
                 end
-                setStatus(app, sprintf('MRE radiomics saved → %s', outFile));
+                setStatus(app, sprintf('MRE radiomics saved → %s', saved));
             catch ME
                 uialert(app.UIFigure, ME.message,'Export Error','Icon','error');
                 setStatus(app,['MRE radiomics export failed: ' ME.message]);
