@@ -1676,6 +1676,12 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                         updateAllMREStats(app);
                     end
 
+                    % Show placeholders on tabs whose data was not in the saved mat files.
+                    if ~hasPdff
+                        populateLocalizerTab(app);   % draws "no Scout data" placeholder
+                        populateDixonTab(app);       % draws "no Dixon data" placeholder
+                    end
+
                     app.BtnConfirmL12.Enable  = 'on';
                     % Clear any stale study browser content from a prior DICOM
                     % session — we have no series list to show here.
@@ -1731,8 +1737,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                         dlg.Message = 'Loading localizer...';
                         app.AppData.Localizer = loc_loadLocalizer( ...
                             selection.Localizer, struct('verbose',false));
-                        populateLocalizerTab(app);
                     end
+                    populateLocalizerTab(app);   % shows placeholder when Localizer is empty
 
                     if ~isempty(selection.DixonGroup)
                         dlg.Message = 'Building Dixon volumes...';
@@ -1777,6 +1783,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                             end
                         end
                         populateDixonTab(app);
+                    else
+                        populateDixonTab(app);   % shows placeholder when Dixon is empty
                     end
 
                     % Save pdff_data.mat now (with Dixon images + Localizer) so the
@@ -1870,7 +1878,11 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
         function placeLandmark(app, lmName)
         % Arm click-to-place for the given disc landmark name.
             if isempty(app.AppData.Localizer)
-                uialert(app.UIFigure,'Load a study first.','No Localizer');
+                uialert(app.UIFigure, ...
+                    ['No Scout / Localizer series is loaded for this exam.' newline newline ...
+                     'To place disc-level landmarks, re-load the study and select ' ...
+                     'a Scout series in the series-selection dialog.'], ...
+                    'No Scout Series', 'Icon', 'warning');
                 return
             end
             cancelPendingClick(app);
@@ -2133,7 +2145,13 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
         % ── DIXON ─────────────────────────────────────────────────────────
         function drawDixonROI(app, roiName)
             if isempty(app.AppData.Dixon)
-                uialert(app.UIFigure,'No Dixon data loaded.','No Data');
+                uialert(app.UIFigure, ...
+                    ['No Dixon series is loaded for this exam.' newline newline ...
+                     'PDFF and body-composition analysis require a Dixon series.' newline ...
+                     'To enable this, re-load the study and select a Dixon series ' ...
+                     'in the series-selection dialog.' newline newline ...
+                     'MRE stiffness measurements are still available on the MRE tab.'], ...
+                    'PDFF Analysis Unavailable', 'Icon', 'warning');
                 return
             end
             app.cancelDixonROIWorkflow(false);
@@ -4435,6 +4453,8 @@ function setStiffScale(app, newClim)
                 app.AxMRELossBar.Visible = 'off';
                 app.EdtLossMax.Enable    = 'off';
             catch, end
+            try, populateLocalizerTab(app); catch, end
+            try, populateDixonTab(app);    catch, end
         end
 
         function savePDFFMat(app)
@@ -5117,7 +5137,22 @@ function tf = shouldBypassGlobalHotkeys(app)
 
         function populateLocalizerTab(app)
             loc = app.AppData.Localizer;
-            if isempty(loc), return; end
+            if isempty(loc)
+                noDataText = {'No Scout / Localizer series loaded.', '', ...
+                    'Re-load the study and select a Scout (localizer) series', ...
+                    'to enable T9-L4 disc-level landmark placement.'};
+                cla(app.AxLocCoronal);
+                text(app.AxLocCoronal, 0.5, 0.5, noDataText, ...
+                    'Units','normalized','HorizontalAlignment','center', ...
+                    'VerticalAlignment','middle','FontSize',13,'Color',[0.65 0.65 0.65], ...
+                    'Interpreter','none');
+                cla(app.AxLocSagittal);
+                text(app.AxLocSagittal, 0.5, 0.5, 'Landmark placement unavailable.', ...
+                    'Units','normalized','HorizontalAlignment','center', ...
+                    'VerticalAlignment','middle','FontSize',12,'Color',[0.5 0.5 0.5], ...
+                    'Interpreter','none');
+                return
+            end
 
             % Set slider ranges
             nCor = size(loc.Coronal.Volume,3);
@@ -5199,7 +5234,20 @@ function tf = shouldBypassGlobalHotkeys(app)
 
         function populateDixonTab(app)
             dix = app.AppData.Dixon;
-            if isempty(dix), return; end
+            if isempty(dix)
+                noDataText = {'No Dixon series loaded.', '', ...
+                    'Re-load the study and select a Dixon series', ...
+                    'to enable PDFF and body composition analysis.', '', ...
+                    'MRE measurements are still available on the MRE tab.'};
+                for ax = {app.AxDixonPDFF, app.AxDixonIP, app.AxDixonWater}
+                    cla(ax{1});
+                    text(ax{1}, 0.5, 0.5, noDataText, ...
+                        'Units','normalized','HorizontalAlignment','center', ...
+                        'VerticalAlignment','middle','FontSize',13,'Color',[0.65 0.65 0.65], ...
+                        'Interpreter','none');
+                end
+                return
+            end
             if dix.nSlices == 0
                 setStatus(app,'Dixon loaded but no slices decoded (check DICOM path)');
                 return
