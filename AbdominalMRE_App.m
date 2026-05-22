@@ -9137,7 +9137,11 @@ function newLoss = loadOfflineReconLossModulus(quantDir, mreRef)
         if isempty(allFiles), return; end
 
         % Try keyword variants in order of specificity.
-        lossFiles = filterByDescKeyword(allFiles, '_loss modulus');
+        % GE mmdi-quant uses '_Storage Loss' for the imaginary component.
+        lossFiles = filterByDescKeyword(allFiles, '_storage loss');
+        if isempty(lossFiles)
+            lossFiles = filterByDescKeyword(allFiles, '_loss modulus');
+        end
         if isempty(lossFiles)
             lossFiles = filterByDescKeyword(allFiles, '_loss');
         end
@@ -9146,9 +9150,6 @@ function newLoss = loadOfflineReconLossModulus(quantDir, mreRef)
         end
         if isempty(lossFiles)
             lossFiles = filterByDescKeyword(allFiles, 'mu_loss');
-        end
-        if isempty(lossFiles)
-            lossFiles = filterByDescKeyword(allFiles, 'mu loss');
         end
         if isempty(lossFiles)
             % Last resort: filename glob (some builds use S21* prefix).
