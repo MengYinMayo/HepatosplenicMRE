@@ -2484,15 +2484,40 @@ function updateOfflineReconEnabled(app)
                 if ~isempty(loadedFields)
                     loadNote = sprintf('\n\nReplaced in MRE tab: %s', strjoin(loadedFields,', '));
                 end
+
+                % Collect unique SeriesDescriptions from quant folder for diagnostics.
+                diagNote = '';
+                try
+                    allQFiles_ = listDicomFiles(quantDir);
+                    seenD_ = containers.Map('KeyType','char','ValueType','logical');
+                    descList_ = {};
+                    for kk_ = 1:numel(allQFiles_)
+                        try
+                            inf_ = dicominfo(allQFiles_{kk_}, 'UseDictionaryVR', true);
+                            if isfield(inf_,'SeriesDescription')
+                                dd_ = strtrim(char(inf_.SeriesDescription));
+                                if ~isempty(dd_) && ~isKey(seenD_, dd_)
+                                    seenD_(dd_) = true;
+                                    descList_{end+1} = dd_; %#ok<AGROW>
+                                end
+                            end
+                        catch, end
+                    end
+                    if ~isempty(descList_)
+                        diagNote = sprintf('\n\nSeries descriptions in quant/:\n  %s', ...
+                                          strjoin(descList_, '\n  '));
+                    end
+                catch, end
+
                 msg  = sprintf(['Offline recon completed.%s\n\n' ...
                     'Input:  %s\nOutput: %s\n\n' ...
                     'S00* (shear modulus):    %d files\n' ...
                     'S21* (loss modulus):     %d files\n' ...
-                    'S22* (storage modulus):  %d files\n\n' ...
+                    'S22* (storage modulus):  %d files%s\n\n' ...
                     'Open the output folder?'], ...
                     loadNote, inputDir, quantDir, nS00, ...
                     numel(dir(fullfile(quantDir,'S21*'))), ...
-                    numel(dir(fullfile(quantDir,'S22*'))));
+                    numel(dir(fullfile(quantDir,'S22*'))), diagNote);
                 answer = uiconfirm(app.UIFigure, msg, 'Offline Recon Complete', ...
                     'Options',{'Open folder','Close'}, ...
                     'DefaultOption','Open folder','Icon','success');
@@ -9099,27 +9124,40 @@ end
 function newLoss = loadOfflineReconLossModulus(quantDir, mreRef)
 % LOADOFFLINERECONLOSSMODULUS  Load loss modulus from mmdi-quant S21* output.
 %
-% Primary: glob for S21* files in quantDir (mmdi-quant naming convention).
-% Fallback: scan all DICOM files for SeriesDescription containing '_loss'.
+% Tries multiple SeriesDescription keywords used by different mmdi-quant
+% versions: '_loss modulus', '_loss', '_imaginary', 'mu_loss', 'mu loss'.
+% Also tries the S21* filename glob as last resort.
 % Raw pixel values are assumed to be in Pa and are converted to kPa.
 %
-% Returns [] if no S21 files are found.
+% Returns [] if no loss modulus series is found.
 
     newLoss = [];
     try
-        % Primary: filename glob — same approach used in the completion counter.
-        d = dir(fullfile(quantDir, 'S21*'));
-        lossFiles = {};
-        for k = 1:numel(d)
-            if ~d(k).isdir
-                lossFiles{end+1} = fullfile(quantDir, d(k).name); %#ok<AGROW>
-            end
-        end
+        allFiles = listDicomFiles(quantDir);
+        if isempty(allFiles), return; end
 
+        % Try keyword variants in order of specificity.
+        lossFiles = filterByDescKeyword(allFiles, '_loss modulus');
         if isempty(lossFiles)
-            % Fallback: description keyword search across all DICOMs.
-            allFiles = listDicomFiles(quantDir);
             lossFiles = filterByDescKeyword(allFiles, '_loss');
+        end
+        if isempty(lossFiles)
+            lossFiles = filterByDescKeyword(allFiles, 'imaginary');
+        end
+        if isempty(lossFiles)
+            lossFiles = filterByDescKeyword(allFiles, 'mu_loss');
+        end
+        if isempty(lossFiles)
+            lossFiles = filterByDescKeyword(allFiles, 'mu loss');
+        end
+        if isempty(lossFiles)
+            % Last resort: filename glob (some builds use S21* prefix).
+            d = dir(fullfile(quantDir, 'S21*'));
+            for k = 1:numel(d)
+                if ~d(k).isdir
+                    lossFiles{end+1} = fullfile(quantDir, d(k).name); %#ok<AGROW>
+                end
+            end
         end
         if isempty(lossFiles), return; end
 
