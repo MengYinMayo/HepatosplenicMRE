@@ -5075,6 +5075,18 @@ function tf = shouldBypassGlobalHotkeys(app)
                     else, return; end
                     [lo,hi] = robustCLim(I,0,99.5,true);
                     climVals = [lo hi];
+                    cmapData = gray(256);   % raw wave axis displays in grayscale
+                case 'storage'
+                    if ~isfield(mre,'StorageModulus') || isempty(mre.StorageModulus), return; end
+                    I = double(mre.StorageModulus(:,:,min(sl,size(mre.StorageModulus,3))));
+                    climVals = app.AppData.StiffCLim;
+                    cmapData = mreStiffCmap();
+                case 'loss'
+                    if ~isfield(mre,'LossModulus') || isempty(mre.LossModulus), return; end
+                    I = double(mre.LossModulus(:,:,min(sl,size(mre.LossModulus,3))));
+                    lossMax = app.AppData.LossMax;
+                    if ~isfinite(lossMax) || lossMax <= 0, lossMax = 2; end
+                    climVals = [-lossMax lossMax];
                     cmapData = mreWaveCmap();
                 otherwise  % 'mag'
                     I = getMREMagnitudeForROI(app, sl);
