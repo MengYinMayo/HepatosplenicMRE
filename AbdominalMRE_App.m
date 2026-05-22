@@ -2377,8 +2377,6 @@ function updateOfflineReconEnabled(app)
                     return
                 end
 
-                nS00 = numel(s00Files);
-
                 % Load new stiffness, wave, and confidence from quant DICOMs
                 % and replace the currently displayed (online/masked) versions.
                 dlg.Message = 'Loading offline recon stiffness, wave and confidence...';
@@ -2485,39 +2483,10 @@ function updateOfflineReconEnabled(app)
                     loadNote = sprintf('\n\nReplaced in MRE tab: %s', strjoin(loadedFields,', '));
                 end
 
-                % Collect unique SeriesDescriptions from quant folder for diagnostics.
-                diagNote = '';
-                try
-                    allQFiles_ = listDicomFiles(quantDir);
-                    seenD_ = containers.Map('KeyType','char','ValueType','logical');
-                    descList_ = {};
-                    for kk_ = 1:numel(allQFiles_)
-                        try
-                            inf_ = dicominfo(allQFiles_{kk_}, 'UseDictionaryVR', true);
-                            if isfield(inf_,'SeriesDescription')
-                                dd_ = strtrim(char(inf_.SeriesDescription));
-                                if ~isempty(dd_) && ~isKey(seenD_, dd_)
-                                    seenD_(dd_) = true;
-                                    descList_{end+1} = dd_; %#ok<AGROW>
-                                end
-                            end
-                        catch, end
-                    end
-                    if ~isempty(descList_)
-                        diagNote = sprintf('\n\nSeries descriptions in quant/:\n  %s', ...
-                                          strjoin(descList_, '\n  '));
-                    end
-                catch, end
-
                 msg  = sprintf(['Offline recon completed.%s\n\n' ...
                     'Input:  %s\nOutput: %s\n\n' ...
-                    'S00* (shear modulus):    %d files\n' ...
-                    'S21* (loss modulus):     %d files\n' ...
-                    'S22* (storage modulus):  %d files%s\n\n' ...
                     'Open the output folder?'], ...
-                    loadNote, inputDir, quantDir, nS00, ...
-                    numel(dir(fullfile(quantDir,'S21*'))), ...
-                    numel(dir(fullfile(quantDir,'S22*'))), diagNote);
+                    loadNote, inputDir, quantDir);
                 answer = uiconfirm(app.UIFigure, msg, 'Offline Recon Complete', ...
                     'Options',{'Open folder','Close'}, ...
                     'DefaultOption','Open folder','Icon','success');
@@ -2532,7 +2501,7 @@ function updateOfflineReconEnabled(app)
                 end
 
                 app.AppData.PhilipsMREQuantDir = quantDir;
-                setStatus(app, sprintf('Offline recon done: %s  (%d S00* files)', quantDir, nS00));
+                setStatus(app, sprintf('Offline recon done: %s', quantDir));
 
             catch ME
                 try, if exist('dlg','var') && isvalid(dlg), close(dlg); end; catch, end
