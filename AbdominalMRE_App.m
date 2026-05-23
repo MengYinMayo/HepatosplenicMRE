@@ -1388,11 +1388,11 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
             rg = uigridlayout(roiPnl,[14 1]);
-            rg.RowHeight   = {24,36,24,36,24,36,24,36,24,22,24,36,'1x',36};
+            rg.RowHeight   = {36,36,24,36,24,36,24,36,24,22,24,36,'1x',36};
             rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
             uilabel(rg,'Text','Stiffness ROIs (same-slice, any panel):','FontSize',11, ...
-                'FontWeight','bold','FontColor',[0.3 0.3 0.3]);
+                'FontWeight','bold','FontColor',[0.3 0.3 0.3],'WordWrap','on');
 
             app.BtnROI_LiverMRE = roiBtn(rg,2,'Liver stiffness', ...
                 [0.15 0.85 0.15],[1 1 1]);
