@@ -2376,6 +2376,34 @@ function updateOfflineReconEnabled(app)
         end
 
         function onOfflineReconBtn(app)
+            % Warn and confirm if the user has drawn any MRE ROIs that will be lost.
+            try
+                mreROINames = {'LiverMRE','SpleenMRE','MuscleMRE','FatMRE'};
+                hasROIs = false;
+                for ri = 1:numel(mreROINames)
+                    try
+                        if ~isempty(fieldnames(app.AppData.ROIs.(mreROINames{ri}).Slices))
+                            hasROIs = true; break;
+                        end
+                    catch
+                    end
+                end
+                if hasROIs
+                    sel = uiconfirm(app.UIFigure, ...
+                        ['Running offline recon will reload all MRE images and ' ...
+                         'clear every ROI you have drawn on this study.' newline newline ...
+                         'All MRE ROIs will be permanently lost. Proceed?'], ...
+                        'Offline Recon — Clear ROIs?', ...
+                        'Options', {'Proceed & clear ROIs', 'Cancel'}, ...
+                        'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
+                    if ~strcmp(sel, 'Proceed & clear ROIs'), return; end
+                    % Clear all MRE ROIs before proceeding
+                    for ri = 1:numel(mreROINames)
+                        app.AppData.ROIs.(mreROINames{ri}) = struct('Slices', struct());
+                    end
+                end
+            catch
+            end
             try
                 % Locate the mmdi recon folder in the MATLAB user directory
                 up = strtrim(strsplit(userpath, pathsep));
@@ -5601,7 +5629,7 @@ function tf = shouldBypassGlobalHotkeys(app)
                 end
                 safeMREAxesImage(app.AxMREMag, Msl, [magLo magHi], 'gray', 'MREBaseMag');
                 title(app.AxMREMag, sprintf('%s\n[display %.0f to %.0f]', magTitle, magLo, magHi), ...
-                    'FontSize', 9, 'Interpreter', 'none');
+                    'FontSize', 12, 'Interpreter', 'none', 'Color', [0.72 0.72 0.72], 'FontWeight', 'normal');
             end
 
             if ~strcmp(freezeKey,'raw')
@@ -5637,7 +5665,7 @@ function tf = shouldBypassGlobalHotkeys(app)
                 stiffMap = mreStiffCmap();
                 safeMREAxesImage(app.AxMREStiff, S, app.AppData.StiffCLim, stiffMap, 'MREBaseStiff');
                 try; colormap(app.AxMREStiff, stiffMap); catch; end
-                title(app.AxMREStiff, sprintf('G*  sl %d/%d', slS, nZS), ...
+                title(app.AxMREStiff, sprintf('Shear Stiffness Abs(G*)  sl %d/%d', slS, nZS), ...
                     'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
                 % Storage modulus — same colormap and scale as stiffness.
                 if isfield(mre,'StorageModulus') && ~isempty(mre.StorageModulus)
@@ -5646,12 +5674,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                     Stor   = double(squeeze(mre.StorageModulus(:,:,slStor)));
                     safeMREAxesImage(app.AxMREStorage, Stor, app.AppData.StiffCLim, stiffMap, 'MREBaseStorage');
                     try; colormap(app.AxMREStorage, stiffMap); catch; end
-                    title(app.AxMREStorage, sprintf("G'  sl %d/%d", slStor, nZStor), ...
+                    title(app.AxMREStorage, sprintf("Storage Modulus G' or Re(G*)  sl %d/%d", slStor, nZStor), ...
                         'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
                     app.AppData.DispStorage = Stor;
                 end
                 % Shared colorbar for G* and G' (label indicates both).
-                renderColorStrip(app.AxMREStiffBar, stiffMap, app.AppData.StiffCLim, [], 'G*, G'' (kPa)');
+                renderColorStrip(app.AxMREStiffBar, stiffMap, app.AppData.StiffCLim, [], "Abs(G*) or G' or Re(G*) (kPa)");
                 try; colormap(app.AxMREStiffBar, stiffMap); catch; end
                 if app.AppData.ShowConfMask && isfield(mre,'LapC') && ~isempty(mre.LapC)
                     lowConf = double(squeeze(mre.LapC(:,:,slL))) < app.AppData.ConfThresh;
@@ -5672,9 +5700,9 @@ function tf = shouldBypassGlobalHotkeys(app)
                 app.AppData.LossCLim = lossCLim;
                 safeMREAxesImage(app.AxMRELoss, Lmod, lossCLim, lossMap, 'MREBaseLoss');
                 try; colormap(app.AxMRELoss, lossMap); catch; end
-                title(app.AxMRELoss, sprintf('Im(G*)  sl %d/%d', slLoss, nZLoss), ...
+                title(app.AxMRELoss, sprintf("Loss Modulus G'' or Im(G*)  sl %d/%d", slLoss, nZLoss), ...
                     'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
-                renderColorStrip(app.AxMRELossBar, lossMap, lossCLim, [lossCLim(1) 0 lossCLim(2)], 'Im(G*) (kPa)');
+                renderColorStrip(app.AxMRELossBar, lossMap, lossCLim, [lossCLim(1) 0 lossCLim(2)], "G'' or Im(G*) (kPa)");
                 try; colormap(app.AxMRELossBar, lossMap); catch; end
                 app.AppData.DispLoss = Lmod;
             end
