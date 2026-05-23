@@ -2397,10 +2397,12 @@ function updateOfflineReconEnabled(app)
                         'Options', {'Proceed & clear ROIs', 'Cancel'}, ...
                         'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
                     if ~strcmp(sel, 'Proceed & clear ROIs'), return; end
-                    % Clear all MRE ROIs before proceeding
+                    % Clear all MRE ROIs and update both MRE tab and Results tab
                     for ri = 1:numel(mreROINames)
                         app.AppData.ROIs.(mreROINames{ri}) = struct('Slices', struct());
                     end
+                    try, app.updateAllMREStats();  catch, end
+                    try, app.updateResultsTable(); catch, end
                 end
             catch
             end
