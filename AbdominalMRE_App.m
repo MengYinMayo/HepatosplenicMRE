@@ -375,6 +375,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
         EdtFatConfThresh    matlab.ui.control.NumericEditField
         BtnClearMREROIs     matlab.ui.control.Button
         BtnOfflineRecon     matlab.ui.control.Button
+        BtnStiffGrad        matlab.ui.control.Button
 
         % Results tab
         ResultsTab              matlab.ui.container.Tab
@@ -1387,8 +1388,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             roiPnl = uipanel(app.MREGrid,'Title','MRE ROI Tools', ...
                 'FontSize',12,'FontWeight','bold');
             roiPnl.Layout.Column = 2;
-            rg = uigridlayout(roiPnl,[14 1]);
-            rg.RowHeight   = {24,36,24,36,24,36,24,36,24,22,24,36,'1x',36};
+            rg = uigridlayout(roiPnl,[15 1]);
+            rg.RowHeight   = {24,36,24,36,24,36,24,36,24,22,24,36,36,'1x',36};
             rg.Padding=[4 4 4 4]; rg.RowSpacing=4;
 
             uilabel(rg,'Text','Stiffness ROIs:','FontSize',11, ...
@@ -1468,8 +1469,17 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             app.BtnOfflineRecon.Enable = 'off';
             app.BtnOfflineRecon.ButtonPushedFcn = @(~,~)app.onOfflineReconBtn();
 
+            app.BtnStiffGrad = uibutton(rg,'push');
+            app.BtnStiffGrad.Layout.Row = 13;
+            app.BtnStiffGrad.Text = 'Stiffness Gradient (kPa/mm)';
+            app.BtnStiffGrad.FontSize = 11; app.BtnStiffGrad.FontWeight = 'bold';
+            app.BtnStiffGrad.BackgroundColor = [0.10 0.45 0.35];
+            app.BtnStiffGrad.FontColor = [1 1 1];
+            app.BtnStiffGrad.Tooltip = 'Measure liver stiffness gradient: draw capsule contour and mark IVC';
+            app.BtnStiffGrad.ButtonPushedFcn = @(~,~)app.onStiffGradBtn();
+
             app.LblMREInfo = uilabel(rg);
-            app.LblMREInfo.Layout.Row=13;
+            app.LblMREInfo.Layout.Row=14;
             app.LblMREInfo.Text = sprintf(['Choose organ, click target panel, hotkeys:' char(10) ...
                 'F = freehand → edit polygon → dbl-click confirm' char(10) ...
                 'D = seed + auto on Magnitude' char(10) ...
@@ -1478,7 +1488,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             app.LblMREInfo.FontSize=11; app.LblMREInfo.WordWrap='on';
             app.LblMREInfo.FontColor=[0.45 0.45 0.45];
 
-            app.BtnClearMREROIs = roiBtn(rg,14,'Clear this slice',...
+            app.BtnClearMREROIs = roiBtn(rg,15,'Clear this slice',...
                 [0.72 0.72 0.72],[0.2 0.2 0.2]);
             app.BtnClearMREROIs.ButtonPushedFcn = @(~,~)app.clearMRESlice();
         end
@@ -4408,6 +4418,248 @@ function I = getMREMagnitudeForROI(app, sl)
             if ~isempty(app.AppData.MRE)
                 refreshMRE(app);
             end
+        end
+
+        function onStiffGradBtn(app)
+        % Popup stiffness-gradient tool: user draws liver capsule + marks IVC,
+        % then selects a distance range on the mean stiffness profile to fit slope.
+            mre = app.AppData.MRE;
+            if isempty(mre) || ~isfield(mre,'S') || isempty(mre.S)
+                uialert(app.UIFigure,'No stiffness map loaded.','Stiffness Gradient');
+                return;
+            end
+
+            sl        = max(1, min(app.AppData.MRESlice, size(mre.S,3)));
+            S         = double(mre.S(:,:,sl));
+            stiffCLim = app.AppData.StiffCLim;
+            confThr   = app.AppData.ConfThresh;
+
+            % Magnitude
+            Mag = [];
+            try
+                if isfield(mre,'M_raw') && ~isempty(mre.M_raw)
+                    Mag = double(squeeze(mre.M_raw(:,:,min(sl,size(mre.M_raw,3)),1)));
+                elseif isfield(mre,'M') && ~isempty(mre.M)
+                    if ndims(mre.M)==4
+                        Mag = double(mre.M(:,:,min(sl,size(mre.M,3)),1));
+                    else
+                        Mag = double(mre.M(:,:,min(sl,size(mre.M,3))));
+                    end
+                end
+            catch; end
+
+            % Confidence
+            LapC = [];
+            try
+                if isfield(mre,'LapC') && ~isempty(mre.LapC)
+                    LapC = double(mre.LapC(:,:,min(sl,size(mre.LapC,3))));
+                end
+            catch; end
+
+            % Pixel spacing (mm)
+            pixSp = 1;
+            try
+                if isfield(mre,'H') && isfield(mre.H,'PixelSpacing')
+                    pixSp = double(mre.H.PixelSpacing(1));
+                end
+            catch; end
+
+            stiffMap = mreStiffCmap();
+
+            % ── Step 1: select IVC point and draw liver capsule ──────────────
+            fig1 = figure('Name', sprintf('Stiffness Gradient  Slice %d — Step 1: mark IVC then draw capsule', sl), ...
+                'NumberTitle','off','Units','normalized','Position',[0.04 0.08 0.90 0.42]);
+
+            ax1 = subplot(1,3,1);
+            if ~isempty(Mag)
+                imagesc(ax1, mat2gray(Mag)); colormap(ax1, gray); axis(ax1,'image','off');
+            else
+                imagesc(ax1, S, stiffCLim); colormap(ax1, stiffMap); axis(ax1,'image','off');
+            end
+            title(ax1,'Step 1: click IVC point  →  Step 2: draw liver capsule (dbl-click to close)');
+
+            ax2 = subplot(1,3,2);
+            imagesc(ax2, S, stiffCLim); colormap(ax2, stiffMap); axis(ax2,'image','off');
+            colorbar(ax2); title(ax2, sprintf('Stiffness (kPa)  sl %d', sl));
+
+            ax3 = subplot(1,3,3);
+            if ~isempty(LapC)
+                imagesc(ax3, LapC, [0 1]); colormap(ax3, gray); axis(ax3,'image','off');
+                title(ax3, sprintf('Confidence  (thr=%.2f)', confThr));
+            else
+                axis(ax3,'off'); text(ax3,0.5,0.5,'No confidence map', ...
+                    'Units','normalized','HorizontalAlignment','center');
+            end
+
+            % Pick IVC point
+            figure(fig1); axes(ax1);
+            set(fig1,'Pointer','crosshair');
+            [xc, yc] = ginput(1);
+            if isempty(xc), close(fig1); return; end
+            endPoint = [xc(1) yc(1)];
+            hold(ax1,'on');
+            plot(ax1, endPoint(1), endPoint(2), 'r*', 'MarkerSize',12,'LineWidth',2);
+            hold(ax1,'off');
+
+            % Draw freehand capsule
+            hRoi = drawfreehand(ax1, 'Color','yellow','LineWidth',1.5);
+            try, wait(hRoi); catch; end
+            if ~isvalid(hRoi) || isempty(hRoi.Position)
+                close(fig1); return;
+            end
+            boundaryPoints = hRoi.Position;
+            close(fig1);
+
+            if size(boundaryPoints,1) < 3
+                uialert(app.UIFigure,'Too few capsule points drawn.','Stiffness Gradient');
+                return;
+            end
+
+            % ── Step 2: compute 1-D profiles ────────────────────────────────
+            numPts = 100;
+            allDist = []; allVal = [];
+            relDist = []; relVal = [];
+
+            for ii = 1:size(boundaryPoints,1)
+                sp = boundaryPoints(ii,:);
+                dist_px = sqrt((endPoint(1)-sp(1))^2 + (endPoint(2)-sp(2))^2);
+                dist_mm = dist_px * pixSp;
+                adjDist = (1:numPts)' * dist_mm / numPts;
+
+                try
+                    [~,~,sProf] = improfile(S,    [sp(1) endPoint(1)],[sp(2) endPoint(2)], numPts);
+                catch; continue; end
+
+                reliableIdx = isfinite(sProf);
+                if ~isempty(LapC)
+                    try
+                        [~,~,cProf] = improfile(LapC,[sp(1) endPoint(1)],[sp(2) endPoint(2)], numPts);
+                        reliableIdx = reliableIdx & (cProf > confThr);
+                    catch; end
+                end
+
+                allDist = [allDist; adjDist];          %#ok<AGROW>
+                allVal  = [allVal;  sProf];            %#ok<AGROW>
+                relDist = [relDist; adjDist(reliableIdx)]; %#ok<AGROW>
+                relVal  = [relVal;  sProf(reliableIdx)];   %#ok<AGROW>
+            end
+
+            % ── Step 3: bin into 0.5-mm distance bins (ignore first 10 mm) ──
+            validIdx  = relDist > 10;
+            rd2 = relDist(validIdx);
+            rv2 = relVal(validIdx);
+
+            roundedD  = round(rd2 / 0.5) * 0.5;
+            uniqueD   = unique(roundedD);
+            meanDist  = []; meanStiff = []; stdStiff = [];
+
+            for di = 1:numel(uniqueD)
+                d   = uniqueD(di);
+                idx = roundedD == d;
+                if nnz(idx) >= 10
+                    meanDist(end+1,1)  = d;              %#ok<AGROW>
+                    meanStiff(end+1,1) = mean(rv2(idx)); %#ok<AGROW>
+                    stdStiff(end+1,1)  = std(rv2(idx));  %#ok<AGROW>
+                end
+            end
+
+            if isempty(meanDist)
+                uialert(app.UIFigure, ...
+                    'No distance bins had ≥10 reliable samples. Try a larger capsule region or lower confidence threshold.', ...
+                    'Stiffness Gradient');
+                return;
+            end
+
+            % ── Step 4: result figure + slope selection ─────────────────────
+            fig2 = figure('Name', sprintf('Stiffness Gradient  Slice %d — select slope region', sl), ...
+                'NumberTitle','off','Units','normalized','Position',[0.04 0.06 0.90 0.85]);
+
+            ax1 = subplot(3,3,1);
+            if ~isempty(Mag)
+                imagesc(ax1, mat2gray(Mag)); colormap(ax1, gray);
+            else
+                imagesc(ax1, S, stiffCLim); colormap(ax1, stiffMap);
+            end
+            axis(ax1,'image','off');
+            hold(ax1,'on');
+            plot(ax1, endPoint(1), endPoint(2), 'r*','MarkerSize',12,'LineWidth',2);
+            plot(ax1, boundaryPoints(:,1), boundaryPoints(:,2),'y-','LineWidth',2);
+            hold(ax1,'off');
+            title(ax1,'Magnitude + capsule + IVC');
+
+            ax2 = subplot(3,3,2);
+            imagesc(ax2, S, stiffCLim); colormap(ax2, stiffMap);
+            axis(ax2,'image','off'); colorbar(ax2);
+            hold(ax2,'on');
+            for ii = 1:10:size(boundaryPoints,1)
+                plot(ax2,[boundaryPoints(ii,1) endPoint(1)], ...
+                         [boundaryPoints(ii,2) endPoint(2)],'y-','LineWidth',0.5);
+            end
+            hold(ax2,'off');
+            title(ax2,'Stiffness map + profiles');
+
+            ax3 = subplot(3,3,3);
+            if ~isempty(LapC)
+                imagesc(ax3, LapC > confThr, [0 1]); colormap(ax3, gray);
+                axis(ax3,'image','off');
+                title(ax3, sprintf('Confidence > %.2f', confThr));
+            else
+                axis(ax3,'off');
+            end
+
+            subplot(3,3,[4 5 6]);
+            scatter(allDist, allVal, 4, [0.55 0.65 0.85], 'filled', 'MarkerFaceAlpha',0.35);
+            hold on;
+            scatter(relDist, relVal, 4, [0.85 0.25 0.25], 'filled', 'MarkerFaceAlpha',0.50);
+            xlabel('Distance from capsule to IVC (mm)'); ylabel('Stiffness (kPa)');
+            title('Stiffness profiles'); grid on;
+            legend('All samples', sprintf('Reliable (conf>%.2f)',confThr),'Location','northwest');
+            hold off;
+
+            hMean = subplot(3,3,[7 8 9]);
+            errorbar(meanDist, meanStiff, stdStiff, 'r.-','LineWidth',1.5);
+            grid on;
+            xlabel('Distance from capsule to IVC (mm)'); ylabel('Stiffness (kPa)');
+            title('Mean stiffness profile — click two points to define slope region');
+
+            % User picks slope region
+            figure(fig2); axes(hMean);
+            [xSel, ~] = ginput(2);
+
+            if numel(xSel) < 2 || ~isvalid(fig2)
+                setStatus(app,'Stiffness gradient: slope selection cancelled.');
+                return;
+            end
+
+            xStart = min(xSel); xEnd = max(xSel);
+            hold(hMean,'on');
+            yl = ylim(hMean);
+            fill(hMean,[xStart xEnd xEnd xStart],[yl(1) yl(1) yl(2) yl(2)], ...
+                'cyan','FaceAlpha',0.12,'EdgeColor','none');
+            errorbar(hMean, meanDist, meanStiff, stdStiff, 'r.-','LineWidth',1.5);
+
+            segIdx = meanDist >= xStart & meanDist <= xEnd;
+            if nnz(segIdx) < 2
+                uialert(app.UIFigure,'Too few points in the selected range.','Stiffness Gradient');
+                hold(hMean,'off'); return;
+            end
+
+            xSeg = meanDist(segIdx);
+            ySeg = meanStiff(segIdx);
+            coeff = polyfit(xSeg, ySeg, 1);
+            slope = coeff(1);
+
+            plot(hMean, xSeg, polyval(coeff,xSeg), 'k--','LineWidth',2.5);
+            text(hMean, xEnd - 0.25*(xEnd-xStart), yl(1)+0.10*(yl(2)-yl(1)), ...
+                sprintf('Slope = %.4f kPa/mm', slope), ...
+                'FontSize',12,'FontWeight','bold','BackgroundColor','w','Margin',3);
+            hold(hMean,'off');
+            title(hMean, sprintf('Mean stiffness profile  (slope = %.4f kPa/mm)', slope));
+            sgtitle(fig2, sprintf('Stiffness Gradient — Slice %d   slope = %.4f kPa/mm', sl, slope), ...
+                'FontSize',13,'FontWeight','bold');
+
+            setStatus(app, sprintf('Stiffness gradient (slice %d): %.4f kPa/mm', sl, slope));
+            fprintf('Stiffness gradient slice %d: %.4f kPa/mm\n', sl, slope);
         end
 
         
