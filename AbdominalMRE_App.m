@@ -430,6 +430,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
         ValMuscleMREStiff   matlab.ui.control.Label
         ValMuscleMREStiffIQR matlab.ui.control.Label
         ValFatMREStiff      matlab.ui.control.Label
+        ValStiffGrad        matlab.ui.control.Label
+        ValStiffGradSlice   matlab.ui.control.Label
         ValFatMREStiffIQR   matlab.ui.control.Label
         % The legacy *Vol properties below are retained only for code
         % compatibility with earlier revisions. The visible panel now
@@ -525,6 +527,8 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'ConfThresh',   0.90, ...
             'MagWinLo',     0, ...
             'MagWinHi',     0, ...
+            'StiffGrad',    NaN, ...
+            'StiffGradSlice', NaN, ...
             'MREObjectConf', struct('LiverMRE',0.90,'SpleenMRE',0.75,'MuscleMRE',0.50,'FatMRE',0.90), ...
             'MRETechFailure', struct('LiverMRE',false,'SpleenMRE',false,'MuscleMRE',false,'FatMRE',false), ...
             'MREROIActive', false, ...
@@ -1568,11 +1572,13 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                 {'Liver stiffness','Liver N/vol.', ...
                  'Spleen stiffness','Spleen N/vol.', ...
                  'Muscle stiffness','Muscle N/vol.', ...
-                 'Fat stiffness','Fat N/vol.'}, ...
+                 'Fat stiffness','Fat N/vol.', ...
+                 'Stiffness gradient','Gradient slice'}, ...
                 {'ValLiverStiff','ValLiverStiffIQR', ...
                  'ValSpleenStiff','ValSpleenStiffIQR', ...
                  'ValMuscleMREStiff','ValMuscleMREStiffIQR', ...
-                 'ValFatMREStiff','ValFatMREStiffIQR'});
+                 'ValFatMREStiff','ValFatMREStiffIQR', ...
+                 'ValStiffGrad','ValStiffGradSlice'});
         end
 
         function addMeasSection(app, row, sectionTitle, labels, propNames)
@@ -4432,7 +4438,7 @@ function I = getMREMagnitudeForROI(app, sl)
             sl        = max(1, min(app.AppData.MRESlice, size(mre.S,3)));
             S         = double(mre.S(:,:,sl));
             stiffCLim = app.AppData.StiffCLim;
-            confThr   = app.AppData.ConfThresh;
+            confThr   = 0.98;   % hard-coded for gradient: only highest-confidence pixels
 
             % Magnitude
             Mag = [];
@@ -4658,6 +4664,13 @@ function I = getMREMagnitudeForROI(app, sl)
             sgtitle(fig2, sprintf('Stiffness Gradient — Slice %d   slope = %.4f kPa/mm', sl, slope), ...
                 'FontSize',13,'FontWeight','bold');
 
+            % Store result and update sidebar + Results tab
+            app.AppData.StiffGrad      = slope;
+            app.AppData.StiffGradSlice = sl;
+            try, app.ValStiffGrad.Text      = sprintf('%.4f kPa/mm', slope); catch, end
+            try, app.ValStiffGradSlice.Text = sprintf('Slice %d', sl);        catch, end
+            try, app.updateResultsTable(); catch, end
+
             setStatus(app, sprintf('Stiffness gradient (slice %d): %.4f kPa/mm', sl, slope));
             fprintf('Stiffness gradient slice %d: %.4f kPa/mm\n', sl, slope);
         end
@@ -4799,6 +4812,10 @@ function setStiffScale(app, newClim)
                 app.AppData.MagWinHi = 0;
                 app.EdtMagWinLo.Value = 0;
                 app.EdtMagWinHi.Value = 0;
+                app.AppData.StiffGrad      = NaN;
+                app.AppData.StiffGradSlice = NaN;
+                app.ValStiffGrad.Text      = '—';
+                app.ValStiffGradSlice.Text = '—';
             catch, end
             try, populateLocalizerTab(app); catch, end
             try, populateDixonTab(app);    catch, end
@@ -6609,6 +6626,20 @@ function tf = shouldBypassGlobalHotkeys(app)
                         end
                     end
                 end
+
+                % ── Stiffness gradient ────────────────────────────────────
+                try
+                    sg = app.AppData.StiffGrad;
+                    sgSl = app.AppData.StiffGradSlice;
+                    if isfinite(sg)
+                        slLocTxt = sprintf('Sl%d', sgSl);
+                        if ~isempty(mreSliceZ) && sgSl >= 1 && sgSl <= numel(mreSliceZ)
+                            slLocTxt = sprintf('Sl%d (%.1fmm)', sgSl, mreSliceZ(sgSl));
+                        end
+                        rows{end+1} = {slLocTxt, 'Stiffness gradient', ...  %#ok<AGROW>
+                            '', sprintf('%.4f', sg), 'kPa/mm', 'conf≥0.98'};
+                    end
+                catch, end
 
                 if isempty(rows)
                     rows = {{'—','—','—','—','—','No ROIs drawn yet'}};
