@@ -527,8 +527,10 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'ConfThresh',   0.90, ...
             'MagWinLo',     0, ...
             'MagWinHi',     0, ...
-            'StiffGrad',    NaN, ...
-            'StiffGradSlice', NaN, ...
+            'StiffGrad',          NaN, ...
+            'StiffGradSlice',     NaN, ...
+            'StiffGradNProfiles', NaN, ...
+            'StiffGradAvgLenMm',  NaN, ...
             'MREObjectConf', struct('LiverMRE',0.90,'SpleenMRE',0.75,'MuscleMRE',0.50,'FatMRE',0.90), ...
             'MRETechFailure', struct('LiverMRE',false,'SpleenMRE',false,'MuscleMRE',false,'FatMRE',false), ...
             'MREROIActive', false, ...
@@ -4664,15 +4666,22 @@ function I = getMREMagnitudeForROI(app, sl)
             sgtitle(fig2, sprintf('Stiffness Gradient — Slice %d   slope = %.4f kPa/mm', sl, slope), ...
                 'FontSize',13,'FontWeight','bold');
 
+            % Profile count and average length (capsule vertex → IVC, in mm)
+            nProfiles  = size(boundaryPoints, 1);
+            profLensMm = sqrt((endPoint(1)-boundaryPoints(:,1)).^2 + ...
+                              (endPoint(2)-boundaryPoints(:,2)).^2) * pixSp;
+            avgLenMm   = mean(profLensMm);
+
             % Store result and update sidebar + Results tab
-            app.AppData.StiffGrad      = slope;
-            app.AppData.StiffGradSlice = sl;
-            try, app.ValStiffGrad.Text      = sprintf('%.4f kPa/mm', slope); catch, end
-            try, app.ValStiffGradSlice.Text = sprintf('Slice %d', sl);        catch, end
+            app.AppData.StiffGrad          = slope;
+            app.AppData.StiffGradSlice     = sl;
+            app.AppData.StiffGradNProfiles = nProfiles;
+            app.AppData.StiffGradAvgLenMm  = avgLenMm;
+            try, app.ValStiffGrad.Text      = sprintf('%.4f kPa/mm', slope);  catch, end
+            try, app.ValStiffGradSlice.Text = sprintf('Slice %d', sl);         catch, end
             try, app.updateResultsTable(); catch, end
 
             setStatus(app, sprintf('Stiffness gradient (slice %d): %.4f kPa/mm', sl, slope));
-            fprintf('Stiffness gradient slice %d: %.4f kPa/mm\n', sl, slope);
         end
 
         
@@ -4812,10 +4821,12 @@ function setStiffScale(app, newClim)
                 app.AppData.MagWinHi = 0;
                 app.EdtMagWinLo.Value = 0;
                 app.EdtMagWinHi.Value = 0;
-                app.AppData.StiffGrad      = NaN;
-                app.AppData.StiffGradSlice = NaN;
-                app.ValStiffGrad.Text      = '—';
-                app.ValStiffGradSlice.Text = '—';
+                app.AppData.StiffGrad          = NaN;
+                app.AppData.StiffGradSlice     = NaN;
+                app.AppData.StiffGradNProfiles = NaN;
+                app.AppData.StiffGradAvgLenMm  = NaN;
+                app.ValStiffGrad.Text          = '—';
+                app.ValStiffGradSlice.Text     = '—';
             catch, end
             try, populateLocalizerTab(app); catch, end
             try, populateDixonTab(app);    catch, end
@@ -6629,15 +6640,22 @@ function tf = shouldBypassGlobalHotkeys(app)
 
                 % ── Stiffness gradient ────────────────────────────────────
                 try
-                    sg = app.AppData.StiffGrad;
-                    sgSl = app.AppData.StiffGradSlice;
+                    sg    = app.AppData.StiffGrad;
+                    sgSl  = app.AppData.StiffGradSlice;
+                    sgN   = app.AppData.StiffGradNProfiles;
+                    sgLen = app.AppData.StiffGradAvgLenMm;
                     if isfinite(sg)
                         slLocTxt = sprintf('Sl%d', sgSl);
                         if ~isempty(mreSliceZ) && sgSl >= 1 && sgSl <= numel(mreSliceZ)
                             slLocTxt = sprintf('Sl%d (%.1fmm)', sgSl, mreSliceZ(sgSl));
                         end
+                        if isfinite(sgN) && isfinite(sgLen)
+                            profTxt = sprintf('%d profiles × %.0f mm avg', sgN, sgLen);
+                        else
+                            profTxt = '';
+                        end
                         rows{end+1} = {slLocTxt, 'Stiffness gradient', ...  %#ok<AGROW>
-                            '', sprintf('%.4f', sg), 'kPa/mm', 'conf≥0.98'};
+                            profTxt, sprintf('%.4f', sg), 'kPa/mm', 'conf≥0.98'};
                     end
                 catch, end
 
