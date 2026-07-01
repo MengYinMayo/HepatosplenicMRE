@@ -527,10 +527,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
             'ConfThresh',   0.90, ...
             'MagWinLo',     0, ...
             'MagWinHi',     0, ...
-            'StiffGrad',          NaN, ...
-            'StiffGradSlice',     NaN, ...
-            'StiffGradNProfiles', NaN, ...
-            'StiffGradAvgLenMm',  NaN, ...
+            'StiffGradData',      struct(), ...
             'MREObjectConf', struct('LiverMRE',0.90,'SpleenMRE',0.75,'MuscleMRE',0.50,'FatMRE',0.90), ...
             'MRETechFailure', struct('LiverMRE',false,'SpleenMRE',false,'MuscleMRE',false,'FatMRE',false), ...
             'MREROIActive', false, ...
@@ -4431,6 +4428,7 @@ function I = getMREMagnitudeForROI(app, sl)
         function onStiffGradBtn(app)
         % Popup stiffness-gradient tool: user draws liver capsule + marks IVC,
         % then selects a distance range on the mean stiffness profile to fit slope.
+        % Supports multi-slice: per-slice results stored in AppData.StiffGradData.
             mre = app.AppData.MRE;
             if isempty(mre) || ~isfield(mre,'S') || isempty(mre.S)
                 uialert(app.UIFigure,'No stiffness map loaded.','Stiffness Gradient');
@@ -4473,54 +4471,82 @@ function I = getMREMagnitudeForROI(app, sl)
             catch; end
 
             stiffMap = mreStiffCmap();
+            slKey    = sprintf('sl%d', sl);
+
+            % ── Check for existing data on this slice ────────────────────────
+            endPoint       = [];
+            boundaryPoints = [];
+            useStored      = false;
+
+            if isfield(app.AppData.StiffGradData, slKey)
+                prev = app.AppData.StiffGradData.(slKey);
+                hasPrev = isfield(prev,'endPoint') && ~isempty(prev.endPoint) && ...
+                          isfield(prev,'boundaryPoints') && size(prev.boundaryPoints,1) >= 3;
+                if hasPrev
+                    sel = uiconfirm(app.UIFigure, ...
+                        sprintf('Slice %d already has stiffness gradient data (%.4f kPa/mm).\n\nWhat would you like to do?', ...
+                            sl, prev.slope), ...
+                        'Stiffness Gradient — Slice Already Analyzed', ...
+                        'Options', {'Use stored contour (recompute slope)', 'Redraw contour', 'Cancel'}, ...
+                        'DefaultOption', 1, 'CancelOption', 3);
+                    if strcmp(sel, 'Cancel'), return; end
+                    if strcmp(sel, 'Use stored contour (recompute slope)')
+                        endPoint       = prev.endPoint;
+                        boundaryPoints = prev.boundaryPoints;
+                        useStored      = true;
+                    end
+                end
+            end
 
             % ── Step 1: select IVC point and draw liver capsule ──────────────
-            fig1 = figure('Name', sprintf('Stiffness Gradient  Slice %d — Step 1: mark IVC then draw capsule', sl), ...
-                'NumberTitle','off','Units','normalized','Position',[0.04 0.08 0.90 0.42]);
+            if ~useStored
+                fig1 = figure('Name', sprintf('Stiffness Gradient  Slice %d — Step 1: mark IVC then draw capsule', sl), ...
+                    'NumberTitle','off','Units','normalized','Position',[0.04 0.08 0.90 0.42]);
 
-            ax1 = subplot(1,3,1);
-            if ~isempty(Mag)
-                imagesc(ax1, mat2gray(Mag)); colormap(ax1, gray); axis(ax1,'image','off');
-            else
-                imagesc(ax1, S, stiffCLim); colormap(ax1, stiffMap); axis(ax1,'image','off');
-            end
-            title(ax1,'Step 1: click IVC point  →  Step 2: draw liver capsule (dbl-click to close)');
+                ax1 = subplot(1,3,1);
+                if ~isempty(Mag)
+                    imagesc(ax1, mat2gray(Mag)); colormap(ax1, gray); axis(ax1,'image','off');
+                else
+                    imagesc(ax1, S, stiffCLim); colormap(ax1, stiffMap); axis(ax1,'image','off');
+                end
+                title(ax1,'Step 1: click IVC point  →  Step 2: draw liver capsule (dbl-click to close)');
 
-            ax2 = subplot(1,3,2);
-            imagesc(ax2, S, stiffCLim); colormap(ax2, stiffMap); axis(ax2,'image','off');
-            colorbar(ax2); title(ax2, sprintf('Stiffness (kPa)  sl %d', sl));
+                ax2 = subplot(1,3,2);
+                imagesc(ax2, S, stiffCLim); colormap(ax2, stiffMap); axis(ax2,'image','off');
+                colorbar(ax2); title(ax2, sprintf('Stiffness (kPa)  sl %d', sl));
 
-            ax3 = subplot(1,3,3);
-            if ~isempty(LapC)
-                imagesc(ax3, LapC, [0 1]); colormap(ax3, gray); axis(ax3,'image','off');
-                title(ax3, sprintf('Confidence  (thr=%.2f)', confThr));
-            else
-                axis(ax3,'off'); text(ax3,0.5,0.5,'No confidence map', ...
-                    'Units','normalized','HorizontalAlignment','center');
-            end
+                ax3 = subplot(1,3,3);
+                if ~isempty(LapC)
+                    imagesc(ax3, LapC, [0 1]); colormap(ax3, gray); axis(ax3,'image','off');
+                    title(ax3, sprintf('Confidence  (thr=%.2f)', confThr));
+                else
+                    axis(ax3,'off'); text(ax3,0.5,0.5,'No confidence map', ...
+                        'Units','normalized','HorizontalAlignment','center');
+                end
 
-            % Pick IVC point
-            figure(fig1); axes(ax1);
-            set(fig1,'Pointer','crosshair');
-            [xc, yc] = ginput(1);
-            if isempty(xc), close(fig1); return; end
-            endPoint = [xc(1) yc(1)];
-            hold(ax1,'on');
-            plot(ax1, endPoint(1), endPoint(2), 'r*', 'MarkerSize',12,'LineWidth',2);
-            hold(ax1,'off');
+                % Pick IVC point
+                figure(fig1); axes(ax1);
+                set(fig1,'Pointer','crosshair');
+                [xc, yc] = ginput(1);
+                if isempty(xc), close(fig1); return; end
+                endPoint = [xc(1) yc(1)];
+                hold(ax1,'on');
+                plot(ax1, endPoint(1), endPoint(2), 'r*', 'MarkerSize',12,'LineWidth',2);
+                hold(ax1,'off');
 
-            % Draw freehand capsule
-            hRoi = drawfreehand(ax1, 'Color','yellow','LineWidth',1.5);
-            try, wait(hRoi); catch; end
-            if ~isvalid(hRoi) || isempty(hRoi.Position)
-                close(fig1); return;
-            end
-            boundaryPoints = hRoi.Position;
-            close(fig1);
+                % Draw freehand capsule
+                hRoi = drawfreehand(ax1, 'Color','yellow','LineWidth',1.5);
+                try, wait(hRoi); catch; end
+                if ~isvalid(hRoi) || isempty(hRoi.Position)
+                    close(fig1); return;
+                end
+                boundaryPoints = hRoi.Position;
+                close(fig1);
 
-            if size(boundaryPoints,1) < 3
-                uialert(app.UIFigure,'Too few capsule points drawn.','Stiffness Gradient');
-                return;
+                if size(boundaryPoints,1) < 3
+                    uialert(app.UIFigure,'Too few capsule points drawn.','Stiffness Gradient');
+                    return;
+                end
             end
 
             % ── Step 2: compute 1-D profiles ────────────────────────────────
@@ -4672,16 +4698,82 @@ function I = getMREMagnitudeForROI(app, sl)
                               (endPoint(2)-boundaryPoints(:,2)).^2) * pixSp;
             avgLenMm   = mean(profLensMm);
 
-            % Store result and update sidebar + Results tab
-            app.AppData.StiffGrad          = slope;
-            app.AppData.StiffGradSlice     = sl;
-            app.AppData.StiffGradNProfiles = nProfiles;
-            app.AppData.StiffGradAvgLenMm  = avgLenMm;
-            try, app.ValStiffGrad.Text      = sprintf('%.4f kPa/mm', slope);  catch, end
-            try, app.ValStiffGradSlice.Text = sprintf('Slice %d', sl);         catch, end
-            try, app.updateResultsTable(); catch, end
+            % Store per-slice result
+            entry = struct('slope', slope, 'nProfiles', nProfiles, 'avgLenMm', avgLenMm, ...
+                           'endPoint', endPoint, 'boundaryPoints', boundaryPoints, 'pixSp', pixSp);
+            app.AppData.StiffGradData.(slKey) = entry;
+
+            % Save to file and refresh displays
+            try, app.saveStiffGradFile(sl, entry); catch; end
+            try, app.updateStiffGradSidebar();      catch; end
+            try, app.updateResultsTable();           catch; end
 
             setStatus(app, sprintf('Stiffness gradient (slice %d): %.4f kPa/mm', sl, slope));
+        end
+
+        function updateStiffGradSidebar(app)
+        % Average stiffness gradient across all stored slices and update sidebar labels.
+            data = app.AppData.StiffGradData;
+            keys = fieldnames(data);
+            if isempty(keys)
+                try, app.ValStiffGrad.Text     = '—'; catch; end
+                try, app.ValStiffGradSlice.Text = '—'; catch; end
+                return;
+            end
+            slopes = zeros(numel(keys),1);
+            slNums = zeros(numel(keys),1);
+            for ki = 1:numel(keys)
+                e = data.(keys{ki});
+                slopes(ki) = e.slope;
+                slNums(ki) = str2double(strrep(keys{ki},'sl',''));
+            end
+            avgSlope = mean(slopes);
+            try
+                if numel(slNums) == 1
+                    app.ValStiffGrad.Text     = sprintf('%.4f kPa/mm', avgSlope);
+                    app.ValStiffGradSlice.Text = sprintf('Slice %d', slNums(1));
+                else
+                    app.ValStiffGrad.Text     = sprintf('%.4f kPa/mm (avg %d sl)', avgSlope, numel(slNums));
+                    app.ValStiffGradSlice.Text = sprintf('Sl %s', strjoin(arrayfun(@(x)num2str(x), sort(slNums)','UniformOutput',false), ','));
+                end
+            catch; end
+        end
+
+        function saveStiffGradFile(app, sl, entry)
+        % Save per-slice stiffness gradient data to examPath/stiff_gradient_sl###.mat
+            examPath = '';
+            try, examPath = app.AppData.ExamPath; catch; end
+            if isempty(examPath) || ~isfolder(examPath), return; end
+            fpath = fullfile(examPath, sprintf('stiff_gradient_sl%03d.mat', sl));
+            try
+                save(fpath, '-struct', 'entry');
+            catch ME
+                warning('saveStiffGradFile:fail', '%s', ME.message);
+            end
+        end
+
+        function loadStiffGradFiles(app)
+        % Scan examPath for stiff_gradient_sl*.mat files and populate AppData.StiffGradData.
+            examPath = '';
+            try, examPath = app.AppData.ExamPath; catch; end
+            if isempty(examPath) || ~isfolder(examPath), return; end
+            files = dir(fullfile(examPath, 'stiff_gradient_sl*.mat'));
+            if isempty(files), return; end
+            for fi = 1:numel(files)
+                fname = files(fi).name;
+                tok = regexp(fname, 'stiff_gradient_sl(\d+)\.mat', 'tokens');
+                if isempty(tok), continue; end
+                sl    = str2double(tok{1}{1});
+                slKey = sprintf('sl%d', sl);
+                try
+                    entry = load(fullfile(examPath, fname));
+                    if isfield(entry,'slope') && isfield(entry,'endPoint') && isfield(entry,'boundaryPoints')
+                        app.AppData.StiffGradData.(slKey) = entry;
+                    end
+                catch; end
+            end
+            try, app.updateStiffGradSidebar(); catch; end
+            try, app.updateResultsTable();      catch; end
         end
 
         
@@ -4821,12 +4913,9 @@ function setStiffScale(app, newClim)
                 app.AppData.MagWinHi = 0;
                 app.EdtMagWinLo.Value = 0;
                 app.EdtMagWinHi.Value = 0;
-                app.AppData.StiffGrad          = NaN;
-                app.AppData.StiffGradSlice     = NaN;
-                app.AppData.StiffGradNProfiles = NaN;
-                app.AppData.StiffGradAvgLenMm  = NaN;
-                app.ValStiffGrad.Text          = '—';
-                app.ValStiffGradSlice.Text     = '—';
+                app.AppData.StiffGradData = struct();
+                app.ValStiffGrad.Text     = '—';
+                app.ValStiffGradSlice.Text = '—';
             catch, end
             try, populateLocalizerTab(app); catch, end
             try, populateDixonTab(app);    catch, end
@@ -5833,6 +5922,7 @@ function tf = shouldBypassGlobalHotkeys(app)
             catch
             end
             refreshMRE(app);
+            try, app.loadStiffGradFiles(); catch; end
         end
 
         function refreshMRE(app)
@@ -6638,24 +6728,29 @@ function tf = shouldBypassGlobalHotkeys(app)
                     end
                 end
 
-                % ── Stiffness gradient ────────────────────────────────────
+                % ── Stiffness gradient (one row per analyzed slice) ───────
                 try
-                    sg    = app.AppData.StiffGrad;
-                    sgSl  = app.AppData.StiffGradSlice;
-                    sgN   = app.AppData.StiffGradNProfiles;
-                    sgLen = app.AppData.StiffGradAvgLenMm;
-                    if isfinite(sg)
+                    sgData = app.AppData.StiffGradData;
+                    sgKeys = fieldnames(sgData);
+                    sgNums = zeros(numel(sgKeys),1);
+                    for ki = 1:numel(sgKeys)
+                        sgNums(ki) = str2double(strrep(sgKeys{ki},'sl',''));
+                    end
+                    [~, sOrd] = sort(sgNums);
+                    for ki = sOrd(:)'
+                        e    = sgData.(sgKeys{ki});
+                        sgSl = sgNums(ki);
                         slLocTxt = sprintf('Sl%d', sgSl);
                         if ~isempty(mreSliceZ) && sgSl >= 1 && sgSl <= numel(mreSliceZ)
                             slLocTxt = sprintf('Sl%d (%.1fmm)', sgSl, mreSliceZ(sgSl));
                         end
-                        if isfinite(sgN) && isfinite(sgLen)
-                            profTxt = sprintf('%d profiles × %.0f mm avg', sgN, sgLen);
-                        else
-                            profTxt = '';
+                        profTxt = '';
+                        if isfield(e,'nProfiles') && isfield(e,'avgLenMm') && ...
+                                isfinite(e.nProfiles) && isfinite(e.avgLenMm)
+                            profTxt = sprintf('%d profiles × %.0f mm avg', e.nProfiles, e.avgLenMm);
                         end
                         rows{end+1} = {slLocTxt, 'Stiffness gradient', ...  %#ok<AGROW>
-                            profTxt, sprintf('%.4f', sg), 'kPa/mm', 'conf≥0.98'};
+                            profTxt, sprintf('%.4f', e.slope), 'kPa/mm', 'conf≥0.98'};
                     end
                 catch, end
 
