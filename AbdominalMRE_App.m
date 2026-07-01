@@ -4620,7 +4620,7 @@ function I = getMREMagnitudeForROI(app, sl)
                         sprintf('Stiffness Gradient  Slice %d — select slope region', sl), ...
                         'NumberTitle','off','Units','normalized','Position',[0.04 0.06 0.90 0.88]);
                     set(fig2,'CloseRequestFcn', ...
-                        @(src,~) deal(setappdata(src,'action','cancel'), delete(src)));
+                        @(src,~) app.stiffGradCloseCb(src));
 
                     ax1 = subplot(3,3,1);
                     if ~isempty(Mag)
@@ -4674,17 +4674,17 @@ function I = getMREMagnitudeForROI(app, sl)
                     uicontrol('Parent',fig2,'Style','pushbutton','String','Accept & Save', ...
                         'Units','normalized','Position',[0.03 0.005 0.20 0.04],'FontSize',9, ...
                         'BackgroundColor',[0.15 0.52 0.25],'ForegroundColor','w', ...
-                        'Callback', @(~,~) deal(setappdata(fig2,'action','accept'),uiresume(fig2)));
+                        'Callback', @(~,~) app.stiffGradBtnCb(fig2,'accept'));
                     uicontrol('Parent',fig2,'Style','pushbutton','String','Redo range selection', ...
                         'Units','normalized','Position',[0.26 0.005 0.22 0.04],'FontSize',9, ...
-                        'Callback', @(~,~) deal(setappdata(fig2,'action','redo_range'),uiresume(fig2)));
+                        'Callback', @(~,~) app.stiffGradBtnCb(fig2,'redo_range'));
                     uicontrol('Parent',fig2,'Style','pushbutton','String','Redo contour drawing', ...
                         'Units','normalized','Position',[0.51 0.005 0.22 0.04],'FontSize',9, ...
-                        'Callback', @(~,~) deal(setappdata(fig2,'action','redo_contour'),uiresume(fig2)));
+                        'Callback', @(~,~) app.stiffGradBtnCb(fig2,'redo_contour'));
                     uicontrol('Parent',fig2,'Style','pushbutton','String','Cancel', ...
                         'Units','normalized','Position',[0.76 0.005 0.20 0.04],'FontSize',9, ...
                         'BackgroundColor',[0.62 0.14 0.14],'ForegroundColor','w', ...
-                        'Callback', @(~,~) deal(setappdata(fig2,'action','cancel'),uiresume(fig2)));
+                        'Callback', @(~,~) app.stiffGradBtnCb(fig2,'cancel'));
 
                     % Pick slope region via ginput (Esc exits ginput early)
                     setappdata(fig2, 'action', '');
@@ -4844,7 +4844,21 @@ function I = getMREMagnitudeForROI(app, sl)
             try, app.updateResultsTable();      catch; end
         end
 
-        
+        function stiffGradBtnCb(~, fig, action)
+        % Button callback helper: set appdata action and resume uiwait.
+        % Cannot use deal(setappdata(...), uiresume(...)) because setappdata
+        % returns no outputs, causing 'Too many output arguments' inside deal.
+            setappdata(fig, 'action', action);
+            uiresume(fig);
+        end
+
+        function stiffGradCloseCb(~, fig)
+        % CloseRequestFcn for stiffness gradient fig2: cancel and delete.
+            setappdata(fig, 'action', 'cancel');
+            delete(fig);
+        end
+
+
 function onConfThreshChange(app, src)
     app.AppData.ConfThresh = min(1, max(0, src.Value));
     if src.Value ~= app.AppData.ConfThresh
