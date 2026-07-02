@@ -4427,10 +4427,9 @@ function I = getMREMagnitudeForROI(app, sl)
 
         function onStiffGradBtn(app)
         % Single-window stiffness gradient tool.
-        % Phase 1: magnitude is shown large for IVC click and capsule drawing.
-        % After placement, the same window transitions to Phase 2: compact top-row
-        % images + scatter profiles + mean profile with slope selection.
-        % Redo buttons and Esc are safe at every stage.
+        % Phase 1: large magnitude for IVC click + capsule drawing.
+        % Phase 2 (in-place): compact top-row images + scatter + mean profile.
+        % Interactive confidence threshold updates scatter and mean profile live.
             mre = app.AppData.MRE;
             if isempty(mre) || ~isfield(mre,'S') || isempty(mre.S)
                 uialert(app.UIFigure,'No stiffness map loaded.','Stiffness Gradient');
@@ -4498,7 +4497,8 @@ function I = getMREMagnitudeForROI(app, sl)
 
             needContour = ~useStored;
             slope = NaN; nProfiles = 0; avgLenMm = 0;
-            allDist = []; allVal = []; relDist = []; relVal = [];
+            allDist = []; allVal = []; allConf = [];
+            relDist = []; relVal = [];
             meanDist = []; meanStiff = []; stdStiff = [];
             fig  = [];
             axM  = []; axS  = []; axC  = [];
@@ -4516,8 +4516,7 @@ function I = getMREMagnitudeForROI(app, sl)
                     end
                     set(fig,'CloseRequestFcn', @(src,~) app.stiffGradCloseCb(src));
 
-                    % Phase 1 layout: large magnitude on the left,
-                    % stiffness and confidence on the upper right.
+                    % Phase 1 layout: large magnitude on left
                     axM = axes('Parent',fig,'Units','normalized', ...
                         'Position',[0.03 0.38 0.44 0.57]);
                     axS = axes('Parent',fig,'Units','normalized', ...
@@ -4609,9 +4608,11 @@ function I = getMREMagnitudeForROI(app, sl)
                 end
                 needContour = true;
 
-                % Step 2: compute 1-D profiles capsule -> IVC
+                % Step 2: compute 1-D profiles capsule -> IVC,
+                %         storing raw confidence values for interactive threshold
                 numPts = 100;
-                allDist = []; allVal = []; relDist = []; relVal = [];
+                allDist = []; allVal = []; allConf = [];
+                relDist = []; relVal = [];
                 for ii = 1:size(boundaryPoints,1)
                     sp      = boundaryPoints(ii,:);
                     dist_px = sqrt((endPoint(1)-sp(1))^2 + (endPoint(2)-sp(2))^2);
@@ -4620,15 +4621,22 @@ function I = getMREMagnitudeForROI(app, sl)
                     try
                         [~,~,sProf] = improfile(S,[sp(1) endPoint(1)],[sp(2) endPoint(2)],numPts);
                     catch; continue; end
-                    reliableIdx = isfinite(sProf);
+                    % Confidence values (NaN when no LapC)
+                    cVal = nan(numPts, 1);
                     if ~isempty(LapC)
                         try
                             [~,~,cProf] = improfile(LapC,[sp(1) endPoint(1)],[sp(2) endPoint(2)],numPts);
-                            reliableIdx = reliableIdx & (cProf > confThr);
+                            cVal = cProf;
                         catch; end
+                    end
+                    if isempty(LapC)
+                        reliableIdx = isfinite(sProf);
+                    else
+                        reliableIdx = isfinite(sProf) & (cVal > confThr);
                     end
                     allDist = [allDist; adjDist];               %#ok<AGROW>
                     allVal  = [allVal;  sProf];                 %#ok<AGROW>
+                    allConf = [allConf; cVal];                  %#ok<AGROW>
                     relDist = [relDist; adjDist(reliableIdx)];  %#ok<AGROW>
                     relVal  = [relVal;  sProf(reliableIdx)];    %#ok<AGROW>
                 end
@@ -4660,11 +4668,27 @@ function I = getMREMagnitudeForROI(app, sl)
                                   (endPoint(2)-boundaryPoints(:,2)).^2) * pixSp;
                 avgLenMm   = mean(profLensMm);
 
-                % Create profile axes (persistent across redo_range iterations)
-                axScat = axes('Parent',fig,'Units','normalized','Position',[0.03 0.38 0.90 0.24]);
-                axMean = axes('Parent',fig,'Units','normalized','Position',[0.03 0.08 0.90 0.25]);
+                % Create profile axes
+                axScat = axes('Parent',fig,'Units','normalized','Position',[0.03 0.40 0.90 0.24]);
+                axMean = axes('Parent',fig,'Units','normalized','Position',[0.03 0.10 0.90 0.24]);
 
-                % Create action buttons (persistent across redo_range)
+                % Confidence threshold control (interactive)
+                uicontrol('Parent',fig,'Style','text','String','Conf. threshold:', ...
+                    'Units','normalized','Position',[0.03 0.055 0.10 0.028],'FontSize',9, ...
+                    'HorizontalAlignment','right', ...
+                    'BackgroundColor',[0.15 0.15 0.15],'ForegroundColor',[0.9 0.9 0.9]);
+                hConfEdit = uicontrol('Parent',fig,'Style','edit','String','0.98', ...
+                    'Units','normalized','Position',[0.14 0.055 0.07 0.028],'FontSize',9, ...
+                    'TooltipString','Press Enter to update scatter and mean profile (range 0.5-1)', ...
+                    'Callback', @(src,~) app.updateStiffGradConfThr(src,fig,axScat,axMean, ...
+                                            allDist,allVal,allConf,isempty(LapC)));
+                uicontrol('Parent',fig,'Style','text', ...
+                    'String','(press Enter to update; range 0.5-1)', ...
+                    'Units','normalized','Position',[0.22 0.055 0.35 0.028],'FontSize',8, ...
+                    'HorizontalAlignment','left', ...
+                    'BackgroundColor',[0.15 0.15 0.15],'ForegroundColor',[0.65 0.65 0.65]);
+
+                % Action buttons
                 setappdata(fig, 'action', '');
                 uicontrol('Parent',fig,'Style','pushbutton','String','Accept & Save', ...
                     'Units','normalized','Position',[0.03 0.005 0.20 0.04],'FontSize',9, ...
@@ -4681,12 +4705,28 @@ function I = getMREMagnitudeForROI(app, sl)
                     'BackgroundColor',[0.62 0.14 0.14],'ForegroundColor','w', ...
                     'Callback', @(~,~) app.stiffGradBtnCb(fig,'cancel'));
 
+                % Store profile data in figure for interactive confThr updates
+                setappdata(fig, 'confThr',   confThr);
+                setappdata(fig, 'meanDist',  meanDist);
+                setappdata(fig, 'meanStiff', meanStiff);
+                setappdata(fig, 'stdStiff',  stdStiff);
+                setappdata(fig, 'relDist',   relDist);
+                setappdata(fig, 'relVal',    relVal);
+
                 % ── Inner loop: re-entered on "Redo range selection" ─────────
                 redoRange = true;
                 while redoRange
                     redoRange = false;
 
-                    % Refresh image panels (removes any previous segment highlights)
+                    % Read current confThr (may have been updated by edit box)
+                    confThr   = getappdata(fig, 'confThr');
+                    meanDist  = getappdata(fig, 'meanDist');
+                    meanStiff = getappdata(fig, 'meanStiff');
+                    stdStiff  = getappdata(fig, 'stdStiff');
+                    relDist   = getappdata(fig, 'relDist');
+                    relVal    = getappdata(fig, 'relVal');
+
+                    % Refresh image panels (clear segment highlights)
                     cla(axM);
                     if ~isempty(Mag)
                         imagesc(axM, mat2gray(Mag)); colormap(axM, gray);
@@ -4727,8 +4767,10 @@ function I = getMREMagnitudeForROI(app, sl)
                     scatter(axScat, allDist, allVal, 4, [0.55 0.65 0.85], ...
                         'filled','MarkerFaceAlpha',0.35);
                     hold(axScat,'on');
-                    scatter(axScat, relDist, relVal, 4, [0.85 0.25 0.25], ...
-                        'filled','MarkerFaceAlpha',0.50);
+                    if ~isempty(relDist)
+                        scatter(axScat, relDist, relVal, 4, [0.85 0.25 0.25], ...
+                            'filled','MarkerFaceAlpha',0.50);
+                    end
                     xlabel(axScat,'Distance from capsule to IVC (mm)');
                     ylabel(axScat,'Stiffness (kPa)');
                     title(axScat,'All stiffness profiles'); grid(axScat,'on');
@@ -4738,13 +4780,22 @@ function I = getMREMagnitudeForROI(app, sl)
 
                     % Mean profile
                     cla(axMean);
-                    errorbar(axMean, meanDist, meanStiff, stdStiff, 'r.-','LineWidth',1.5);
-                    grid(axMean,'on');
-                    xlabel(axMean,'Distance from capsule to IVC (mm)');
-                    ylabel(axMean,'Stiffness (kPa)');
-                    title(axMean, ...
-                        'Mean stiffness profile — click two points to define slope region  [Esc = skip to buttons]');
+                    if ~isempty(meanDist)
+                        errorbar(axMean, meanDist, meanStiff, stdStiff, 'r.-','LineWidth',1.5);
+                        grid(axMean,'on');
+                        xlabel(axMean,'Distance from capsule to IVC (mm)');
+                        ylabel(axMean,'Stiffness (kPa)');
+                        title(axMean, ...
+                            'Mean stiffness profile — click two points to define slope region  [Esc = skip to buttons]');
+                    else
+                        axis(axMean,'off');
+                        text(axMean,0.5,0.5, ...
+                            sprintf('No bins with >=10 reliable samples at conf>%.2f',confThr), ...
+                            'Units','normalized','HorizontalAlignment','center','FontSize',10);
+                    end
 
+                    % Update the confThr edit box to reflect current value
+                    try, hConfEdit.String = sprintf('%.2f', confThr); catch; end
                     set(fig,'Name', sprintf('Stiffness Gradient  Slice %d — select slope region', sl));
                     drawnow;
 
@@ -4752,8 +4803,16 @@ function I = getMREMagnitudeForROI(app, sl)
                     figure(fig); axes(axMean);
                     [xSel, ~] = ginput(2);
 
+                    % After ginput, confThr may have been changed interactively
+                    confThr   = getappdata(fig, 'confThr');
+                    meanDist  = getappdata(fig, 'meanDist');
+                    meanStiff = getappdata(fig, 'meanStiff');
+                    stdStiff  = getappdata(fig, 'stdStiff');
+                    relDist   = getappdata(fig, 'relDist');
+                    relVal    = getappdata(fig, 'relVal');
+
                     slope = NaN;
-                    if numel(xSel) >= 2 && isvalid(fig)
+                    if numel(xSel) >= 2 && isvalid(fig) && ~isempty(meanDist)
                         xStart = min(xSel); xEnd = max(xSel);
                         segIdx = meanDist >= xStart & meanDist <= xEnd;
                         if nnz(segIdx) >= 2
@@ -4773,9 +4832,6 @@ function I = getMREMagnitudeForROI(app, sl)
                                 'FontSize',11,'FontWeight','bold','BackgroundColor','w','Margin',3);
                             hold(axMean,'off');
                             title(axMean, sprintf('Mean profile  slope = %.4f kPa/mm', slope));
-                            sgtitle(fig, ...
-                                sprintf('Stiffness Gradient — Slice %d   slope = %.4f kPa/mm', sl, slope), ...
-                                'FontSize',13,'FontWeight','bold');
 
                             % Cyan segment overlay on image panels
                             segStep = max(1, floor(nProfiles/30));
@@ -4820,9 +4876,8 @@ function I = getMREMagnitudeForROI(app, sl)
                 end  % inner loop (redo range)
 
                 if ~needContour
-                    break;  % done — exit outer loop
+                    break;
                 end
-                % redo_contour: continue outer loop; clf(fig) happens at top
             end  % outer loop (redo contour)
 
             try, close(fig); catch; end
@@ -4837,6 +4892,83 @@ function I = getMREMagnitudeForROI(app, sl)
             try, app.updateResultsTable();           catch; end
 
             setStatus(app, sprintf('Stiffness gradient (slice %d): %.4f kPa/mm', sl, slope));
+        end
+
+        function updateStiffGradConfThr(~, hEdit, fig, axScat, axMean, ...
+                allDist, allVal, allConf, noLapC)
+        % Callback: user changed the confidence threshold edit box.
+        % Recomputes reliable samples, bins, and redraws scatter + mean profile.
+            newThr = str2double(hEdit.String);
+            if isnan(newThr) || newThr < 0.5 || newThr > 1
+                newThr = min(1, max(0.5, newThr));
+                if isnan(newThr), newThr = 0.98; end
+            end
+            hEdit.String = sprintf('%.2f', newThr);
+
+            % Recompute reliable samples
+            if noLapC || isempty(allConf)
+                reliableIdx = isfinite(allVal);
+            else
+                reliableIdx = isfinite(allVal) & (allConf > newThr);
+            end
+            relDist_new = allDist(reliableIdx);
+            relVal_new  = allVal(reliableIdx);
+
+            % Recompute 0.5-mm bins (ignore first 10 mm)
+            validIdx = relDist_new > 10;
+            rd2 = relDist_new(validIdx); rv2 = relVal_new(validIdx);
+            roundedD = round(rd2 / 0.5) * 0.5;
+            uniqueD  = unique(roundedD);
+            meanDist_n = []; meanStiff_n = []; stdStiff_n = [];
+            for di = 1:numel(uniqueD)
+                d = uniqueD(di); idx = roundedD == d;
+                if nnz(idx) >= 10
+                    meanDist_n(end+1,1)  = d;                %#ok<AGROW>
+                    meanStiff_n(end+1,1) = mean(rv2(idx));   %#ok<AGROW>
+                    stdStiff_n(end+1,1)  = std(rv2(idx));    %#ok<AGROW>
+                end
+            end
+
+            % Update scatter
+            cla(axScat);
+            scatter(axScat, allDist, allVal, 4, [0.55 0.65 0.85], ...
+                'filled','MarkerFaceAlpha',0.35);
+            hold(axScat,'on');
+            if ~isempty(relDist_new)
+                scatter(axScat, relDist_new, relVal_new, 4, [0.85 0.25 0.25], ...
+                    'filled','MarkerFaceAlpha',0.50);
+            end
+            xlabel(axScat,'Distance from capsule to IVC (mm)');
+            ylabel(axScat,'Stiffness (kPa)');
+            title(axScat,'All stiffness profiles'); grid(axScat,'on');
+            legend(axScat,'All samples', ...
+                sprintf('Reliable (conf>%.2f)',newThr),'Location','northwest');
+            hold(axScat,'off');
+
+            % Update mean profile (any existing slope is now stale — clear it)
+            cla(axMean);
+            if ~isempty(meanDist_n)
+                errorbar(axMean, meanDist_n, meanStiff_n, stdStiff_n, 'r.-','LineWidth',1.5);
+                grid(axMean,'on');
+                xlabel(axMean,'Distance from capsule to IVC (mm)');
+                ylabel(axMean,'Stiffness (kPa)');
+                title(axMean, ...
+                    'Mean stiffness profile — click two points to define slope region  [Esc = skip to buttons]');
+            else
+                axis(axMean,'off');
+                text(axMean,0.5,0.5, ...
+                    sprintf('No bins with >=10 reliable samples at conf>%.2f',newThr), ...
+                    'Units','normalized','HorizontalAlignment','center','FontSize',10);
+            end
+
+            % Persist updated values so the main loop reads them after ginput
+            setappdata(fig, 'confThr',   newThr);
+            setappdata(fig, 'relDist',   relDist_new);
+            setappdata(fig, 'relVal',    relVal_new);
+            setappdata(fig, 'meanDist',  meanDist_n);
+            setappdata(fig, 'meanStiff', meanStiff_n);
+            setappdata(fig, 'stdStiff',  stdStiff_n);
+            drawnow;
         end
 
         function updateStiffGradSidebar(app)
