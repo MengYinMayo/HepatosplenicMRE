@@ -4510,7 +4510,7 @@ function I = getMREMagnitudeForROI(app, sl)
                     if isempty(fig) || ~isvalid(fig)
                         fig = figure('Name', sprintf('Stiffness Gradient  Slice %d', sl), ...
                             'NumberTitle','off','Units','normalized', ...
-                            'Position',[0.04 0.06 0.90 0.88]);
+                            'Position',[0.12 0.05 0.52 0.88]);
                     else
                         clf(fig);
                     end
@@ -4600,7 +4600,7 @@ function I = getMREMagnitudeForROI(app, sl)
                     fig = figure('Name', ...
                         sprintf('Stiffness Gradient  Slice %d — select slope region', sl), ...
                         'NumberTitle','off','Units','normalized', ...
-                        'Position',[0.04 0.06 0.90 0.88]);
+                        'Position',[0.12 0.05 0.52 0.88]);
                     set(fig,'CloseRequestFcn', @(src,~) app.stiffGradCloseCb(src));
                     axM = axes('Parent',fig,'Units','normalized','Position',[0.03 0.68 0.28 0.27]);
                     axS = axes('Parent',fig,'Units','normalized','Position',[0.35 0.68 0.28 0.27]);
@@ -4672,21 +4672,18 @@ function I = getMREMagnitudeForROI(app, sl)
                 axScat = axes('Parent',fig,'Units','normalized','Position',[0.03 0.40 0.90 0.24]);
                 axMean = axes('Parent',fig,'Units','normalized','Position',[0.03 0.10 0.90 0.24]);
 
-                % Confidence threshold control (interactive)
-                uicontrol('Parent',fig,'Style','text','String','Conf. threshold:', ...
-                    'Units','normalized','Position',[0.03 0.055 0.10 0.028],'FontSize',9, ...
+                % Confidence threshold: overlaid on confidence map (axC at [0.67 0.68 0.28 0.27])
+                % Place label + edit box at bottom-left of axC so they float over the image
+                uicontrol('Parent',fig,'Style','text','String','Thr:', ...
+                    'Units','normalized','Position',[0.675 0.688 0.040 0.030],'FontSize',9, ...
                     'HorizontalAlignment','right', ...
-                    'BackgroundColor',[0.15 0.15 0.15],'ForegroundColor',[0.9 0.9 0.9]);
+                    'BackgroundColor',[0.08 0.08 0.08],'ForegroundColor',[0.95 0.90 0.20]);
                 hConfEdit = uicontrol('Parent',fig,'Style','edit','String','0.98', ...
-                    'Units','normalized','Position',[0.14 0.055 0.07 0.028],'FontSize',9, ...
-                    'TooltipString','Press Enter to update scatter and mean profile (range 0.5-1)', ...
+                    'Units','normalized','Position',[0.717 0.688 0.078 0.030],'FontSize',9, ...
+                    'TooltipString','Press Enter: update conf map, scatter and mean profile (range 0.5-1)', ...
+                    'BackgroundColor',[0.12 0.12 0.12],'ForegroundColor',[0.95 0.95 0.95], ...
                     'Callback', @(src,~) app.updateStiffGradConfThr(src,fig,axScat,axMean, ...
-                                            allDist,allVal,allConf,isempty(LapC)));
-                uicontrol('Parent',fig,'Style','text', ...
-                    'String','(press Enter to update; range 0.5-1)', ...
-                    'Units','normalized','Position',[0.22 0.055 0.35 0.028],'FontSize',8, ...
-                    'HorizontalAlignment','left', ...
-                    'BackgroundColor',[0.15 0.15 0.15],'ForegroundColor',[0.65 0.65 0.65]);
+                                            axC,LapC,allDist,allVal,allConf));
 
                 % Action buttons
                 setappdata(fig, 'action', '');
@@ -4894,16 +4891,17 @@ function I = getMREMagnitudeForROI(app, sl)
             setStatus(app, sprintf('Stiffness gradient (slice %d): %.4f kPa/mm', sl, slope));
         end
 
-        function updateStiffGradConfThr(~, hEdit, fig, axScat, axMean, ...
-                allDist, allVal, allConf, noLapC)
+        function updateStiffGradConfThr(~, hEdit, fig, axScat, axMean, axC_h, LapC_map, ...
+                allDist, allVal, allConf)
         % Callback: user changed the confidence threshold edit box.
-        % Recomputes reliable samples, bins, and redraws scatter + mean profile.
+        % Recomputes reliable samples, bins, and redraws conf map + scatter + mean profile.
             newThr = str2double(hEdit.String);
             if isnan(newThr) || newThr < 0.5 || newThr > 1
                 newThr = min(1, max(0.5, newThr));
                 if isnan(newThr), newThr = 0.98; end
             end
             hEdit.String = sprintf('%.2f', newThr);
+            noLapC = isempty(LapC_map);
 
             % Recompute reliable samples
             if noLapC || isempty(allConf)
@@ -4927,6 +4925,15 @@ function I = getMREMagnitudeForROI(app, sl)
                     meanStiff_n(end+1,1) = mean(rv2(idx));   %#ok<AGROW>
                     stdStiff_n(end+1,1)  = std(rv2(idx));    %#ok<AGROW>
                 end
+            end
+
+            % Update confidence map overlay
+            if ~isempty(axC_h) && isvalid(axC_h) && ~noLapC
+                cla(axC_h);
+                imagesc(axC_h, LapC_map > newThr, [0 1]); colormap(axC_h, gray);
+                axis(axC_h,'image','off');
+                title(axC_h, sprintf('Confidence > %.2f', newThr), ...
+                    'Color',[0.8 0.8 0.8],'FontSize',9);
             end
 
             % Update scatter
