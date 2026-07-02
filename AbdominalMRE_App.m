@@ -4674,12 +4674,12 @@ function I = getMREMagnitudeForROI(app, sl)
 
                 % Confidence threshold: overlaid on confidence map (axC at [0.67 0.68 0.28 0.27])
                 % Place label + edit box at bottom-left of axC so they float over the image
-                uicontrol('Parent',fig,'Style','text','String','Thr:', ...
-                    'Units','normalized','Position',[0.675 0.688 0.040 0.030],'FontSize',9, ...
+                uicontrol('Parent',fig,'Style','text','String','Conf. Threshold:', ...
+                    'Units','normalized','Position',[0.675 0.688 0.110 0.030],'FontSize',9, ...
                     'HorizontalAlignment','right', ...
                     'BackgroundColor',[0.08 0.08 0.08],'ForegroundColor',[0.95 0.90 0.20]);
                 hConfEdit = uicontrol('Parent',fig,'Style','edit','String','0.98', ...
-                    'Units','normalized','Position',[0.717 0.688 0.078 0.030],'FontSize',9, ...
+                    'Units','normalized','Position',[0.788 0.688 0.075 0.030],'FontSize',9, ...
                     'TooltipString','Press Enter: update conf map, scatter and mean profile (range 0.5-1)', ...
                     'BackgroundColor',[0.12 0.12 0.12],'ForegroundColor',[0.95 0.95 0.95], ...
                     'Callback', @(src,~) app.updateStiffGradConfThr(src,fig,axScat,axMean, ...
@@ -4796,9 +4796,29 @@ function I = getMREMagnitudeForROI(app, sl)
                     set(fig,'Name', sprintf('Stiffness Gradient  Slice %d — select slope region', sl));
                     drawnow;
 
-                    % ginput for slope region (Esc exits early)
+                    % ginput for slope region with live rubber-band preview
                     figure(fig); axes(axMean);
-                    [xSel, ~] = ginput(2);
+                    [xPt1, ~] = ginput(1);   % first boundary click
+                    xSel = [];
+                    if ~isempty(xPt1)
+                        yl_rb = ylim(axMean);
+                        hold(axMean,'on');
+                        hRubber = fill(axMean, ...
+                            [xPt1 xPt1 xPt1 xPt1], ...
+                            [yl_rb(1) yl_rb(1) yl_rb(2) yl_rb(2)], ...
+                            'cyan','FaceAlpha',0.15, ...
+                            'EdgeColor',[0.20 0.85 0.85],'LineStyle','--','LineWidth',1.2);
+                        hold(axMean,'off');
+                        drawnow;
+                        set(fig,'WindowButtonMotionFcn', ...
+                            @(~,~) app.stiffGradRubberBand(axMean,hRubber,xPt1));
+                        [xPt2, ~] = ginput(1);  % second boundary click
+                        set(fig,'WindowButtonMotionFcn','');
+                        try, delete(hRubber); catch; end
+                        if ~isempty(xPt2)
+                            xSel = [xPt1; xPt2];
+                        end
+                    end
 
                     % After ginput, confThr may have been changed interactively
                     confThr   = getappdata(fig, 'confThr');
@@ -5055,6 +5075,19 @@ function I = getMREMagnitudeForROI(app, sl)
         % CloseRequestFcn for stiffness gradient fig2: cancel and delete.
             setappdata(fig, 'action', 'cancel');
             delete(fig);
+        end
+
+        function stiffGradRubberBand(~, ax, hFill, x1)
+        % WindowButtonMotionFcn: update cyan rubber-band fill between x1 and cursor.
+            try
+                cp  = get(ax, 'CurrentPoint');
+                xl  = xlim(ax);
+                yl  = ylim(ax);
+                xCur = max(xl(1), min(xl(2), cp(1,1)));
+                xL = min(x1, xCur);  xR = max(x1, xCur);
+                set(hFill, 'XData', [xL xR xR xL], 'YData', [yl(1) yl(1) yl(2) yl(2)]);
+                drawnow limitrate;
+            catch; end
         end
 
 
