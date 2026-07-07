@@ -4502,6 +4502,7 @@ function I = getMREMagnitudeForROI(app, sl)
             meanDist = []; meanStiff = []; stdStiff = [];
             fig  = [];
             axM  = []; axS  = []; axC  = [];
+            xStart = NaN; xEnd = NaN;
 
             % Initial window/level for magnitude image (2nd–98th percentile)
             wlWin = 1; wlLev = 0.5;
@@ -4939,10 +4940,22 @@ function I = getMREMagnitudeForROI(app, sl)
                 end
             end  % outer loop (redo contour)
 
+            % Compute segment length and reliable profile count before closing figure
+            segLen = 0; nRelProfiles = 0;
+            if isfinite(slope) && isfinite(xStart) && isfinite(xEnd)
+                segLen = max(0, xEnd - xStart);
+                % Each profile contributes numPts samples distributed over avgLenMm.
+                % Samples from reliable profiles in [xStart,xEnd] ≈ nRelProf × numPts×segLen/avgLenMm
+                sampPerProfInSeg = numPts * segLen / max(1, avgLenMm);
+                nRelInSeg = nnz(relDist >= xStart & relDist <= xEnd);
+                nRelProfiles = min(nProfiles, round(nRelInSeg / max(1, sampPerProfInSeg)));
+            end
+
             try, close(fig); catch; end
 
-            % Store per-slice result
+            % Store per-slice result (segLen/nRelProfiles/confThr reflect the actual fit)
             entry = struct('slope', slope, 'nProfiles', nProfiles, 'avgLenMm', avgLenMm, ...
+                           'segLen', segLen, 'nRelProfiles', nRelProfiles, 'confThrUsed', confThr, ...
                            'endPoint', endPoint, 'boundaryPoints', boundaryPoints, 'pixSp', pixSp);
             app.AppData.StiffGradData.(slKey) = entry;
 
@@ -7158,12 +7171,19 @@ function tf = shouldBypassGlobalHotkeys(app)
                             slLocTxt = sprintf('Sl%d (%.1fmm)', sgSl, mreSliceZ(sgSl));
                         end
                         profTxt = '';
-                        if isfield(e,'nProfiles') && isfield(e,'avgLenMm') && ...
+                        if isfield(e,'nRelProfiles') && isfield(e,'segLen') && ...
+                                isfinite(e.nRelProfiles) && isfinite(e.segLen) && e.segLen > 0
+                            profTxt = sprintf('%d profs × %.0f mm seg', e.nRelProfiles, e.segLen);
+                        elseif isfield(e,'nProfiles') && isfield(e,'avgLenMm') && ...
                                 isfinite(e.nProfiles) && isfinite(e.avgLenMm)
-                            profTxt = sprintf('%d profiles × %.0f mm avg', e.nProfiles, e.avgLenMm);
+                            profTxt = sprintf('%d profs × %.0f mm', e.nProfiles, e.avgLenMm);
+                        end
+                        confStr = 'conf≥0.98';
+                        if isfield(e,'confThrUsed') && isfinite(e.confThrUsed)
+                            confStr = sprintf('conf>%.2f', e.confThrUsed);
                         end
                         rows{end+1} = {slLocTxt, 'Stiffness gradient', ...  %#ok<AGROW>
-                            profTxt, sprintf('%.4f', e.slope), 'kPa/mm', 'conf≥0.98'};
+                            profTxt, sprintf('%.4f', e.slope), 'kPa/mm', confStr};
                     end
                 catch, end
 
