@@ -4503,6 +4503,19 @@ function I = getMREMagnitudeForROI(app, sl)
             fig  = [];
             axM  = []; axS  = []; axC  = [];
 
+            % Initial window/level for magnitude image (2nd–98th percentile)
+            wlWin = 1; wlLev = 0.5;
+            if ~isempty(Mag)
+                mv = sort(double(Mag(isfinite(Mag(:)))));
+                if numel(mv) > 10
+                    p2  = mv(max(1, round(0.02*numel(mv))));
+                    p98 = mv(min(numel(mv), round(0.98*numel(mv))));
+                    wlWin = max(1, p98 - p2);
+                    wlLev = (p98 + p2) / 2;
+                end
+            end
+            magRange_wl = wlWin;
+
             % ── Outer loop: re-entered on "Redo contour drawing" ────────────
             while true
                 if needContour
@@ -4536,13 +4549,21 @@ function I = getMREMagnitudeForROI(app, sl)
                         'BackgroundColor',[0.08 0.08 0.08],'Color',[0.92 0.92 0.3]);
 
                     if ~isempty(Mag)
-                        imagesc(axM, mat2gray(Mag)); colormap(axM, gray);
+                        imagesc(axM, Mag, [wlLev - wlWin/2, wlLev + wlWin/2]);
+                        colormap(axM, gray);
                     else
                         imagesc(axM, S, stiffCLim); colormap(axM, stiffMap);
                     end
                     axis(axM,'image','off');
-                    title(axM,'Magnitude  [magnified view for IVC & capsule placement]', ...
-                        'FontSize',11,'Color',[0.85 0.85 0.85]);
+                    hTitleMag = title(axM, ...
+                        sprintf('Magnitude   W = %.0f   L = %.0f', wlWin, wlLev), ...
+                        'FontSize',10,'Color',[0.85 0.85 0.85]);
+                    text(axM, 0.01, 0.01, ...
+                        {'Right-click drag: W/L  (left/right = Width,  up/down = Level)', ...
+                         'Left-click: place IVC point          Esc: cancel'}, ...
+                        'Units','normalized','VerticalAlignment','bottom', ...
+                        'FontSize',9,'Color',[1.00 0.95 0.30], ...
+                        'BackgroundColor',[0.06 0.06 0.06],'Margin',4,'Interpreter','none');
 
                     imagesc(axS, S, stiffCLim); colormap(axS, stiffMap);
                     axis(axS,'image','off'); colorbar(axS);
@@ -4558,19 +4579,39 @@ function I = getMREMagnitudeForROI(app, sl)
                             'HorizontalAlignment','center');
                     end
 
-                    % Click IVC
-                    figure(fig); axes(axM);
-                    set(fig,'Pointer','crosshair');
-                    [xc, yc] = ginput(1);
-                    if isempty(xc)
+                    % IVC click: right-drag = W/L, left-click = place IVC, Esc = cancel
+                    setappdata(fig, 'wlWin',       wlWin);
+                    setappdata(fig, 'wlLev',       wlLev);
+                    setappdata(fig, 'wlDragging',  false);
+                    setappdata(fig, 'wlDragStart', [0 0]);
+                    setappdata(fig, 'wlDragWin0',  wlWin);
+                    setappdata(fig, 'wlDragLev0',  wlLev);
+                    setappdata(fig, 'ivcPoint',    []);
+                    figure(fig);
+                    set(fig, 'Pointer','crosshair', ...
+                        'WindowButtonDownFcn',   @(s,~) app.phase1MouseDown(s, axM), ...
+                        'WindowButtonMotionFcn', @(s,~) app.phase1MouseMove(s, axM, magRange_wl, hTitleMag), ...
+                        'WindowButtonUpFcn',     @(s,~) app.phase1MouseUp(s), ...
+                        'KeyPressFcn',           @(s,e) app.phase1KeyPress(s, e));
+
+                    if isvalid(fig), uiwait(fig); end
+
+                    % Clear Phase 1 callbacks and read back updated W/L
+                    if ~isvalid(fig), return; end
+                    set(fig, 'Pointer','arrow', ...
+                        'WindowButtonDownFcn','', 'WindowButtonMotionFcn','', ...
+                        'WindowButtonUpFcn','',  'KeyPressFcn','');
+                    wlWin = getappdata(fig, 'wlWin');
+                    wlLev = getappdata(fig, 'wlLev');
+
+                    endPoint = getappdata(fig, 'ivcPoint');
+                    if isempty(endPoint)
                         try, close(fig); catch; end
                         return;
                     end
-                    endPoint = [xc(1) yc(1)];
                     hold(axM,'on');
                     plot(axM, endPoint(1), endPoint(2), 'r*','MarkerSize',12,'LineWidth',2);
                     hold(axM,'off');
-                    set(fig,'Pointer','arrow');
                     hInstr.String = {'IVC marked.', '', ...
                         'Now draw the liver capsule contour', ...
                         '(double-click or close loop to finish)'};
@@ -4726,7 +4767,8 @@ function I = getMREMagnitudeForROI(app, sl)
                     % Refresh image panels (clear segment highlights)
                     cla(axM);
                     if ~isempty(Mag)
-                        imagesc(axM, mat2gray(Mag)); colormap(axM, gray);
+                        imagesc(axM, Mag, [wlLev - wlWin/2, wlLev + wlWin/2]);
+                        colormap(axM, gray);
                     else
                         imagesc(axM, S, stiffCLim); colormap(axM, stiffMap);
                     end
@@ -5087,6 +5129,63 @@ function I = getMREMagnitudeForROI(app, sl)
                 xL = min(x1, xCur);  xR = max(x1, xCur);
                 set(hFill, 'XData', [xL xR xR xL], 'YData', [yl(1) yl(1) yl(2) yl(2)]);
                 drawnow limitrate;
+            catch; end
+        end
+
+        function phase1MouseDown(~, fig, axM)
+        % Phase 1 IVC/capsule window: left-click places IVC, right-drag starts W/L.
+            try
+                selType = get(fig, 'SelectionType');
+                if strcmp(selType, 'alt')        % right-click: start W/L drag
+                    cp = get(fig, 'CurrentPoint');
+                    setappdata(fig, 'wlDragging',  true);
+                    setappdata(fig, 'wlDragStart', cp);
+                    setappdata(fig, 'wlDragWin0',  getappdata(fig, 'wlWin'));
+                    setappdata(fig, 'wlDragLev0',  getappdata(fig, 'wlLev'));
+                elseif strcmp(selType, 'normal') % left-click: IVC placement
+                    cp_ax = get(axM, 'CurrentPoint');
+                    xl = xlim(axM);  yl = ylim(axM);
+                    xc = cp_ax(1,1); yc = cp_ax(1,2);
+                    if xc >= xl(1) && xc <= xl(2) && yc >= yl(1) && yc <= yl(2)
+                        setappdata(fig, 'ivcPoint', [xc yc]);
+                        uiresume(fig);
+                    end
+                end
+            catch; end
+        end
+
+        function phase1MouseMove(~, fig, axM, magRange, hTitleMag)
+        % Phase 1 W/L drag: update CLim and title while right-button is held.
+            try
+                if ~getappdata(fig, 'wlDragging'), return; end
+                cp      = get(fig, 'CurrentPoint');  % normalized [0-1]
+                startPt = getappdata(fig, 'wlDragStart');
+                win0    = getappdata(fig, 'wlDragWin0');
+                lev0    = getappdata(fig, 'wlDragLev0');
+                dx = cp(1) - startPt(1);   % positive = drag right = wider window
+                dy = cp(2) - startPt(2);   % positive = drag up   = higher level
+                newWin = max(1, win0 * (1 + 3*dx));
+                newLev = lev0 + dy * 2 * magRange;
+                setappdata(fig, 'wlWin', newWin);
+                setappdata(fig, 'wlLev', newLev);
+                axM.CLim = [newLev - newWin/2, newLev + newWin/2];
+                hTitleMag.String = sprintf('Magnitude   W = %.0f   L = %.0f', newWin, newLev);
+                drawnow limitrate;
+            catch; end
+        end
+
+        function phase1MouseUp(~, fig)
+        % Phase 1: release right button, stop W/L drag.
+            try, setappdata(fig, 'wlDragging', false); catch; end
+        end
+
+        function phase1KeyPress(~, fig, event)
+        % Phase 1 Esc key: cancel IVC placement and return.
+            try
+                if strcmp(event.Key, 'escape')
+                    setappdata(fig, 'ivcPoint', []);
+                    uiresume(fig);
+                end
             catch; end
         end
 
