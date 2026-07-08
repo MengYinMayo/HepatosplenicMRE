@@ -1,6 +1,6 @@
 classdef AbdominalMRE_App < matlab.apps.AppBase
 % AbdominalMRE_App  —  Abdominal MRI / MRE Analysis Platform
-% Version 1.0  |  Meng Yin, PhD  |  Mayo Clinic Radiology  |  May 2026
+% Version 1.0  |  Meng Yin, PhD  |  Mayo Clinic Radiology  |  July 2026
 % =========================================================================
 %
 % OVERVIEW
@@ -339,7 +339,7 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
 %
 % =========================================================================
 %   AUTHOR   Meng Yin, PhD  |  Radiology, Mayo Clinic  |  Yin.Meng@mayo.edu
-%   DATE     May 2026
+%   DATE     July 2026
 % =========================================================================
 
     % =====================================================================
