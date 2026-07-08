@@ -1999,13 +1999,13 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
                     end
 
                     app.LblPatientInfo.Text = sprintf('%s  |  %s  |  %s', ...
-                        exam.PatientID, exam.StudyDate, exam.MREType);
+                        char(exam.PatientID), char(exam.StudyDate), char(exam.MREType));
                     app.BtnConfirmL12.Enable   = 'on';
 
                     updateStudyBrowser(app, exam, selection);
                     updateOfflineReconEnabled(app);
                     setStatus(app,sprintf('Loaded: %s — %s | %d series', ...
-                        exam.PatientID, exam.StudyDate, numel(exam.Series)));
+                        char(exam.PatientID), char(exam.StudyDate), numel(exam.Series)));
                 end
 
             catch ME
@@ -2591,7 +2591,7 @@ function updateOfflineReconEnabled(app)
                 rawSeries = rawList(1);
                 if numel(rawList) > 1
                     descs = arrayfun(@(s) sprintf('S%d  %s  (%d images)', ...
-                        s.SeriesNumber, s.SeriesDescription, s.nImages), ...
+                        s.SeriesNumber, char(s.SeriesDescription), s.nImages), ...
                         rawList, 'UniformOutput', false);
                     [idx, ok] = listdlg('ListString', descs, ...
                         'SelectionMode','single', ...
@@ -7084,12 +7084,12 @@ function tf = shouldBypassGlobalHotkeys(app)
         function updateStudyBrowser(app, exam, selection)
             delete(app.StudyTree.Children);
             root = uitreenode(app.StudyTree,'Text', ...
-                sprintf('%s  %s  (%s)', exam.PatientID, exam.StudyDate, exam.MREType));
+                sprintf('%s  %s  (%s)', char(exam.PatientID), char(exam.StudyDate), char(exam.MREType)));
             root.NodeData = struct('type','root');
 
             if ~isempty(selection.Localizer)
                 ln = uitreenode(root,'Text',sprintf('[Localizer]  S%d  %s', ...
-                    selection.Localizer.SeriesNumber, selection.Localizer.SeriesDescription));
+                    selection.Localizer.SeriesNumber, char(selection.Localizer.SeriesDescription)));
                 ln.NodeData = struct('type','localizer');
             end
 
@@ -7158,9 +7158,9 @@ function tf = shouldBypassGlobalHotkeys(app)
                     famNode.NodeData = struct('type','dixon','group',grp);
                     for k = 1:numel(grp)
                         s = grp(k);
-                        roleDisp = regexprep(s.Role,'IDEALIQ_|IPOP_','');
+                        roleDisp = regexprep(char(s.Role),'IDEALIQ_|IPOP_','');
                         cn = uitreenode(famNode,'Text', sprintf('  S%d  %-10s  %s', ...
-                            s.SeriesNumber, roleDisp, s.SeriesDescription));
+                            s.SeriesNumber, roleDisp, char(s.SeriesDescription)));
                         cn.NodeData = struct('type','dixon_series','group',grp);
                     end
                 end
@@ -7172,9 +7172,9 @@ function tf = shouldBypassGlobalHotkeys(app)
                 dn.NodeData = struct('type','dixon','group',grp);
                 for k = 1:numel(grp)
                     s = grp(k);
-                    roleDisp = strrep(s.Role,'IDEALIQ_','');
+                    roleDisp = strrep(char(s.Role),'IDEALIQ_','');
                     cn = uitreenode(dn,'Text',sprintf('  S%d  %-12s  %s', ...
-                        s.SeriesNumber, roleDisp, s.SeriesDescription));
+                        s.SeriesNumber, roleDisp, char(s.SeriesDescription)));
                     cn.NodeData = struct('type','dixon_series','group',grp);
                 end
             end
@@ -7185,9 +7185,9 @@ function tf = shouldBypassGlobalHotkeys(app)
                 mreNode.NodeData = struct('type','mre');
                 for k = 1:numel(selection.MREGroup)
                     s = selection.MREGroup(k);
-                    roleDisp = mreRoleLabel(s.Role);
+                    roleDisp = mreRoleLabel(char(s.Role));
                     mn = uitreenode(mreNode,'Text',sprintf('  S%d  %-14s  %s', ...
-                        s.SeriesNumber, roleDisp, s.SeriesDescription));
+                        s.SeriesNumber, roleDisp, char(s.SeriesDescription)));
                     mn.NodeData = struct('type','mre_series');
                 end
             end
@@ -8151,6 +8151,7 @@ end
 
 function lbl = mreRoleLabel(role)
 % Map internal Role string to friendly display name for study browser.
+    role = char(role);
     map = struct( ...
         'GRE_WaveMag_Raw',  'WaveMag_Raw', ...
         'GRE_WaveMag',      'WaveMag_Raw', ...
