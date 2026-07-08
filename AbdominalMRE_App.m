@@ -3419,6 +3419,9 @@ function cancelMREROIWorkflow(app, doRefresh)
     if ~isfield(app.AppData,'MREROIActive')
         return
     end
+    % Capture before clearing — needed for optional ROI removal below
+    cancelledName  = app.AppData.MREROIName;
+    cancelledSlice = app.AppData.MREROISlice;
     try
         if isfield(app.AppData,'MREROIPopupFig') && ...
                 ~isempty(app.AppData.MREROIPopupFig) && ...
@@ -3441,6 +3444,39 @@ function cancelMREROIWorkflow(app, doRefresh)
     app.setMREROIButtonsEnabled(true);
     app.updateMREPlaybackButtonEnabled();
     app.resetMREROIHotkeyHelp();
+    % When user cancelled without saving, offer to remove any existing ROI
+    % for the same organ+slice so Results and exports stay consistent.
+    if doRefresh && ~isempty(cancelledName) && isnumeric(cancelledSlice) && isfinite(cancelledSlice)
+        slKey = sprintf('sl%d', cancelledSlice);
+        if isfield(app.AppData.ROIs, cancelledName) && ...
+           isfield(app.AppData.ROIs.(cancelledName), 'Slices') && ...
+           isfield(app.AppData.ROIs.(cancelledName).Slices, slKey)
+            try
+                organLbl = app.getMREROIOrganLabel(cancelledName);
+            catch
+                organLbl = cancelledName;
+            end
+            try
+                sel = uiconfirm(app.UIFigure, ...
+                    sprintf(['No new contour was saved for %s (slice %d).\n\n' ...
+                             'Remove the existing ROI for this organ and slice?'], ...
+                        organLbl, cancelledSlice), ...
+                    'Remove Existing ROI', ...
+                    'Options', {'Remove', 'Keep'}, ...
+                    'DefaultOption', 'Keep', 'CancelOption', 'Keep');
+            catch
+                sel = 'Keep';
+            end
+            if strcmp(sel, 'Remove')
+                app.AppData.ROIs.(cancelledName).Slices = ...
+                    rmfield(app.AppData.ROIs.(cancelledName).Slices, slKey);
+                try, app.updateMREAggregateStats(cancelledName); catch, end
+                try, app.updateResultsTable();                    catch, end
+                try, app.saveMREROIsToMat();                      catch, end
+                setStatus(app, sprintf('%s ROI removed for slice %d.', organLbl, cancelledSlice));
+            end
+        end
+    end
     if doRefresh && ~isempty(app.AppData.MRE)
         refreshMRE(app);
     end
@@ -3586,6 +3622,9 @@ function I = getMREMagnitudeForROI(app, sl)
 
         function cancelDixonROIWorkflow(app, doRefresh)
             if nargin < 2, doRefresh = true; end
+            % Capture before clearing — needed for optional ROI removal below
+            cancelledName  = app.AppData.DixonROIName;
+            cancelledSlice = app.AppData.DixonROISlice;
             try
                 if isfield(app.AppData,'DixonROIPopupFig') && ...
                         ~isempty(app.AppData.DixonROIPopupFig) && ...
@@ -3603,6 +3642,39 @@ function I = getMREMagnitudeForROI(app, sl)
             app.AppData.DixonROIDrawing  = false;
             app.setDixonROIButtonsEnabled(true);
             app.resetDixonROIHotkeyHelp();
+            % When user cancelled without saving, offer to remove any existing ROI
+            % for the same organ+slice so Results and exports stay consistent.
+            if doRefresh && ~isempty(cancelledName) && isnumeric(cancelledSlice) && isfinite(cancelledSlice)
+                slKey = sprintf('sl%d', cancelledSlice);
+                if isfield(app.AppData.ROIs, cancelledName) && ...
+                   isfield(app.AppData.ROIs.(cancelledName), 'Slices') && ...
+                   isfield(app.AppData.ROIs.(cancelledName).Slices, slKey)
+                    try
+                        organLbl = app.getDixonOrganLabel(cancelledName);
+                    catch
+                        organLbl = cancelledName;
+                    end
+                    try
+                        sel = uiconfirm(app.UIFigure, ...
+                            sprintf(['No new contour was saved for %s (slice %d).\n\n' ...
+                                     'Remove the existing ROI for this organ and slice?'], ...
+                                organLbl, cancelledSlice), ...
+                            'Remove Existing ROI', ...
+                            'Options', {'Remove', 'Keep'}, ...
+                            'DefaultOption', 'Keep', 'CancelOption', 'Keep');
+                    catch
+                        sel = 'Keep';
+                    end
+                    if strcmp(sel, 'Remove')
+                        app.AppData.ROIs.(cancelledName).Slices = ...
+                            rmfield(app.AppData.ROIs.(cancelledName).Slices, slKey);
+                        try, computeAggregatedDixonROIStats(app, cancelledName); catch, end
+                        try, app.updateResultsTable();                            catch, end
+                        try, app.savePDFFMat();                                   catch, end
+                        setStatus(app, sprintf('%s ROI removed for slice %d.', organLbl, cancelledSlice));
+                    end
+                end
+            end
             if doRefresh && ~isempty(app.AppData.Dixon)
                 refreshDixon(app);
             end
