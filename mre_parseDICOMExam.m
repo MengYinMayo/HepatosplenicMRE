@@ -685,9 +685,17 @@ end
 function v = safePrivateTag(hdr, field)
     if isfield(hdr,field) && ~isempty(hdr.(field))
         raw = hdr.(field);
-        if ischar(raw) || isstring(raw), v = char(raw);
-        else, v = ''; end
-    else, v = ''; end
+        if ischar(raw) || isstring(raw)
+            v = char(raw(:)');
+        elseif isa(raw,'uint8') || isa(raw,'int8')
+            % GE private tags are often stored as uint8 byte arrays (ASCII text)
+            v = deblank(char(raw(:)'));
+        else
+            v = '';
+        end
+    else
+        v = '';
+    end
 end
 
 function opts = applyDefaults(opts, defaults)

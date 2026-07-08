@@ -326,7 +326,7 @@ function H = buildHeaderStruct(hdr, sinfo)
     % Drive frequency (extracted from GE private tag)
     H.DriveFrequency_Hz = 60;  % default
     if isfield(hdr, 'Private_0043_1082')
-        tok = regexp(char(hdr.Private_0043_1082), 'lineFreq=(\d+)', 'tokens');
+        tok = regexp(char(hdr.Private_0043_1082(:)'), 'lineFreq=(\d+)', 'tokens');
         if ~isempty(tok)
             H.DriveFrequency_Hz = str2double(tok{1}{1});
         end
