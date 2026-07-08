@@ -79,6 +79,16 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
 %   7. Repeat steps 2–6 for additional slices or organs.
 %      Results accumulate in the Results tab automatically.
 %
+%   8. To REMOVE an existing ROI for a specific organ on a specific slice,
+%      open freehand drawing for that organ/slice (steps 1–3) and EXIT
+%      without drawing — press Esc, close the popup, or finish with fewer
+%      than 3 points.  A confirmation dialog appears:
+%        "No new contour was saved for <Organ> (slice N).
+%         Remove the existing ROI for this organ and slice?"
+%      Select  REMOVE  to delete the stored ROI.  The Results table and
+%      exported CSV update automatically.  Select  KEEP  (default) to
+%      preserve the existing data (safe guard against accidental Esc).
+%
 %   NOTES
 %   • The initial freehand contour is filled (holes closed) before the
 %     multi-op loop begins, so a rough closed stroke is sufficient.
@@ -127,6 +137,17 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
 %        A   Re-accept the current final mask if you refined with E/I.
 %        Esc Cancel the entire workflow for this organ / slice.
 %
+%   9. To REMOVE an existing ROI for a specific organ on a specific slice,
+%      activate freehand drawing for that organ/slice (steps 1–4) and EXIT
+%      without drawing — press Esc, close the popup, or finish with fewer
+%      than 3 points.  A confirmation dialog appears:
+%        "No new contour was saved for <Organ> (slice N).
+%         Remove the existing ROI for this organ and slice?"
+%      Select  REMOVE  to delete the stored ROI.  The Results table,
+%      aggregate statistics, and the exported CSV update automatically.
+%      Select  KEEP  (default) to preserve the existing data (safeguard
+%      against accidental Esc presses).
+%
 %   NOTES
 %   • The confidence mask multiplied in step 7 removes low-reliability
 %     stiffness calculation automatically.
@@ -171,6 +192,90 @@ classdef AbdominalMRE_App < matlab.apps.AppBase
 %   then move the folder there.  Alternatively, run the following once to
 %   change userpath permanently:
 %       userpath('C:\MyMATLABPath')
+%
+% =========================================================================
+% STIFFNESS GRADIENT MEASUREMENT — STEP-BY-STEP WORKFLOW
+% =========================================================================
+%   Purpose: quantify the hepatosplenic stiffness gradient (kPa/mm) along
+%   radial profiles from the liver capsule toward the IVC, used as a
+%   surrogate marker for portal-venous pressure.
+%
+%   1. Navigate to the MRE tab and select the target slice.  Ensure a
+%      stiffness map and (preferably) a confidence map are loaded.
+%
+%   2. Click the  "Stiffness Gradient"  button in the MRE Measurements panel.
+%      If a prior measurement exists for this slice a dialog offers:
+%        • Use stored contour (recompute slope)
+%        • Redraw contour
+%        • Cancel
+%
+%   3. A single popup window opens showing, left to right: the MAGNITUDE
+%      image (enlarged for placement), the STIFFNESS map, and the CONFIDENCE
+%      map in a compact top row.
+%
+%   4. ADJUST WINDOW / LEVEL on the magnitude image as needed:
+%        RIGHT-CLICK drag — adjust brightness/contrast in real time
+%          drag left/right = Window  (narrower / wider contrast range)
+%          drag up/down    = Level   (brighter / darker)
+%        The image title updates live:  "Magnitude  W = XXX  L = XXX"
+%        Instruction text at the bottom of the magnitude image summarises
+%        the mouse controls and the two remaining steps for this phase.
+%
+%   5. LEFT-CLICK on the magnitude image to mark the IVC center (red *).
+%
+%   6. DRAW the liver capsule contour by holding the left mouse button and
+%      tracing the capsule boundary; double-click (or close the loop) to
+%      finish.  A yellow freehand line is drawn.
+%      After the capsule is accepted the window transitions in-place: the
+%      three images shrink to the compact top row and a scatter plot and
+%      mean stiffness profile appear in the lower half.
+%
+%   7. ADJUST CONFIDENCE THRESHOLD interactively using the  "Conf. Threshold:"
+%      box overlaid on the confidence map (top-right image):
+%        • Type a value (range 0.50 – 1.00, default 0.98) and press Enter.
+%        • The confidence map updates as a binary mask at the new threshold.
+%        • The scatter plot (middle row) updates: reliable samples
+%          (conf > threshold) are shown in red; unreliable in blue.
+%        • The mean stiffness profile (bottom row) rebuilds from reliable
+%          samples only.
+%
+%   8. SELECT the slope fitting region on the MEAN PROFILE (bottom plot):
+%        • LEFT-CLICK to place the first boundary point.  A live cyan shaded
+%          band tracks your cursor as you drag toward the second point.
+%        • LEFT-CLICK again to place the second boundary.
+%        • A linear slope (kPa/mm) is fitted to the mean profile within the
+%          selected range and displayed as a dashed black line with the
+%          slope value annotated.
+%        • Cyan segment overlays appear on all three top-row images to show
+%          the spatial extent of the fitted region.
+%        • Press Esc at either click to skip range selection.
+%
+%   9. Use one of the four action buttons at the bottom:
+%        Accept & Save        — store the slope for this slice, update the
+%                               Results table, and write
+%                               stiff_gradient_sl<NNN>.mat to the exam folder.
+%        Redo range selection — repeat step 8 with the same contour.
+%        Redo contour drawing — discard the current capsule contour and
+%                               return to steps 4 – 6.
+%        Cancel               — discard without saving.
+%
+%  10. Results are stored per slice and shown in the Results tab:
+%        Volume column   = nReliableProfiles × fitted segment length (mm)
+%        Value column    = slope (kPa/mm); negative = stiffness decreasing
+%                          toward IVC (expected in portal hypertension)
+%        Confidence col  = threshold used (e.g. "conf>0.95")
+%      If multiple slices are analysed, the MRE Measurements panel shows
+%      the average slope across all slices automatically.
+%      Previously saved profiles reload on study reopen; the stored IVC
+%      position and capsule contour are redrawn on the image panels.
+%
+%   NOTES
+%   • One .mat file per slice (stiff_gradient_sl<NNN>.mat) is written to the
+%     exam folder and loaded automatically when the study is reopened.
+%   • The first 10 mm from the capsule are excluded from binning to reduce
+%     capsule surface-artefact bias; bins require ≥ 10 reliable samples.
+%   • Press Esc before left-clicking IVC (step 5) to abort the entire
+%     measurement session for that slice without any data change.
 %
 % =========================================================================
 % COMMON CONFUSION POINTS FOR NEW USERS
