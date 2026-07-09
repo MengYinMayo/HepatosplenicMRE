@@ -4637,6 +4637,7 @@ function I = getMREMagnitudeForROI(app, sl)
                     LapC = double(mre.LapC(:,:,min(sl,size(mre.LapC,3))));
                 end
             catch; end
+            confStat_ = mreConfMapStatus(LapC);
 
             pixSp = 1;
             try
@@ -4747,14 +4748,16 @@ function I = getMREMagnitudeForROI(app, sl)
                     axis(axS,'image','off'); colorbar(axS);
                     title(axS, sprintf('Stiffness  sl %d', sl),'Color',[0.8 0.8 0.8]);
 
-                    if ~isempty(LapC)
+                    if strcmp(confStat_,'valid')
                         imagesc(axC, LapC, [0 1]); colormap(axC, gray);
                         axis(axC,'image','off');
                         title(axC, sprintf('Confidence (thr=%.2f)', confThr),'Color',[0.8 0.8 0.8]);
                     else
                         axis(axC,'off');
-                        text(axC,0.5,0.5,'No confidence map','Units','normalized', ...
-                            'HorizontalAlignment','center');
+                        text(axC, 0.5, 0.5, mreConfMapNote(confStat_,'long'), ...
+                            'Units','normalized','HorizontalAlignment','center', ...
+                            'VerticalAlignment','middle','FontSize',8, ...
+                            'Color',[1.0 0.72 0.08]);
                     end
 
                     % IVC click: right-drag = W/L, left-click = place IVC, Esc = cancel
@@ -4970,13 +4973,17 @@ function I = getMREMagnitudeForROI(app, sl)
                     title(axS,'Stiffness + profiles','Color',[0.8 0.8 0.8],'FontSize',9);
 
                     cla(axC);
-                    if ~isempty(LapC)
+                    if strcmp(confStat_,'valid')
                         imagesc(axC, LapC > confThr, [0 1]); colormap(axC, gray);
                         axis(axC,'image','off');
                         title(axC, sprintf('Confidence > %.2f', confThr), ...
                             'Color',[0.8 0.8 0.8],'FontSize',9);
                     else
                         axis(axC,'off');
+                        text(axC, 0.5, 0.5, mreConfMapNote(confStat_,'long'), ...
+                            'Units','normalized','HorizontalAlignment','center', ...
+                            'VerticalAlignment','middle','FontSize',8, ...
+                            'Color',[1.0 0.72 0.08]);
                     end
 
                     % Scatter
@@ -5180,12 +5187,21 @@ function I = getMREMagnitudeForROI(app, sl)
             end
 
             % Update confidence map overlay
-            if ~isempty(axC_h) && isvalid(axC_h) && ~noLapC
+            cStat = mreConfMapStatus(LapC_map);
+            if ~isempty(axC_h) && isvalid(axC_h)
                 cla(axC_h);
-                imagesc(axC_h, LapC_map > newThr, [0 1]); colormap(axC_h, gray);
-                axis(axC_h,'image','off');
-                title(axC_h, sprintf('Confidence > %.2f', newThr), ...
-                    'Color',[0.8 0.8 0.8],'FontSize',9);
+                if strcmp(cStat,'valid')
+                    imagesc(axC_h, LapC_map > newThr, [0 1]); colormap(axC_h, gray);
+                    axis(axC_h,'image','off');
+                    title(axC_h, sprintf('Confidence > %.2f', newThr), ...
+                        'Color',[0.8 0.8 0.8],'FontSize',9);
+                else
+                    axis(axC_h,'off');
+                    text(axC_h, 0.5, 0.5, mreConfMapNote(cStat,'long'), ...
+                        'Units','normalized','HorizontalAlignment','center', ...
+                        'VerticalAlignment','middle','FontSize',8, ...
+                        'Color',[1.0 0.72 0.08]);
+                end
             end
 
             % Update scatter
@@ -6640,7 +6656,12 @@ function tf = shouldBypassGlobalHotkeys(app)
                 stiffMap = mreStiffCmap();
                 safeMREAxesImage(app.AxMREStiff, S, app.AppData.StiffCLim, stiffMap, 'MREBaseStiff');
                 try; colormap(app.AxMREStiff, stiffMap); catch; end
-                title(app.AxMREStiff, sprintf('Shear Stiffness Abs(G*)  sl %d/%d', slS, nZS), ...
+                confStat = mreConfMapStatus(mre.LapC);
+                stiffTitleLines = {sprintf('Shear Stiffness Abs(G*)  sl %d/%d', slS, nZS)};
+                if ~strcmp(confStat,'valid')
+                    stiffTitleLines{2} = mreConfMapNote(confStat,'short');
+                end
+                title(app.AxMREStiff, stiffTitleLines, ...
                     'FontSize',12,'Color',[0.75 0.75 0.75],'FontWeight','normal');
                 % Storage modulus — same colormap and scale as stiffness.
                 if isfield(mre,'StorageModulus') && ~isempty(mre.StorageModulus)
@@ -6656,7 +6677,7 @@ function tf = shouldBypassGlobalHotkeys(app)
                 % Shared colorbar for G* and G' (label indicates both).
                 renderColorStrip(app.AxMREStiffBar, stiffMap, app.AppData.StiffCLim, [], "Abs(G*) or G' or Re(G*) (kPa)");
                 try; colormap(app.AxMREStiffBar, stiffMap); catch; end
-                if app.AppData.ShowConfMask && isfield(mre,'LapC') && ~isempty(mre.LapC)
+                if app.AppData.ShowConfMask && strcmp(confStat,'valid') && isfield(mre,'LapC') && ~isempty(mre.LapC)
                     lowConf = double(squeeze(mre.LapC(:,:,slL))) < app.AppData.ConfThresh;
                     hh = overlayCheckerMask(app.AxMREStiff, lowConf, 0.42);
                     try; hh.Tag = 'MRERefreshOverlay'; hh.HitTest='off'; hh.PickableParts='none'; catch; end
@@ -8147,6 +8168,56 @@ end
 
 function tf = endsWith(str, suffix)
     tf = numel(str) >= numel(suffix) && strcmp(str(end-numel(suffix)+1:end), suffix);
+end
+
+function status = mreConfMapStatus(LapC)
+% Classify the validity of a confidence (LapC) volume.
+%   'valid'      – values in [0,1] with genuine spatial variation
+%   'default'    – all-ones placeholder (LapC=ones(), no DICOM series loaded)
+%   'allzero'    – all zeros (read error or absent data)
+%   'outofrange' – values outside [0,1] (non-standard units, e.g. Siemens 10×Pa)
+    if isempty(LapC)
+        status = 'default'; return
+    end
+    v = double(LapC(isfinite(LapC)));
+    if isempty(v) || all(v >= 0.9999)
+        status = 'default';
+    elseif all(v < 1e-6)
+        status = 'allzero';
+    elseif max(v) > 1.01 || min(v) < -0.01
+        status = 'outofrange';
+    else
+        status = 'valid';
+    end
+end
+
+function note = mreConfMapNote(status, fmt)
+% Return a descriptive note for the given confidence map status.
+%   fmt = 'short'  – single-line label for axis title
+%   fmt = 'long'   – multi-line string for popup panel text
+    if nargin < 2, fmt = 'short'; end
+    switch status
+        case 'default'
+            if strcmp(fmt,'long')
+                note = sprintf('No confidence map was found in the DICOM series.\nApply offline 2D MMDI reconstruction\nto generate a reliability map.');
+            else
+                note = '[No confidence map — apply offline 2D MMDI reconstruction]';
+            end
+        case 'allzero'
+            if strcmp(fmt,'long')
+                note = sprintf('Confidence map is all zero — data may be\nmissing or corrupted in DICOM.\nApply offline 2D MMDI reconstruction to re-process.');
+            else
+                note = '[Confidence map is zero — apply offline 2D MMDI reconstruction]';
+            end
+        case 'outofrange'
+            if strcmp(fmt,'long')
+                note = sprintf('Confidence values are outside [0-1].\nNon-standard scanner units detected\n(e.g. Siemens 10xPa stiffness scale).\nApply offline reconstruction to re-process\nwith consistent units.');
+            else
+                note = '[Confidence out of [0-1] range — non-standard units (Siemens?). Apply offline reconstruction]';
+            end
+        otherwise
+            note = '';
+    end
 end
 
 function lbl = mreRoleLabel(role)
