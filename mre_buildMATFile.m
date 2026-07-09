@@ -403,16 +403,20 @@ function matPath = buildFromSelection(sel, opts)
         grp = filterMREGroupToAnchorFamily(grp, sel.MRE);
         if isempty(grp), grp = sel.MRE; end
 
-        isPhilips = false;
-        isEPI = false;
+        isPhilips  = false;
+        isEPI      = false;
+        isSiemens  = false;
         try
             roles = {grp.Role};
-            isPhilips = any(startsWith(roles,'PHILIPS_')) || startsWith(sel.MRE.Role,'PHILIPS_');
-            isEPI     = ~isPhilips && (any(startsWith(roles,'EPI_')) || startsWith(sel.MRE.Role,'EPI_'));
+            isSiemens = any(startsWith(roles,'SIEMENS_')) || startsWith(sel.MRE.Role,'SIEMENS_');
+            isPhilips = ~isSiemens && (any(startsWith(roles,'PHILIPS_')) || startsWith(sel.MRE.Role,'PHILIPS_'));
+            isEPI     = ~isPhilips && ~isSiemens && (any(startsWith(roles,'EPI_')) || startsWith(sel.MRE.Role,'EPI_'));
         catch
         end
 
-        if isPhilips
+        if isSiemens
+            [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionSiemens(grp, opts);
+        elseif isPhilips
             % Load magnitude and raw wave from the interleaved Philips raw series.
             % Philips stores mag (first half by InstanceNumber) and phase (second half)
             % in the same series — no processed wave or stiffness until offline recon.
@@ -558,6 +562,12 @@ function grpOut = filterMREGroupToAnchorFamily(grpIn, anchor)
         return
     end
 
+    % Siemens: series numbers have no numeric hierarchy — keep the full group as-is
+    if isfield(anchor,'Role') && numel(anchor.Role) >= 3 && strcmp(anchor.Role(1:3),'SIE')
+        grpOut = grpIn;
+        return
+    end
+
     rootNum = double(anchor.SeriesNumber);
     while rootNum >= 100
         rootNum = floor(rootNum / 100);
@@ -588,6 +598,55 @@ function grpOut = filterMREGroupToAnchorFamily(grpIn, anchor)
     else
         [~, ord] = sort([grpOut.SeriesNumber]);
         grpOut = grpOut(ord);
+    end
+end
+
+function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionSiemens(grp, opts)
+%BUILDFROMSELECTIONSIEMENS  Siemens MRE raw data load.
+%   PhaseDiff series -> W_raw (raw phase-difference wave images)
+%   Magnitude series -> M_raw / M
+%   Stiffness series -> S, converted from Siemens 10xPa units to kPa (/10000)
+%   ConfMap series   -> LapC (normalized /1000 as with GRE)
+
+    W_raw = []; W = []; M = []; M_raw = []; S = []; LapC = []; H = [];
+    sinfo = struct();
+
+    phaseDiffSeries = findRoleInGroup(grp, {'SIEMENS_MRE_PhaseDiff'});
+    magSeries       = findRoleInGroup(grp, {'SIEMENS_MRE_Magnitude'});
+
+    if ~isempty(phaseDiffSeries)
+        vprint(opts, 'Siemens MRE PhaseDiff (wave): S%d  %s', ...
+            phaseDiffSeries.SeriesNumber, phaseDiffSeries.SeriesDescription);
+        procOpts = opts; procOpts.forceProcessedWave = true;
+        [W_raw, ~, sinfo, ~, ~] = mre_readWaveMagSeries(phaseDiffSeries, procOpts);
+        W = W_raw;
+        try, H = buildHeaderStruct(phaseDiffSeries.Header, sinfo); catch, H = struct(); end
+    end
+
+    if ~isempty(magSeries)
+        vprint(opts, 'Siemens MRE Magnitude: S%d  %s', ...
+            magSeries.SeriesNumber, magSeries.SeriesDescription);
+        [M_raw, ~, ~, ~, ~] = mre_readWaveMagSeries(magSeries, opts);
+        if ~isempty(M_raw)
+            M = mean(double(M_raw), 4);
+        end
+    end
+
+    stiffSeries = findRoleInGroup(grp, {'SIEMENS_MRE_Stiffness'});
+    if ~isempty(stiffSeries)
+        vprint(opts, 'Siemens MRE Stiffness (10xPa -> /10000 -> kPa): S%d', ...
+            stiffSeries.SeriesNumber);
+        nZ = max(1, round(size(W_raw, 3)));
+        S_raw = readGrayscaleVolume(stiffSeries.Files, 256, 256, nZ);
+        S = double(S_raw) / 10000.0;
+    end
+
+    confSeries = findRoleInGroup(grp, {'SIEMENS_MRE_ConfMap'});
+    if ~isempty(confSeries)
+        vprint(opts, 'Siemens MRE ConfMap: S%d', confSeries.SeriesNumber);
+        nZ = max(1, round(size(W_raw, 3)));
+        LapC_raw = readGrayscaleVolume(confSeries.Files, 256, 256, nZ);
+        LapC = double(LapC_raw) / 1000.0;
     end
 end
 

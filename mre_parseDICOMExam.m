@@ -240,6 +240,8 @@ function entry = buildEntry(folder, files, hdr)
     if isnan(spp)
         entry.IsGrayscale   = ~contains(lower(safeStr(hdr,'PhotometricInterpretation')),'rgb');
     end
+    entry.Manufacturer      = safeStr(hdr, 'Manufacturer');
+    entry.ImageComments     = safeStr(hdr, 'ImageComments');
     entry.SeqName           = safePrivateTag(hdr, 'Private_0019_109c');
     entry.SeqType           = safePrivateTag(hdr, 'Private_0019_109e');
     entry.ScanOptions       = safeStr(hdr, 'ScanOptions');
@@ -301,6 +303,31 @@ function entry = classifySeries(entry)
     % Philips MRE raw: SE-EPI series with driver-frequency suffix _g<N>
     if ~isempty(regexp(strtrim(desc), '^se\d+.*_g\d+$', 'once'))
         entry.Role = 'PHILIPS_MRE_Raw'; return
+    end
+
+    % ── Siemens MRE ──────────────────────────────────────────────────────
+    % Detected via Manufacturer tag containing 'siemens' combined with the
+    % (0020,4000) ImageComments tag:
+    %   'PhaseDiff' = raw wave (phase-difference) images
+    %   'Magnitude' = raw magnitude images
+    % Reconstructed stiffness/confidence maps are also classified here when
+    % derived from a Siemens MRE acquisition.
+    if contains(lower(entry.Manufacturer), 'siemens')
+        imgComm = strtrim(lower(entry.ImageComments));
+        if strcmp(imgComm, 'phasediff')
+            entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
+        elseif strcmp(imgComm, 'magnitude')
+            entry.Role = 'SIEMENS_MRE_Magnitude'; return
+        end
+        if contains(itype,'derived') && bits == 16 && ...
+           (hit(desc, {'mre','elastograph','stiffness','confidence'}) || ...
+            hit(fnam, {'mre','elastog'}))
+            if isConf(entry)
+                entry.Role = 'SIEMENS_MRE_ConfMap'; return
+            elseif isStiff(entry)
+                entry.Role = 'SIEMENS_MRE_Stiffness'; return
+            end
+        end
     end
 
     % ── Philips mDIXON-Quant Dixon ────────────────────────────────────
@@ -658,11 +685,13 @@ function mreType = detectMREType(sl)
     roles      = {sl.Role};
     hasEPI     = any(contains(roles,'EPI_'));
     hasGRE     = any(contains(roles,'GRE_'));
-    hasPhilips = any(strcmp(roles,'PHILIPS_MRE_Raw'));
+    hasPhilips  = any(strcmp(roles,'PHILIPS_MRE_Raw'));
+    hasSiemens  = any(startsWith(roles,'SIEMENS_MRE_'));
     if hasEPI && hasGRE,    mreType = 'both';
     elseif hasEPI,          mreType = 'EPI';
     elseif hasGRE,          mreType = 'GRE';
     elseif hasPhilips,      mreType = 'Philips';
+    elseif hasSiemens,      mreType = 'Siemens';
     else,                   mreType = 'none';
     end
 end

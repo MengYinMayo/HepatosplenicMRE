@@ -232,7 +232,8 @@ function groups = buildGroups(seriesList)
     % ── MRE: one anchor per inferred raw-series family ───────────────
     mreRoles = {'EPI_WaveMag_Raw','EPI_WaveMag_Proc','EPI_WaveMag','EPI_Stiffness','EPI_ConfMap','EPI_ProcWave','EPI_RawIQ', ...
                 'GRE_WaveMag_Raw','GRE_WaveMag_Proc','GRE_WaveMag','GRE_Stiffness','GRE_ConfMap','GRE_ProcWave', ...
-                'PHILIPS_MRE_Raw','PHILIPS_MRE_Stiffness','PHILIPS_MRE_ProcWave'};
+                'PHILIPS_MRE_Raw','PHILIPS_MRE_Stiffness','PHILIPS_MRE_ProcWave', ...
+                'SIEMENS_MRE_PhaseDiff','SIEMENS_MRE_Magnitude','SIEMENS_MRE_Stiffness','SIEMENS_MRE_ConfMap'};
     seen = containers.Map();
     for k = 1:numel(seriesList)
         s = seriesList(k);
@@ -301,7 +302,9 @@ function populateTree(tree, seriesList, colType)
                       'EPI_Stiffness','GRE_Stiffness', ...
                       'EPI_ConfMap','GRE_ConfMap', ...
                       'EPI_ProcWave','GRE_ProcWave','EPI_RawIQ', ...
-                      'PHILIPS_MRE_Raw','PHILIPS_MRE_Stiffness','PHILIPS_MRE_ProcWave'};
+                      'PHILIPS_MRE_Raw','PHILIPS_MRE_Stiffness','PHILIPS_MRE_ProcWave', ...
+                      'SIEMENS_MRE_PhaseDiff','SIEMENS_MRE_Magnitude', ...
+                      'SIEMENS_MRE_Stiffness','SIEMENS_MRE_ConfMap'};
             labels = {'EPI Wave+Mag (raw 4-phase)', ...
                       'GRE Wave+Mag (raw 4-phase)', ...
                       'EPI Wave processed (8-phase)', ...
@@ -310,7 +313,9 @@ function populateTree(tree, seriesList, colType)
                       'EPI Stiffness (Pa)','GRE Stiffness (Pa)', ...
                       'EPI Confidence','GRE Confidence', ...
                       'EPI Processed','GRE Processed','EPI Raw I/Q', ...
-                      'Philips MRE raw (SE-EPI)','Philips Stiffness (SWIP)','Philips Wave (WWIP)'};
+                      'Philips MRE raw (SE-EPI)','Philips Stiffness (SWIP)','Philips Wave (WWIP)', ...
+                      'Siemens MRE Wave (PhaseDiff)','Siemens MRE Magnitude', ...
+                      'Siemens Stiffness (10xPa)','Siemens Confidence'};
     end
 
     % Insert uncategorised entries under 'Other'
@@ -490,6 +495,22 @@ function anchorNum = inferMREFamilyAnchor(seriesList, s)
         return
     end
 
+    % -------- Siemens MRE: anchor to PhaseDiff series in same frequency group ----
+    if strcmp(typePrefix, 'SIE')
+        phaseDiffNums = [];
+        for ii = 1:numel(seriesList)
+            g = seriesList(ii);
+            if ~strcmp(g.Role, 'SIEMENS_MRE_PhaseDiff'), continue; end
+            gFreq = extractFreq(g.SeriesDescription);
+            if freq > 0 && gFreq > 0 && abs(freq - gFreq) >= 1, continue; end
+            phaseDiffNums(end+1) = g.SeriesNumber; %#ok<AGROW>
+        end
+        if ~isempty(phaseDiffNums)
+            anchorNum = min(phaseDiffNums);
+        end
+        return
+    end
+
     % -------- EPI: anchor to raw IQ root only --------
     if strcmp(typePrefix, 'EPI')
         rawIQNums = [];
@@ -575,7 +596,8 @@ function tf = isSeriesNumberDescendant(parentStr, childStr)
 end
 
 function tf = isRawMREAnchorRole(role)
-    tf = any(strcmp(role, {'EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'}));
+    tf = any(strcmp(role, {'EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag', ...
+                           'SIEMENS_MRE_PhaseDiff'}));
 end
 
 function s = findSeriesByNumber(seriesList, seriesNumber, typePrefix)
