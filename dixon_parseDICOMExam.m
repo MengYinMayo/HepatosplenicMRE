@@ -178,6 +178,9 @@ function sig = idealSignature(s)
     % residual that normalizeSignature produces from the "(1/s)" denominator.
     sig = regexprep(sig, '\b\d+\b', ' ');
     sig = regexprep(sig, '\bs\b', ' ');
+    % Siemens q-Dixon: strip recon-type suffixes so W/F/FF/R2s_Eff/T2s_Eff/
+    % GoodnessOfFit all resolve to the same family signature.
+    sig = regexprep(sig, '\br2s\b|\bt2s\b|\beff\b|\bgoodnessoffit\b|\breport\b', ' ');
     % Strip trailing acquisition-mode abbreviations (e.g. BH=breath-hold,
     % FB=free-breathing) so that Philips mDIXON raw series ("mDIXON-Quant_BH")
     % and derived recon series ("Water_mDIXON-Quant") map to the same family.
@@ -202,15 +205,18 @@ end
 
 function tf = isFatFracDesc(desc)
     tf = contains(desc,'fatfrac') || contains(desc,'fat frac') || contains(desc,'pdff') || ...
-         startsWith(strtrim(desc),'ff_') || startsWith(strtrim(desc),'ff ');
+         startsWith(strtrim(desc),'ff_') || startsWith(strtrim(desc),'ff ') || ...
+         endsWith(strtrim(desc),'_ff');   % Siemens q-Dixon: vibe_q-dixon_*_FF
 end
 
 function tf = isWaterDesc(desc)
-    tf = contains(desc,'water') && ~isFatFracDesc(desc);
+    tf = (contains(desc,'water') || endsWith(strtrim(desc),'_w')) && ~isFatFracDesc(desc);
 end
 
 function tf = isFatDesc(desc)
-    tf = (contains(desc,' fat') || contains(desc,'_fat') || startsWith(strtrim(desc),'fat') || contains(desc,'fat image')) && ~isFatFracDesc(desc);
+    tf = (contains(desc,' fat') || contains(desc,'_fat') || startsWith(strtrim(desc),'fat') || ...
+          contains(desc,'fat image') || ...
+          (endsWith(strtrim(desc),'_f') && ~endsWith(strtrim(desc),'_wf'))) && ~isFatFracDesc(desc);
 end
 
 function tf = isPreferredWaterDesc(desc)

@@ -319,6 +319,15 @@ function entry = classifySeries(entry)
         elseif strcmp(imgComm, 'magnitude')
             entry.Role = 'SIEMENS_MRE_Magnitude'; return
         end
+        % Fallback when ImageComments is absent: infer from description suffix.
+        % Siemens GRE-MRE magnitude series are named *_Mag or *Mag; this
+        % catches them before the generic GRE_WaveMag_Raw path below.
+        isSiemensMRE = hit(desc,{'gremre','epimre'}) || hit(fnam,{'gremre','epimre'});
+        if isSiemensMRE
+            if endsWith(strtrim(desc),'_mag') || contains(desc,'_mag_')
+                entry.Role = 'SIEMENS_MRE_Magnitude'; return
+            end
+        end
         if contains(itype,'derived') && bits == 16 && ...
            (hit(desc, {'mre','elastograph','stiffness','confidence'}) || ...
             hit(fnam, {'mre','elastog'}))
@@ -369,6 +378,26 @@ function entry = classifySeries(entry)
                    'pdff','water','t2*:','r2star','r2*','r2 map','r2map'}) || ...
         strcmp(desc,'r2') || strcmp(desc,'fat') || ...
         hit(fnam, {'ideal','idealiq','dixon','pdff','water'}))
+
+        % Siemens q-Dixon sub-classification (vibe_q-dixon_tra_bh_<suffix>).
+        % Uses single/double-letter suffixes: W=water, F=fat, FF=fat-fraction,
+        % R2s_Eff / T2s_Eff = R2*/T2* maps, WF = combined water+fat stack.
+        isQDixon = contains(desc,'q-dixon') || contains(desc,'q_dixon') || ...
+                   contains(fnam,'q-dixon') || contains(fnam,'q_dixon');
+        if isQDixon
+            if contains(desc,'_ff') && ~contains(desc,'_wf')
+                entry.Role = 'IDEALIQ_PDFF'; return
+            elseif endsWith(strtrim(desc),'_w') && ~contains(desc,'_wf')
+                entry.Role = 'IDEALIQ_Water'; return
+            elseif endsWith(strtrim(desc),'_f') && ~contains(desc,'_ff') && ~contains(desc,'_wf')
+                entry.Role = 'IDEALIQ_Fat'; return
+            elseif contains(desc,'_r2s') || contains(desc,'r2s_eff') || ...
+                   contains(desc,'_t2s') || contains(desc,'t2s_eff')
+                entry.Role = 'IDEALIQ_T2s'; return
+            else
+                entry.Role = 'IDEALIQ_Multi'; return
+            end
+        end
 
         % Sub-classify within GE IDEAL-IQ.  Logic unchanged from original.
         if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
