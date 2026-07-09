@@ -31,9 +31,13 @@ function [W, M, spatialInfo, phases_rad, M_raw] = mre_readWaveMagSeries(seriesEn
     vprint(opts, 'Reading %s: %d files', safeField(seriesEntry,'Role','(no role)'), nFiles);
 
     % ------------------------------------------------------------------
-    % Fast path for processed-wave series (e.g., GRE S705)
+    % Fast path for processed-wave series (e.g., GRE S705).
+    % Also triggered by forceProcessedWave=true so that Siemens single-
+    % content series (PhaseDiff-only or Magnitude-only) are read as a
+    % flat phase stack rather than being split GE-style.
     % ------------------------------------------------------------------
-    if isProcessedWaveSeries(seriesEntry, files)
+    if isProcessedWaveSeries(seriesEntry, files) || ...
+       (isfield(opts,'forceProcessedWave') && opts.forceProcessedWave)
         [W, M, spatialInfo, phases_rad, M_raw] = readProcWave(seriesEntry, files, opts);
         return
     end

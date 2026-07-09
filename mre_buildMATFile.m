@@ -626,8 +626,13 @@ function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionSiemens(grp, opts)
     if ~isempty(magSeries)
         vprint(opts, 'Siemens MRE Magnitude: S%d  %s', ...
             magSeries.SeriesNumber, magSeries.SeriesDescription);
-        [M_raw, ~, ~, ~, ~] = mre_readWaveMagSeries(magSeries, opts);
-        if ~isempty(M_raw)
+        % forceProcessedWave=true routes through readProcWave which reads
+        % ALL images as W (rather than splitting GE-style into wave/mag halves).
+        % For a Siemens magnitude-only series every image is magnitude.
+        magOpts = opts; magOpts.forceProcessedWave = true;
+        [M_vol, ~, ~, ~, ~] = mre_readWaveMagSeries(magSeries, magOpts);
+        if ~isempty(M_vol)
+            M_raw = M_vol;
             M = mean(double(M_raw), 4);
         end
     end
