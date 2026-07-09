@@ -239,14 +239,25 @@ function groups = buildGroups(seriesList)
         s = seriesList(k);
         if ~any(strcmp(s.Role, mreRoles)), continue; end
         famAnchor = inferMREFamilyAnchor(seriesList, s);
-        key = sprintf('%s|%d', s.Role(1:3), famAnchor);
-        if ~isKey(seen, key)
-            seen(key) = true;
-            anchorSeries = findSeriesByNumber(seriesList, famAnchor, s.Role(1:3));
-            if isempty(anchorSeries)
+        % Siemens: show each role (PhaseDiff / Magnitude) as its own tree
+        % node so the user sees all detected series; selecting either one
+        % auto-includes the full family via findRelatedMRE.
+        if numel(s.Role) >= 3 && strcmp(s.Role(1:3), 'SIE')
+            key = sprintf('%s|%d', s.Role, famAnchor);
+            if ~isKey(seen, key)
+                seen(key) = true;
                 mreCell{end+1} = s; %#ok<AGROW>
-            else
-                mreCell{end+1} = anchorSeries; %#ok<AGROW>
+            end
+        else
+            key = sprintf('%s|%d', s.Role(1:3), famAnchor);
+            if ~isKey(seen, key)
+                seen(key) = true;
+                anchorSeries = findSeriesByNumber(seriesList, famAnchor, s.Role(1:3));
+                if isempty(anchorSeries)
+                    mreCell{end+1} = s; %#ok<AGROW>
+                else
+                    mreCell{end+1} = anchorSeries; %#ok<AGROW>
+                end
             end
         end
     end

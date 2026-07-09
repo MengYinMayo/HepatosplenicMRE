@@ -2479,7 +2479,8 @@ function updateMREPlaybackButtonEnabled(app)
 function updateOfflineReconEnabled(app)
             try
                 hasSeries = false;
-                mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'};
+                mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag', ...
+                               'SIEMENS_MRE_PhaseDiff','SIEMENS_MRE_Magnitude'};
                 ser = app.AppData.Exam.Series;
                 for k = 1:numel(ser)
                     if any(strcmp(ser(k).Role, mreRawRoles))
@@ -2572,7 +2573,8 @@ function updateOfflineReconEnabled(app)
                 end
 
                 % Collect all raw MRE series (any vendor)
-                mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'};
+                mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag', ...
+                               'SIEMENS_MRE_PhaseDiff','SIEMENS_MRE_Magnitude'};
                 rawList = struct([]);
                 for k = 1:numel(app.AppData.Exam.Series)
                     s = app.AppData.Exam.Series(k);
@@ -2620,6 +2622,30 @@ function updateOfflineReconEnabled(app)
                 end
                 for k = 1:numel(files)
                     copyfile(files{k}, inputDir);
+                end
+
+                % Siemens: PhaseDiff and Magnitude live in separate series.
+                % Copy the companion series so the offline recon exe has both.
+                if startsWith(rawSeries.Role, 'SIEMENS_MRE_')
+                    if strcmp(rawSeries.Role, 'SIEMENS_MRE_PhaseDiff')
+                        companionRole = 'SIEMENS_MRE_Magnitude';
+                    else
+                        companionRole = 'SIEMENS_MRE_PhaseDiff';
+                    end
+                    for ck = 1:numel(app.AppData.Exam.Series)
+                        cs = app.AppData.Exam.Series(ck);
+                        if strcmp(cs.Role, companionRole)
+                            cFiles = cs.Files;
+                            if isempty(cFiles)
+                                cd_ = dir(cs.Folder); cd_ = cd_(~[cd_.isdir]);
+                                cFiles = cellfun(@(n) fullfile(cs.Folder,n), {cd_.name}, 'UniformOutput',false);
+                            end
+                            for ck2 = 1:numel(cFiles)
+                                try, copyfile(cFiles{ck2}, inputDir); catch, end
+                            end
+                            break
+                        end
+                    end
                 end
 
                 % Set DCMDICTPATH so the exe finds its dictionary files.
@@ -2691,17 +2717,21 @@ function updateOfflineReconEnabled(app)
                     loadedFields{end+1} = 'Gs (storage modulus)';
                 end
 
-                % Load magnitude and raw wave from the input DICOMs (first half =
-                % magnitude, second half = raw wave by InstanceNumber sort).
-                [newM, newM_raw, newW_raw] = loadRawMRESplitFromDir(inputDir);
-                if ~isempty(newM)
-                    app.AppData.MRE.M     = newM;
-                    app.AppData.MRE.M_raw = newM_raw;
-                    loadedFields{end+1} = 'M (magnitude)';
-                end
-                if ~isempty(newW_raw)
-                    app.AppData.MRE.W_raw = newW_raw;
-                    loadedFields{end+1} = 'W_raw (raw wave)';
+                % Load magnitude and raw wave from the input DICOMs.
+                % GE/Philips: first half by InstanceNumber = wave, second = magnitude.
+                % Siemens: M/W_raw were already loaded from the original DICOM exam
+                % (PhaseDiff and Magnitude are separate series), so skip the split.
+                if ~startsWith(rawSeries.Role, 'SIEMENS_MRE_')
+                    [newM, newM_raw, newW_raw] = loadRawMRESplitFromDir(inputDir);
+                    if ~isempty(newM)
+                        app.AppData.MRE.M     = newM;
+                        app.AppData.MRE.M_raw = newM_raw;
+                        loadedFields{end+1} = 'M (magnitude)';
+                    end
+                    if ~isempty(newW_raw)
+                        app.AppData.MRE.W_raw = newW_raw;
+                        loadedFields{end+1} = 'W_raw (raw wave)';
+                    end
                 end
 
                 % Persist S / W / LapC / M / W_raw to the MAT file.
