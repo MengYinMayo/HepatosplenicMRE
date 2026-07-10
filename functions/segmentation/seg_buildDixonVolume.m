@@ -683,6 +683,11 @@ function pdffVol = scalePDFF(rawVol, files, tempIds, c)
         end
     end
     pdffVol = double(rawVol) .* scale;
+    % Siemens q-Dixon PDFF: 1 gray-value unit = 0.1% (range 0-1000).
+    % Apply ×0.1 when RescaleSlope was absent/1 and values are in 0-1000.
+    if max(pdffVol(:)) > 100 && max(pdffVol(:)) <= 1100
+        pdffVol = pdffVol * 0.1;
+    end
     % Clamp to 0-100
     pdffVol = max(0, min(100, pdffVol));
 end
@@ -828,9 +833,17 @@ function [pdffVol, sinfo] = readPDFFSeries(series, opts)
         end
         pdffVol = double(pdffVol) .* slope + intercept;
 
-        % Only special-case: 0-1 fraction encoding → convert to percent.
+        % Fraction encoding (0-1 range) → convert to percent.
         if max(pdffVol(:)) <= 1.5
             pdffVol = pdffVol * 100;
+        end
+
+        % Siemens q-Dixon PDFF: 1 gray-value unit = 0.1%, so the full 0-100%
+        % range is stored as 0-1000.  If RescaleSlope was absent or 1.0 the
+        % values survive the transform above unchanged (0-1000).  Detect by
+        % range and re-scale before clamping so > 10% fat does not get clipped.
+        if max(pdffVol(:)) > 100 && max(pdffVol(:)) <= 1100
+            pdffVol = pdffVol * 0.1;
         end
 
         pdffVol = max(0, min(100, pdffVol));
