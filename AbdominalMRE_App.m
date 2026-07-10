@@ -2572,35 +2572,66 @@ function updateOfflineReconEnabled(app)
                     exePath = fullfile(reconDir, exeList(newest).name);
                 end
 
-                % Collect all raw MRE series (any vendor)
-                mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag', ...
-                               'SIEMENS_MRE_PhaseDiff','SIEMENS_MRE_Magnitude'};
-                rawList = struct([]);
+                % Collect all raw MRE series, separated by vendor.
+                siemensRawRoles = {'SIEMENS_MRE_PhaseDiff','SIEMENS_MRE_Magnitude'};
+                otherRawRoles   = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'};
+                mreRawRoles     = [siemensRawRoles, otherRawRoles];
+                siemensList = struct([]); otherList = struct([]);
                 for k = 1:numel(app.AppData.Exam.Series)
                     s = app.AppData.Exam.Series(k);
-                    if any(strcmp(s.Role, mreRawRoles))
-                        if isempty(rawList), rawList = s; else, rawList(end+1) = s; end %#ok<AGROW>
+                    if any(strcmp(s.Role, siemensRawRoles))
+                        if isempty(siemensList), siemensList = s; else, siemensList(end+1) = s; end %#ok<AGROW>
+                    elseif any(strcmp(s.Role, otherRawRoles))
+                        if isempty(otherList),   otherList   = s; else, otherList(end+1)   = s; end %#ok<AGROW>
                     end
                 end
-                if isempty(rawList)
+                if isempty(siemensList) && isempty(otherList)
                     uialert(app.UIFigure, ...
                         'No MRE raw series found in the loaded exam.', ...
                         'Offline Recon', 'Icon','warning');
                     return
                 end
 
-                % Let user pick if multiple raw series exist
-                rawSeries = rawList(1);
-                if numel(rawList) > 1
-                    descs = arrayfun(@(s) sprintf('S%d  %s  (%d images)', ...
-                        s.SeriesNumber, char(s.SeriesDescription), s.nImages), ...
-                        rawList, 'UniformOutput', false);
-                    [idx, ok] = listdlg('ListString', descs, ...
-                        'SelectionMode','single', ...
-                        'PromptString','Select MRE raw series to recon:', ...
-                        'Name','Offline Recon', 'ListSize',[400 150]);
-                    if ~ok, return; end
-                    rawSeries = rawList(idx);
+                % Siemens: pool ALL PhaseDiff + Magnitude files into one folder
+                % automatically — the offline recon exe needs both image types
+                % together and they live in separate DICOM series.
+                % Other vendors: show series picker when multiple series exist.
+                if ~isempty(siemensList)
+                    % Use the PhaseDiff series as the reference (for status/role checks).
+                    rawSeries = siemensList(1);
+                    for k = 1:numel(siemensList)
+                        if strcmp(siemensList(k).Role,'SIEMENS_MRE_PhaseDiff')
+                            rawSeries = siemensList(k); break
+                        end
+                    end
+                    % Gather files from every Siemens MRE series.
+                    files = {};
+                    for k = 1:numel(siemensList)
+                        sf = siemensList(k).Files;
+                        if isempty(sf)
+                            sd = dir(siemensList(k).Folder); sd = sd(~[sd.isdir]);
+                            sf = cellfun(@(n) fullfile(siemensList(k).Folder,n), {sd.name}, 'UniformOutput',false);
+                        end
+                        files = [files, sf(:)']; %#ok<AGROW>
+                    end
+                else
+                    rawSeries = otherList(1);
+                    if numel(otherList) > 1
+                        descs = arrayfun(@(s) sprintf('S%d  %s  (%d images)', ...
+                            s.SeriesNumber, char(s.SeriesDescription), s.nImages), ...
+                            otherList, 'UniformOutput', false);
+                        [idx, ok] = listdlg('ListString', descs, ...
+                            'SelectionMode','single', ...
+                            'PromptString','Select MRE raw series to recon:', ...
+                            'Name','Offline Recon', 'ListSize',[400 150]);
+                        if ~ok, return; end
+                        rawSeries = otherList(idx);
+                    end
+                    files = rawSeries.Files;
+                    if isempty(files)
+                        d = dir(rawSeries.Folder); d = d(~[d.isdir]);
+                        files = cellfun(@(n) fullfile(rawSeries.Folder,n), {d.name}, 'UniformOutput',false);
+                    end
                 end
 
                 % Save recon input/output alongside other exam data files
@@ -2611,41 +2642,11 @@ function updateOfflineReconEnabled(app)
                 inputDir = fullfile(examDir, sprintf('mmdi_in_%s', ts));
                 if ~exist(inputDir, 'dir'), mkdir(inputDir); end
 
-                % Copy DICOM files
+                % Copy pooled DICOM files into the single input folder
                 dlg = uiprogressdlg(app.UIFigure, 'Title','Offline Recon', ...
                     'Message','Copying DICOM files to data folder...','Indeterminate','on');
-                files = rawSeries.Files;
-                if isempty(files)
-                    d = dir(rawSeries.Folder);
-                    d = d(~[d.isdir]);
-                    files = cellfun(@(n) fullfile(rawSeries.Folder, n), {d.name}, 'UniformOutput', false);
-                end
                 for k = 1:numel(files)
-                    copyfile(files{k}, inputDir);
-                end
-
-                % Siemens: PhaseDiff and Magnitude live in separate series.
-                % Copy the companion series so the offline recon exe has both.
-                if startsWith(rawSeries.Role, 'SIEMENS_MRE_')
-                    if strcmp(rawSeries.Role, 'SIEMENS_MRE_PhaseDiff')
-                        companionRole = 'SIEMENS_MRE_Magnitude';
-                    else
-                        companionRole = 'SIEMENS_MRE_PhaseDiff';
-                    end
-                    for ck = 1:numel(app.AppData.Exam.Series)
-                        cs = app.AppData.Exam.Series(ck);
-                        if strcmp(cs.Role, companionRole)
-                            cFiles = cs.Files;
-                            if isempty(cFiles)
-                                cd_ = dir(cs.Folder); cd_ = cd_(~[cd_.isdir]);
-                                cFiles = cellfun(@(n) fullfile(cs.Folder,n), {cd_.name}, 'UniformOutput',false);
-                            end
-                            for ck2 = 1:numel(cFiles)
-                                try, copyfile(cFiles{ck2}, inputDir); catch, end
-                            end
-                            break
-                        end
-                    end
+                    try, copyfile(files{k}, inputDir); catch, end
                 end
 
                 % Set DCMDICTPATH so the exe finds its dictionary files.
