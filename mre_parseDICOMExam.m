@@ -319,9 +319,16 @@ function entry = classifySeries(entry)
         elseif strcmp(imgComm, 'magnitude')
             entry.Role = 'SIEMENS_MRE_Magnitude'; return
         end
-        % Fallback when ImageComments is absent: infer from description suffix.
-        % Siemens GRE-MRE magnitude series are named *_Mag or *Mag; this
-        % catches them before the generic GRE_WaveMag_Raw path below.
+        % Fallback by series-description / folder-name suffix (Siemens convention):
+        %   *MRE_MAG  = original magnitude  → feed to offline recon
+        %   *MRE_P_P  = original phase-difference → feed to offline recon
+        %   *MRE_P_Wave = smoothed/interpolated wave (NOT for offline recon)
+        if endsWith(strtrim(desc),'mre_mag') || endsWith(strtrim(fnam),'mre_mag')
+            entry.Role = 'SIEMENS_MRE_Magnitude'; return
+        elseif endsWith(strtrim(desc),'mre_p_p') || endsWith(strtrim(fnam),'mre_p_p')
+            entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
+        end
+        % Older Siemens GRE-MRE convention: *_Mag suffix within gremre/epimre series.
         isSiemensMRE = hit(desc,{'gremre','epimre'}) || hit(fnam,{'gremre','epimre'});
         if isSiemensMRE
             if endsWith(strtrim(desc),'_mag') || contains(desc,'_mag_')

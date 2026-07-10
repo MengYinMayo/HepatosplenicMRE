@@ -2642,11 +2642,15 @@ function updateOfflineReconEnabled(app)
                 inputDir = fullfile(examDir, sprintf('mmdi_in_%s', ts));
                 if ~exist(inputDir, 'dir'), mkdir(inputDir); end
 
-                % Copy pooled DICOM files into the single input folder
+                % Copy pooled DICOM files into the single input folder.
+                % Prefix each file with a 5-digit index so that two series with
+                % identically-named files (e.g. Siemens MRE_MAG + MRE_P_P both
+                % containing IM_0001…IM_0008) do not silently overwrite each other.
                 dlg = uiprogressdlg(app.UIFigure, 'Title','Offline Recon', ...
                     'Message','Copying DICOM files to data folder...','Indeterminate','on');
                 for k = 1:numel(files)
-                    try, copyfile(files{k}, inputDir); catch, end
+                    [~, fname, fext] = fileparts(files{k});
+                    try, copyfile(files{k}, fullfile(inputDir, sprintf('%05d_%s%s', k, fname, fext))); catch, end
                 end
 
                 % Set DCMDICTPATH so the exe finds its dictionary files.
