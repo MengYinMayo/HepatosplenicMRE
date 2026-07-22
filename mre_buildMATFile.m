@@ -326,9 +326,10 @@ function H = buildHeaderStruct(hdr, sinfo)
     % Drive frequency (extracted from GE private tag)
     H.DriveFrequency_Hz = 60;  % default
     if isfield(hdr, 'Private_0043_1082')
-        tok = regexp(char(hdr.Private_0043_1082(:)'), 'lineFreq=(\d+)', 'tokens');
+        privateText = char(hdr.Private_0043_1082(:).');
+        tok = regexp(privateText, 'lineFreq=(\d+)', 'tokens', 'once');
         if ~isempty(tok)
-            H.DriveFrequency_Hz = str2double(tok{1}{1});
+            H.DriveFrequency_Hz = str2double(tok{1});
         end
     end
 end
@@ -611,28 +612,47 @@ function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionSiemens(grp, opts)
     W_raw = []; W = []; M = []; M_raw = []; S = []; LapC = []; H = [];
     sinfo = struct();
 
-    phaseDiffSeries = findRoleInGroup(grp, {'SIEMENS_MRE_PhaseDiff'});
-    magSeries       = findRoleInGroup(grp, {'SIEMENS_MRE_Magnitude'});
+    % Collect ALL PhaseDiff and Magnitude series in the group.
+    % Old-format Siemens MRE stores each slice as a separate series, so there
+    % may be N series per role that must be concatenated along the slice dim.
+    phaseDiffAll = findAllRolesInGroup(grp, {'SIEMENS_MRE_PhaseDiff'});
+    magAll       = findAllRolesInGroup(grp, {'SIEMENS_MRE_Magnitude'});
 
-    if ~isempty(phaseDiffSeries)
-        vprint(opts, 'Siemens MRE PhaseDiff (wave): S%d  %s', ...
-            phaseDiffSeries.SeriesNumber, phaseDiffSeries.SeriesDescription);
+    if ~isempty(phaseDiffAll)
         procOpts = opts; procOpts.forceProcessedWave = true;
-        [W_raw, ~, sinfo, ~, ~] = mre_readWaveMagSeries(phaseDiffSeries, procOpts);
-        W = W_raw;
-        try, H = buildHeaderStruct(phaseDiffSeries.Header, sinfo); catch, H = struct(); end
+        vols = {};
+        for k = 1:numel(phaseDiffAll)
+            vprint(opts, 'Siemens MRE PhaseDiff (wave): S%d  %s', ...
+                phaseDiffAll(k).SeriesNumber, phaseDiffAll(k).SeriesDescription);
+            [vol, ~, sifo, ~, ~] = mre_readWaveMagSeries(phaseDiffAll(k), procOpts);
+            if ~isempty(vol)
+                vols{end+1} = vol; %#ok<AGROW>
+                if k == 1, sinfo = sifo; end
+            end
+        end
+        if ~isempty(vols)
+            W_raw = cat(3, vols{:});
+            W = W_raw;
+            try, H = buildHeaderStruct(phaseDiffAll(1).Header, sinfo); catch, H = struct(); end
+        end
     end
 
-    if ~isempty(magSeries)
-        vprint(opts, 'Siemens MRE Magnitude: S%d  %s', ...
-            magSeries.SeriesNumber, magSeries.SeriesDescription);
+    if ~isempty(magAll)
         % forceProcessedWave=true routes through readProcWave which reads
         % ALL images as W (rather than splitting GE-style into wave/mag halves).
         % For a Siemens magnitude-only series every image is magnitude.
         magOpts = opts; magOpts.forceProcessedWave = true;
-        [M_vol, ~, ~, ~, ~] = mre_readWaveMagSeries(magSeries, magOpts);
-        if ~isempty(M_vol)
-            M_raw = M_vol;
+        vols = {};
+        for k = 1:numel(magAll)
+            vprint(opts, 'Siemens MRE Magnitude: S%d  %s', ...
+                magAll(k).SeriesNumber, magAll(k).SeriesDescription);
+            [vol, ~, ~, ~, ~] = mre_readWaveMagSeries(magAll(k), magOpts);
+            if ~isempty(vol)
+                vols{end+1} = vol; %#ok<AGROW>
+            end
+        end
+        if ~isempty(vols)
+            M_raw = cat(3, vols{:});
             M = mean(double(M_raw), 4);
         end
     end
@@ -932,6 +952,16 @@ function s = findRoleInGroup(grp, roles)
     for k = 1:numel(grp)
         if any(strcmp(grp(k).Role, roles))
             s = grp(k); return
+        end
+    end
+end
+
+function s = findAllRolesInGroup(grp, roles)
+%FINDALLROLESINGROUP  Return ALL entries whose Role is in the given list.
+    s = struct([]);
+    for k = 1:numel(grp)
+        if any(strcmp(grp(k).Role, roles))
+            if isempty(s), s = grp(k); else, s(end+1) = grp(k); end
         end
     end
 end

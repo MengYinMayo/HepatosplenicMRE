@@ -306,13 +306,12 @@ function entry = classifySeries(entry)
     end
 
     % ── Siemens MRE ──────────────────────────────────────────────────────
-    % Classification sources (in priority order):
-    %   1. ImageComments tag 'PhaseDiff' / 'Magnitude'
-    %   2. New-format suffix: *MRE_MAG / *MRE_P_P  (RST-Siemens-MR62 style)
-    %   3. Old-format per-slice naming: "Liver MRE" (mag) / "Liver MRE P" (phase)
-    %      Each slice is a separate series; all slices are pooled at recon time.
-    %   4. Legacy Siemens GRE-MRE: *_Mag within gremre/epimre series
-    %   5. Derived stiffness / confidence maps
+    % Detected via Manufacturer tag containing 'siemens' combined with the
+    % (0020,4000) ImageComments tag:
+    %   'PhaseDiff' = raw wave (phase-difference) images
+    %   'Magnitude' = raw magnitude images
+    % Reconstructed stiffness/confidence maps are also classified here when
+    % derived from a Siemens MRE acquisition.
     if contains(lower(entry.Manufacturer), 'siemens')
         imgComm = strtrim(lower(entry.ImageComments));
         if strcmp(imgComm, 'phasediff')
@@ -320,45 +319,46 @@ function entry = classifySeries(entry)
         elseif strcmp(imgComm, 'magnitude')
             entry.Role = 'SIEMENS_MRE_Magnitude'; return
         end
-        % New-format suffix detection (*MRE_MAG, *MRE_P_P).
-        % MRE_P_Wave is the smoothed/interpolated wave — not for offline recon.
+        % Fallback by series-description / folder-name suffix (Siemens convention):
+        %   *MRE_MAG  = original magnitude  → feed to offline recon
+        %   *MRE_P_P  = original phase-difference → feed to offline recon
+        %   *MRE_P_Wave = smoothed/interpolated wave (NOT for offline recon)
         if endsWith(strtrim(desc),'mre_mag') || endsWith(strtrim(fnam),'mre_mag')
             entry.Role = 'SIEMENS_MRE_Magnitude'; return
         elseif endsWith(strtrim(desc),'mre_p_p') || endsWith(strtrim(fnam),'mre_p_p')
             entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
         end
         % Old-format Siemens MRE (pre-2015 era): one series per slice.
-        %   "Liver MRE"   → magnitude    (desc / folder ends with bare 'mre' token)
-        %   "Liver MRE P" → phase-diff   (desc / folder ends with ' p' or '_p')
+        %   "Liver MRE"   -> magnitude   (desc contains 'mre' but NOT trailing ' p')
+        %   "Liver MRE P" -> phase-diff  (desc ends with ' p' or '_p' after 'mre')
         % Guard: skip stiffness, wave, smoothed, processed, and confidence series.
         if hit(desc, {'mre'}) && ~hit(desc, {'stiff','wave','smooth','proc','conf'})
             if ~isempty(regexp(strtrim(desc), '[\s_]p$', 'once'))
                 entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
-            elseif ~isempty(regexp(strtrim(desc), '(^|[\s_])mre\s*$', 'once'))
+            elseif ~isempty(regexp(strtrim(desc), '(^|[\s_])mre$', 'once'))
                 entry.Role = 'SIEMENS_MRE_Magnitude'; return
             end
         elseif hit(fnam, {'mre'}) && ~hit(fnam, {'stiff','wave','smooth','proc','conf'})
             if ~isempty(regexp(strtrim(fnam), '[\s_]p$', 'once'))
                 entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
-            elseif ~isempty(regexp(strtrim(fnam), '(^|[\s_])mre\s*$', 'once'))
+            elseif ~isempty(regexp(strtrim(fnam), '(^|[\s_])mre$', 'once'))
                 entry.Role = 'SIEMENS_MRE_Magnitude'; return
             end
         end
-        % Old-format Siemens MRE (pre-2015 era): one series per slice.
-        %   "Liver MRE"   -> magnitude    (desc / folder ends with bare 'mre' token)
-        %   "Liver MRE P" -> phase-diff   (desc / folder ends with ' p' or '_p')
-        % Guard: skip stiffness, wave, smoothed, processed, and confidence series.
-        if hit(desc, {'mre'}) && ~hit(desc, {'stiff','wave','smooth','proc','conf'})
-            if ~isempty(regexp(strtrim(desc), '[\s_]p$', 'once'))
-                entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
-            elseif ~isempty(regexp(strtrim(desc), '(^|[\s_])mre\s*$', 'once'))
+        % Older Siemens GRE-MRE convention: *_Mag suffix within gremre/epimre series.
+        isSiemensMRE = hit(desc,{'gremre','epimre'}) || hit(fnam,{'gremre','epimre'});
+        if isSiemensMRE
+            if endsWith(strtrim(desc),'_mag') || contains(desc,'_mag_')
                 entry.Role = 'SIEMENS_MRE_Magnitude'; return
             end
-        elseif hit(fnam, {'mre'}) && ~hit(fnam, {'stiff','wave','smooth','proc','conf'})
-            if ~isempty(regexp(strtrim(fnam), '[\s_]p$', 'once'))
-                entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
-            elseif ~isempty(regexp(strtrim(fnam), '(^|[\s_])mre\s*$', 'once'))
-                entry.Role = 'SIEMENS_MRE_Magnitude'; return
+        end
+        if contains(itype,'derived') && bits == 16 && ...
+           (hit(desc, {'mre','elastograph','stiffness','confidence'}) || ...
+            hit(fnam, {'mre','elastog'}))
+            if isConf(entry)
+                entry.Role = 'SIEMENS_MRE_ConfMap'; return
+            elseif isStiff(entry)
+                entry.Role = 'SIEMENS_MRE_Stiffness'; return
             end
         end
     end
@@ -755,8 +755,31 @@ function exam = initExamStruct(dir_)
 end
 
 function v = safeStr(hdr, field)
-    if isfield(hdr,field) && ~isempty(hdr.(field)), v = char(hdr.(field));
-    else, v = ''; end
+% Always returns a char ROW VECTOR (never a multi-row char matrix or cell).
+% DICOM multi-valued string tags (e.g. ImageType "ORIGINAL\PRIMARY\M") can
+% come back as cell arrays on some MATLAB/scanner combinations; joining them
+% preserves searchability while keeping the type consistent.
+    if ~isfield(hdr, field) || isempty(hdr.(field))
+        v = ''; return
+    end
+    raw = hdr.(field);
+    try
+        if iscell(raw)
+            % Cell array of strings (multi-valued DICOM tag parsed as cells).
+            parts = cellfun(@(x) deblank(char(x(:)')), raw(:)', 'UniformOutput', false);
+            v = strjoin(parts(~cellfun(@isempty, parts)), '\');
+        else
+            c = char(raw);
+            if size(c, 1) > 1
+                % Multi-row char matrix (char() of a cell array, or padded tag).
+                v = strjoin(strtrim(cellstr(c)), '\');
+            else
+                v = deblank(c);
+            end
+        end
+    catch
+        v = '';
+    end
 end
 
 function v = safeNum(hdr, field)
