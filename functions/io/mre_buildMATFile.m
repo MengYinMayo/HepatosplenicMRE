@@ -326,9 +326,10 @@ function H = buildHeaderStruct(hdr, sinfo)
     % Drive frequency (extracted from GE private tag)
     H.DriveFrequency_Hz = 60;  % default
     if isfield(hdr, 'Private_0043_1082')
-        tok = regexp(char(hdr.Private_0043_1082), 'lineFreq=(\d+)', 'tokens');
+        privateText = char(hdr.Private_0043_1082(:).');
+        tok = regexp(privateText, 'lineFreq=(\d+)', 'tokens', 'once');
         if ~isempty(tok)
-            H.DriveFrequency_Hz = str2double(tok{1}{1});
+            H.DriveFrequency_Hz = str2double(tok{1});
         end
     end
 end
@@ -403,16 +404,23 @@ function matPath = buildFromSelection(sel, opts)
         grp = filterMREGroupToAnchorFamily(grp, sel.MRE);
         if isempty(grp), grp = sel.MRE; end
 
-        isPhilips = false;
-        isEPI = false;
+        isPhilips  = false;
+        isEPI      = false;
+        isSiemens  = false;
         try
             roles = {grp.Role};
-            isPhilips = any(startsWith(roles,'PHILIPS_')) || startsWith(sel.MRE.Role,'PHILIPS_');
-            isEPI     = ~isPhilips && (any(startsWith(roles,'EPI_')) || startsWith(sel.MRE.Role,'EPI_'));
+            isSiemens = any(startsWith(roles,'SIEMENS_')) || startsWith(sel.MRE.Role,'SIEMENS_');
+            isPhilips = ~isSiemens && (any(startsWith(roles,'PHILIPS_')) || startsWith(sel.MRE.Role,'PHILIPS_'));
+            isEPI     = ~isPhilips && ~isSiemens && (any(startsWith(roles,'EPI_')) || startsWith(sel.MRE.Role,'EPI_'));
         catch
         end
 
-        if isPhilips
+        if isSiemens
+            [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionSiemens(grp, opts);
+        elseif isPhilips
+            % Load magnitude and raw wave from the interleaved Philips raw series.
+            % Philips stores mag (first half by InstanceNumber) and phase (second half)
+            % in the same series — no processed wave or stiffness until offline recon.
             rawSeries = sel.MRE;
             rawInGrp = findRoleInGroup(grp, {'PHILIPS_MRE_Raw'});
             if ~isempty(rawInGrp), rawSeries = rawInGrp(1); end
@@ -555,6 +563,12 @@ function grpOut = filterMREGroupToAnchorFamily(grpIn, anchor)
         return
     end
 
+    % Siemens: series numbers have no numeric hierarchy — keep the full group as-is
+    if isfield(anchor,'Role') && numel(anchor.Role) >= 3 && strcmp(anchor.Role(1:3),'SIE')
+        grpOut = grpIn;
+        return
+    end
+
     rootNum = double(anchor.SeriesNumber);
     while rootNum >= 100
         rootNum = floor(rootNum / 100);
@@ -588,6 +602,79 @@ function grpOut = filterMREGroupToAnchorFamily(grpIn, anchor)
     end
 end
 
+function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionSiemens(grp, opts)
+%BUILDFROMSELECTIONSIEMENS  Siemens MRE raw data load.
+%   PhaseDiff series -> W_raw (raw phase-difference wave images)
+%   Magnitude series -> M_raw / M
+%   Stiffness series -> S, converted from Siemens 10xPa units to kPa (/10000)
+%   ConfMap series   -> LapC (normalized /1000 as with GRE)
+
+    W_raw = []; W = []; M = []; M_raw = []; S = []; LapC = []; H = [];
+    sinfo = struct();
+
+    % Collect ALL PhaseDiff and Magnitude series in the group.
+    % Old-format Siemens MRE stores each slice as a separate series, so there
+    % may be N series per role that must be concatenated along the slice dim.
+    phaseDiffAll = findAllRolesInGroup(grp, {'SIEMENS_MRE_PhaseDiff'});
+    magAll       = findAllRolesInGroup(grp, {'SIEMENS_MRE_Magnitude'});
+
+    if ~isempty(phaseDiffAll)
+        procOpts = opts; procOpts.forceProcessedWave = true;
+        vols = {};
+        for k = 1:numel(phaseDiffAll)
+            vprint(opts, 'Siemens MRE PhaseDiff (wave): S%d  %s', ...
+                phaseDiffAll(k).SeriesNumber, phaseDiffAll(k).SeriesDescription);
+            [vol, ~, sifo, ~, ~] = mre_readWaveMagSeries(phaseDiffAll(k), procOpts);
+            if ~isempty(vol)
+                vols{end+1} = vol; %#ok<AGROW>
+                if k == 1, sinfo = sifo; end
+            end
+        end
+        if ~isempty(vols)
+            W_raw = cat(3, vols{:});
+            W = W_raw;
+            try, H = buildHeaderStruct(phaseDiffAll(1).Header, sinfo); catch, H = struct(); end
+        end
+    end
+
+    if ~isempty(magAll)
+        % forceProcessedWave=true routes through readProcWave which reads
+        % ALL images as W (rather than splitting GE-style into wave/mag halves).
+        % For a Siemens magnitude-only series every image is magnitude.
+        magOpts = opts; magOpts.forceProcessedWave = true;
+        vols = {};
+        for k = 1:numel(magAll)
+            vprint(opts, 'Siemens MRE Magnitude: S%d  %s', ...
+                magAll(k).SeriesNumber, magAll(k).SeriesDescription);
+            [vol, ~, ~, ~, ~] = mre_readWaveMagSeries(magAll(k), magOpts);
+            if ~isempty(vol)
+                vols{end+1} = vol; %#ok<AGROW>
+            end
+        end
+        if ~isempty(vols)
+            M_raw = cat(3, vols{:});
+            M = mean(double(M_raw), 4);
+        end
+    end
+
+    stiffSeries = findRoleInGroup(grp, {'SIEMENS_MRE_Stiffness'});
+    if ~isempty(stiffSeries)
+        vprint(opts, 'Siemens MRE Stiffness (10xPa -> /10000 -> kPa): S%d', ...
+            stiffSeries.SeriesNumber);
+        nZ = max(1, round(size(W_raw, 3)));
+        S_raw = readGrayscaleVolume(stiffSeries.Files, 256, 256, nZ);
+        S = double(S_raw) / 10000.0;
+    end
+
+    confSeries = findRoleInGroup(grp, {'SIEMENS_MRE_ConfMap'});
+    if ~isempty(confSeries)
+        vprint(opts, 'Siemens MRE ConfMap: S%d', confSeries.SeriesNumber);
+        nZ = max(1, round(size(W_raw, 3)));
+        LapC_raw = readGrayscaleVolume(confSeries.Files, 256, 256, nZ);
+        LapC = double(LapC_raw) / 1000.0;
+    end
+end
+
 function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionEPI(grp, opts)
 %BUILDFROMSELECTIONEPI  EPI-specific 2D/3D load rules with no interpolation.
 
@@ -603,10 +690,38 @@ function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionEPI(grp, opts)
         rems{k} = epiRemainder(rootNum, double(grp(k).SeriesNumber));
     end
 
+    % When all remainders are empty the chosen root is at a deeper level
+    % than the actual family root (e.g. rootNum=1203 but true root=12).
+    % Climb up by repeatedly flooring until we find a root that produces
+    % at least one non-empty remainder.
+    if all(cellfun(@isempty, rems)) && rootNum >= 100
+        virtRoot = rootNum;
+        while virtRoot >= 100
+            virtRoot = floor(virtRoot / 100);
+            testRems = cell(size(grp));
+            for k = 1:numel(grp)
+                testRems{k} = epiRemainder(virtRoot, double(grp(k).SeriesNumber));
+            end
+            if any(~cellfun(@isempty, testRems))
+                rootNum = virtRoot;
+                rems = testRems;
+                break
+            end
+        end
+    end
+
     is3D = any(strcmp(rems,'02')) && any(strcmp(rems,'03'));
     if ~is3D
         nDesc = sum(~cellfun(@isempty, rems));
         if nDesc > 10
+            is3D = true;
+        end
+    end
+    % Combined-3D: scanner writes all three MEG directions into one series
+    % filed under remainder '03' (no separate '01' or '02' series).
+    if ~is3D && any(strcmp(rems,'03')) && ...
+            ~any(strcmp(rems,'01')) && ~any(strcmp(rems,'02'))
+        if ~isempty(pickEPISeriesByRemainder(grp, rootNum, {'03'}, {'EPI_WaveMag_Raw'}))
             is3D = true;
         end
     end
@@ -841,6 +956,16 @@ function s = findRoleInGroup(grp, roles)
     end
 end
 
+function s = findAllRolesInGroup(grp, roles)
+%FINDALLROLESINGROUP  Return ALL entries whose Role is in the given list.
+    s = struct([]);
+    for k = 1:numel(grp)
+        if any(strcmp(grp(k).Role, roles))
+            if isempty(s), s = grp(k); else, s(end+1) = grp(k); end
+        end
+    end
+end
+
 function s = findByDesc(grp, kws)
     s = [];
     for k = 1:numel(grp)
@@ -962,46 +1087,80 @@ function [ok, score] = scoreProcCandidate(g, rawSlices)
     end
 end
 
+% ======================================================================
+%  PHILIPS RAW SPLIT HELPERS
+% ======================================================================
+
 function [M_raw, W_raw, M] = loadPhilipsMRERawSplit(rawSeries)
+%LOADPHILIPSMREREAWSPLIT  Split Philips MRE raw series into magnitude and wave.
+%
+% Philips stores all echoes/phases in one series: the first half of files
+% (sorted by InstanceNumber) are magnitude images; the second half are
+% phase/wave images.  Each half is then organised into a 4-D volume
+% [nR × nC × nSlices × nPhases] by grouping on SliceLocation.
+
     M_raw = []; W_raw = []; M = [];
     files = rawSeries.Files;
     nF = numel(files);
     if nF < 2, return; end
-    instNums = zeros(1,nF); sliceLocs = zeros(1,nF); nR = 0; nC = 0;
+
+    instNums  = zeros(1, nF);
+    sliceLocs = zeros(1, nF);
+    nR = 0; nC = 0;
     for k = 1:nF
         try
             info = dicominfo(files{k}, 'UseDictionaryVR', true);
             if isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
-                instNums(k) = double(info.InstanceNumber); else, instNums(k) = k; end
+                instNums(k)  = double(info.InstanceNumber);
+            else
+                instNums(k)  = k;
+            end
             if isfield(info,'SliceLocation') && ~isempty(info.SliceLocation)
-                sliceLocs(k) = double(info.SliceLocation); end
-            if nR == 0 && isfield(info,'Rows')
-                nR = double(info.Rows); nC = double(info.Columns); end
-        catch, instNums(k) = k; end
+                sliceLocs(k) = double(info.SliceLocation);
+            end
+            if nR == 0 && isfield(info,'Rows') && isfield(info,'Columns')
+                nR = double(info.Rows);
+                nC = double(info.Columns);
+            end
+        catch
+            instNums(k) = k;
+        end
     end
     if nR == 0, nR = 256; nC = 256; end
-    [~, sortIdx] = sort(instNums);
-    sortedFiles = files(sortIdx); sortedLocs = sliceLocs(sortIdx);
-    half = floor(nF/2);
-    M_raw = philipsOrganise4D(sortedFiles(1:half),    sortedLocs(1:half),    nR, nC);
-    W_raw = philipsOrganise4D(sortedFiles(half+1:end), sortedLocs(half+1:end), nR, nC);
-    if ~isempty(M_raw), M = mean(M_raw, 4); end
+
+    [~, sortIdx]   = sort(instNums);
+    sortedFiles    = files(sortIdx);
+    sortedLocs     = sliceLocs(sortIdx);
+
+    half      = floor(nF / 2);
+    M_raw     = philipsOrganise4D(sortedFiles(1:half),    sortedLocs(1:half),    nR, nC);
+    W_raw     = philipsOrganise4D(sortedFiles(half+1:end), sortedLocs(half+1:end), nR, nC);
+    if ~isempty(M_raw)
+        M = mean(M_raw, 4);
+    end
 end
 
 function vol = philipsOrganise4D(files, locs, nR, nC)
+%PHILIPSORGANISE4D  Stack files into [nR nC nSlices nPhases] using SliceLocation.
+    vol = [];
     nF = numel(files);
-    if nF == 0, vol = []; return; end
-    uniqueLocs = unique(locs); nSlices = numel(uniqueLocs);
-    nPhases = max(1, round(nF / max(1, nSlices)));
+    if nF == 0, return; end
+    uniqueLocs = unique(locs);
+    nSlices    = numel(uniqueLocs);
+    nPhases    = max(1, round(nF / max(1, nSlices)));
     vol = zeros(nR, nC, nSlices, nPhases, 'double');
     for si = 1:nSlices
-        sel = (locs == uniqueLocs(si)); fSel = files(sel);
+        sel   = (locs == uniqueLocs(si));
+        fSel  = files(sel);
         for ph = 1:min(numel(fSel), nPhases)
             try
                 img = double(dicomread(fSel{ph}));
-                if size(img,1)~=nR || size(img,2)~=nC, img=imresize(img,[nR nC],'bilinear'); end
+                if size(img,1) ~= nR || size(img,2) ~= nC
+                    img = imresize(img, [nR nC], 'bilinear');
+                end
                 vol(:,:,si,ph) = img;
-            catch, end
+            catch
+            end
         end
     end
 end

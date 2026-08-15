@@ -240,6 +240,8 @@ function entry = buildEntry(folder, files, hdr)
     if isnan(spp)
         entry.IsGrayscale   = ~contains(lower(safeStr(hdr,'PhotometricInterpretation')),'rgb');
     end
+    entry.Manufacturer      = safeStr(hdr, 'Manufacturer');
+    entry.ImageComments     = safeStr(hdr, 'ImageComments');
     entry.SeqName           = safePrivateTag(hdr, 'Private_0019_109c');
     entry.SeqType           = safePrivateTag(hdr, 'Private_0019_109e');
     entry.ScanOptions       = safeStr(hdr, 'ScanOptions');
@@ -303,6 +305,64 @@ function entry = classifySeries(entry)
         entry.Role = 'PHILIPS_MRE_Raw'; return
     end
 
+    % ── Siemens MRE ──────────────────────────────────────────────────────
+    % Detected via Manufacturer tag containing 'siemens' combined with the
+    % (0020,4000) ImageComments tag:
+    %   'PhaseDiff' = raw wave (phase-difference) images
+    %   'Magnitude' = raw magnitude images
+    % Reconstructed stiffness/confidence maps are also classified here when
+    % derived from a Siemens MRE acquisition.
+    if contains(lower(entry.Manufacturer), 'siemens')
+        imgComm = strtrim(lower(entry.ImageComments));
+        if strcmp(imgComm, 'phasediff')
+            entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
+        elseif strcmp(imgComm, 'magnitude')
+            entry.Role = 'SIEMENS_MRE_Magnitude'; return
+        end
+        % Fallback by series-description / folder-name suffix (Siemens convention):
+        %   *MRE_MAG  = original magnitude  → feed to offline recon
+        %   *MRE_P_P  = original phase-difference → feed to offline recon
+        %   *MRE_P_Wave = smoothed/interpolated wave (NOT for offline recon)
+        if endsWith(strtrim(desc),'mre_mag') || endsWith(strtrim(fnam),'mre_mag')
+            entry.Role = 'SIEMENS_MRE_Magnitude'; return
+        elseif endsWith(strtrim(desc),'mre_p_p') || endsWith(strtrim(fnam),'mre_p_p')
+            entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
+        end
+        % Old-format Siemens MRE (pre-2015 era): one series per slice.
+        %   "Liver MRE"   -> magnitude   (desc contains 'mre' but NOT trailing ' p')
+        %   "Liver MRE P" -> phase-diff  (desc ends with ' p' or '_p' after 'mre')
+        % Guard: skip stiffness, wave, smoothed, processed, and confidence series.
+        if hit(desc, {'mre'}) && ~hit(desc, {'stiff','wave','smooth','proc','conf'})
+            if ~isempty(regexp(strtrim(desc), '[\s_]p$', 'once'))
+                entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
+            elseif ~isempty(regexp(strtrim(desc), '(^|[\s_])mre$', 'once'))
+                entry.Role = 'SIEMENS_MRE_Magnitude'; return
+            end
+        elseif hit(fnam, {'mre'}) && ~hit(fnam, {'stiff','wave','smooth','proc','conf'})
+            if ~isempty(regexp(strtrim(fnam), '[\s_]p$', 'once'))
+                entry.Role = 'SIEMENS_MRE_PhaseDiff'; return
+            elseif ~isempty(regexp(strtrim(fnam), '(^|[\s_])mre$', 'once'))
+                entry.Role = 'SIEMENS_MRE_Magnitude'; return
+            end
+        end
+        % Older Siemens GRE-MRE convention: *_Mag suffix within gremre/epimre series.
+        isSiemensMRE = hit(desc,{'gremre','epimre'}) || hit(fnam,{'gremre','epimre'});
+        if isSiemensMRE
+            if endsWith(strtrim(desc),'_mag') || contains(desc,'_mag_')
+                entry.Role = 'SIEMENS_MRE_Magnitude'; return
+            end
+        end
+        if contains(itype,'derived') && bits == 16 && ...
+           (hit(desc, {'mre','elastograph','stiffness','confidence'}) || ...
+            hit(fnam, {'mre','elastog'}))
+            if isConf(entry)
+                entry.Role = 'SIEMENS_MRE_ConfMap'; return
+            elseif isStiff(entry)
+                entry.Role = 'SIEMENS_MRE_Stiffness'; return
+            end
+        end
+    end
+
     % ── Philips mDIXON-Quant Dixon ────────────────────────────────────
     % Handled as a fully separate layer before the GE IDEAL-IQ block so
     % that GE classification logic is never touched by Philips series.
@@ -343,7 +403,27 @@ function entry = classifySeries(entry)
         strcmp(desc,'r2') || strcmp(desc,'fat') || ...
         hit(fnam, {'ideal','idealiq','dixon','pdff','water'}))
 
-        % Sub-classify within GE IDEAL-IQ.
+        % Siemens q-Dixon sub-classification (vibe_q-dixon_tra_bh_<suffix>).
+        % Uses single/double-letter suffixes: W=water, F=fat, FF=fat-fraction,
+        % R2s_Eff / T2s_Eff = R2*/T2* maps, WF = combined water+fat stack.
+        isQDixon = contains(desc,'q-dixon') || contains(desc,'q_dixon') || ...
+                   contains(fnam,'q-dixon') || contains(fnam,'q_dixon');
+        if isQDixon
+            if contains(desc,'_ff') && ~contains(desc,'_wf')
+                entry.Role = 'IDEALIQ_PDFF'; return
+            elseif endsWith(strtrim(desc),'_w') && ~contains(desc,'_wf')
+                entry.Role = 'IDEALIQ_Water'; return
+            elseif endsWith(strtrim(desc),'_f') && ~contains(desc,'_ff') && ~contains(desc,'_wf')
+                entry.Role = 'IDEALIQ_Fat'; return
+            elseif contains(desc,'_r2s') || contains(desc,'r2s_eff') || ...
+                   contains(desc,'_t2s') || contains(desc,'t2s_eff')
+                entry.Role = 'IDEALIQ_T2s'; return
+            else
+                entry.Role = 'IDEALIQ_Multi'; return
+            end
+        end
+
+        % Sub-classify within GE IDEAL-IQ.  Logic unchanged from original.
         if hit(desc,{'fatfrac','fat frac','fat%','pdff','fatpct'}) || ...
            hit(fnam,{'pdff','fatfrac'}) || ...
            startsWith(strtrim(desc),'ff_') || startsWith(strtrim(desc),'ff ')
@@ -356,27 +436,15 @@ function entry = classifySeries(entry)
             % 's15997_R2_1_s_1.5T_IDEAL-IQ_Abdomen'.
             entry.Role = 'IDEALIQ_T2s';
 
-        elseif contains(desc,'water')
-            % T2*-corrected Water image (IDEAL-IQ Water recon).
-            entry.Role = 'IDEALIQ_Water';
-
-        elseif contains(desc,'inphase') || contains(desc,'in_phase') || ...
-               contains(desc,'in phase') || contains(desc,'in-phase')
-            % In-phase (Water+Fat) image.
-            entry.Role = 'IDEALIQ_InPhase';
-
-        elseif contains(desc,'outphase') || contains(desc,'out_phase') || ...
-               contains(desc,'out phase') || contains(desc,'out-of-phase') || ...
-               contains(desc,'outofphase')
-            % Out-of-phase (Water-Fat) image.
-            entry.Role = 'IDEALIQ_OutPhase';
-
-        elseif contains(desc,' fat') || contains(desc,'_fat') || ...
-               startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat')
-            % T2*-corrected Fat image (IDEAL-IQ Fat recon).
-            % Matched as prefix/underscore-delimited token to handle
+        elseif contains(desc,'water') || ...
+               contains(desc,' fat') || contains(desc,'_fat') || ...
+               startsWith(strtrim(desc),'fat') || strcmp(strtrim(desc),'fat') || ...
+               contains(desc,'inphase') || contains(desc,'in_phase') || ...
+               contains(desc,'outphase') || contains(desc,'out_phase')
+            % Single-contrast recon: Water, Fat, InPhase, or OutPhase volume.
+            % Fat matched as prefix/underscore-delimited token to handle
             % GE names like 's0202_FAT__Ax_IDEAL_IQ_BH' and 's15993_T2_Fat_...'.
-            entry.Role = 'IDEALIQ_Fat';
+            entry.Role = 'IDEALIQ_Raw';
 
         else
             % Multi-contrast stack or unclassified IDEAL-IQ product.
@@ -670,11 +738,13 @@ function mreType = detectMREType(sl)
     roles      = {sl.Role};
     hasEPI     = any(contains(roles,'EPI_'));
     hasGRE     = any(contains(roles,'GRE_'));
-    hasPhilips = any(strcmp(roles,'PHILIPS_MRE_Raw'));
+    hasPhilips  = any(strcmp(roles,'PHILIPS_MRE_Raw'));
+    hasSiemens  = any(startsWith(roles,'SIEMENS_MRE_'));
     if hasEPI && hasGRE,    mreType = 'both';
     elseif hasEPI,          mreType = 'EPI';
     elseif hasGRE,          mreType = 'GRE';
     elseif hasPhilips,      mreType = 'Philips';
+    elseif hasSiemens,      mreType = 'Siemens';
     else,                   mreType = 'none';
     end
 end
@@ -685,8 +755,31 @@ function exam = initExamStruct(dir_)
 end
 
 function v = safeStr(hdr, field)
-    if isfield(hdr,field) && ~isempty(hdr.(field)), v = char(hdr.(field));
-    else, v = ''; end
+% Always returns a char ROW VECTOR (never a multi-row char matrix or cell).
+% DICOM multi-valued string tags (e.g. ImageType "ORIGINAL\PRIMARY\M") can
+% come back as cell arrays on some MATLAB/scanner combinations; joining them
+% preserves searchability while keeping the type consistent.
+    if ~isfield(hdr, field) || isempty(hdr.(field))
+        v = ''; return
+    end
+    raw = hdr.(field);
+    try
+        if iscell(raw)
+            % Cell array of strings (multi-valued DICOM tag parsed as cells).
+            parts = cellfun(@(x) deblank(char(x(:)')), raw(:)', 'UniformOutput', false);
+            v = strjoin(parts(~cellfun(@isempty, parts)), '\');
+        else
+            c = char(raw);
+            if size(c, 1) > 1
+                % Multi-row char matrix (char() of a cell array, or padded tag).
+                v = strjoin(strtrim(cellstr(c)), '\');
+            else
+                v = deblank(c);
+            end
+        end
+    catch
+        v = '';
+    end
 end
 
 function v = safeNum(hdr, field)
@@ -697,9 +790,17 @@ end
 function v = safePrivateTag(hdr, field)
     if isfield(hdr,field) && ~isempty(hdr.(field))
         raw = hdr.(field);
-        if ischar(raw) || isstring(raw), v = char(raw);
-        else, v = ''; end
-    else, v = ''; end
+        if ischar(raw) || isstring(raw)
+            v = char(raw(:)');
+        elseif isa(raw,'uint8') || isa(raw,'int8')
+            % GE private tags are often stored as uint8 byte arrays (ASCII text)
+            v = deblank(char(raw(:)'));
+        else
+            v = '';
+        end
+    else
+        v = '';
+    end
 end
 
 function opts = applyDefaults(opts, defaults)

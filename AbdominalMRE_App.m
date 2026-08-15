@@ -5342,7 +5342,8 @@ function I = getMREMagnitudeForROI(app, sl)
                     end
                 catch; end
             end
-            try, app.updateStiffGradSidebar(); catch; end
+            try,
+                app.updateStiffGradSidebar(); catch; end
             try, app.updateResultsTable();      catch; end
         end
 

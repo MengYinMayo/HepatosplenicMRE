@@ -31,9 +31,13 @@ function [W, M, spatialInfo, phases_rad, M_raw] = mre_readWaveMagSeries(seriesEn
     vprint(opts, 'Reading %s: %d files', safeField(seriesEntry,'Role','(no role)'), nFiles);
 
     % ------------------------------------------------------------------
-    % Fast path for processed-wave series (e.g., GRE S705)
+    % Fast path for processed-wave series (e.g., GRE S705).
+    % Also triggered by forceProcessedWave=true so that Siemens single-
+    % content series (PhaseDiff-only or Magnitude-only) are read as a
+    % flat phase stack rather than being split GE-style.
     % ------------------------------------------------------------------
-    if isProcessedWaveSeries(seriesEntry, files)
+    if isProcessedWaveSeries(seriesEntry, files) || ...
+       (isfield(opts,'forceProcessedWave') && opts.forceProcessedWave)
         [W, M, spatialInfo, phases_rad, M_raw] = readProcWave(seriesEntry, files, opts);
         return
     end
@@ -143,10 +147,7 @@ function [W, M, spatialInfo, phases_rad, M_raw] = readProcWave(seriesEntry, file
     nRow   = double(headers(1).Rows);
     nCol   = double(headers(1).Columns);
 
-    nPhasesHdr = getNominalPhaseCount(headers);
-    nSlicesExp = max(1, round(nFiles / max(1, nPhasesHdr)));
-    [sliceIdx, nSlices] = getSliceIndices(headers, nSlicesExp);
-    nPhases = max(1, round(nFiles / max(1, nSlices)));
+    [sliceIdx, nSlices, nPhases] = resolveSlicePhaseLayout(headers, nFiles);
 
     phases_rad = linspace(0, 2*pi, nPhases+1);
     phases_rad = phases_rad(1:nPhases);
@@ -275,6 +276,28 @@ function nPh = getNominalPhaseCount(headers)
         nPh = 4;
     end
     nPh = max(1, nPh);
+end
+
+function [sliceIdx, nSlices, nPhases] = resolveSlicePhaseLayout(headers, nFiles)
+% Determine slice/phase layout from DICOM headers.
+% Priority: SliceLocation unique groups (Siemens multi-phase) →
+%           then legacy InStackPositionNumber / physical-coord path.
+    sliceLocs = double([headers.SliceLocation]);
+    if sum(isfinite(sliceLocs)) == nFiles
+        roundedLocs = round(sliceLocs * 10) / 10;
+        [uLocs, ~, locGroupIdx] = unique(roundedLocs(:), 'sorted');
+        nUniq = numel(uLocs);
+        if nUniq >= 2 && nUniq < nFiles && mod(nFiles, nUniq) == 0
+            sliceIdx = locGroupIdx;
+            nSlices  = nUniq;
+            nPhases  = nFiles / nUniq;
+            return
+        end
+    end
+    nPhasesHdr = getNominalPhaseCount(headers);
+    nSlicesExp = max(1, round(nFiles / max(1, nPhasesHdr)));
+    [sliceIdx, nSlices] = getSliceIndices(headers, nSlicesExp);
+    nPhases = max(1, round(nFiles / max(1, nSlices)));
 end
 
 function [sliceIdx, nSlices] = getSliceIndices(headers, nExpected)
