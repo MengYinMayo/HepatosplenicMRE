@@ -2480,6 +2480,7 @@ function updateOfflineReconEnabled(app)
             try
                 hasSeries = false;
                 mreRawRoles = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag', ...
+                               'GRE_IQMre2D', ...
                                'SIEMENS_MRE_PhaseDiff','SIEMENS_MRE_Magnitude'};
                 ser = app.AppData.Exam.Series;
                 for k = 1:numel(ser)
@@ -2574,7 +2575,7 @@ function updateOfflineReconEnabled(app)
 
                 % Collect all raw MRE series, separated by vendor.
                 siemensRawRoles = {'SIEMENS_MRE_PhaseDiff','SIEMENS_MRE_Magnitude'};
-                otherRawRoles   = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag'};
+                otherRawRoles   = {'PHILIPS_MRE_Raw','EPI_RawIQ','EPI_WaveMag_Raw','GRE_WaveMag_Raw','EPI_WaveMag','GRE_WaveMag','GRE_IQMre2D'};
                 mreRawRoles     = [siemensRawRoles, otherRawRoles];
                 siemensList = struct([]); otherList = struct([]);
                 for k = 1:numel(app.AppData.Exam.Series)
@@ -2726,7 +2727,10 @@ function updateOfflineReconEnabled(app)
                 % GE/Philips: first half by InstanceNumber = wave, second = magnitude.
                 % Siemens: M/W_raw were already loaded from the original DICOM exam
                 % (PhaseDiff and Magnitude are separate series), so skip the split.
-                if ~startsWith(rawSeries.Role, 'SIEMENS_MRE_')
+                % GE iqmre2d: M/M_raw/W_raw were correctly built by buildFromSelectionIQMre2D
+                % (layout: skip → magnitude → wave, NOT first-half/second-half Philips split),
+                % so skip loadRawMRESplitFromDir to avoid swapping M and W_raw.
+                if ~startsWith(rawSeries.Role, 'SIEMENS_MRE_') && ~strcmp(rawSeries.Role, 'GRE_IQMre2D')
                     [newM, newM_raw, newW_raw] = loadRawMRESplitFromDir(inputDir);
                     if ~isempty(newM)
                         app.AppData.MRE.M     = newM;
@@ -8272,6 +8276,7 @@ function lbl = mreRoleLabel(role)
         'EPI_ProcWave',          'ProcessedWave', ...
         'EPI_Stiffness',         'Stiffness', ...
         'EPI_ConfMap',           'ConfMap', ...
+        'GRE_IQMre2D',           'iqmre2d_Raw', ...
         'SIEMENS_MRE_PhaseDiff', 'Wave_PhaseDiff', ...
         'SIEMENS_MRE_Magnitude', 'Magnitude', ...
         'SIEMENS_MRE_Stiffness', 'Stiffness_10xPa', ...
@@ -10374,10 +10379,6 @@ function newW = loadOfflineReconWave(quantDir, mreRef)
         if isempty(waveFiles), return; end
 
         [nR, nC, nZ] = refDims(mreRef);
-        nRefPh = 1;
-        if isfield(mreRef,'W') && ~isempty(mreRef.W)
-            nRefPh = size(mreRef.W, 4);
-        end
 
         % Read headers to determine slice locations and instance numbers.
         nF = numel(waveFiles);
@@ -10402,9 +10403,6 @@ function newW = loadOfflineReconWave(quantDir, mreRef)
         nSlices = numel(uniqueLocs);
         if nZ == 0, nZ = nSlices; end
         nPh = max(1, round(nF / max(1, nSlices)));
-        if nRefPh > 1 && nPh ~= nRefPh
-            nPh = nRefPh;
-        end
 
         vol = zeros(nR, nC, nSlices, nPh, 'double');
         for si = 1:nSlices

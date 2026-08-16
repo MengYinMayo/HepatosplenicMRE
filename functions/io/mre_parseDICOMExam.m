@@ -468,6 +468,18 @@ function entry = classifySeries(entry)
         return
     end
 
+    % ── GE iqmre2d (2D MRE, 2 phase offsets) ────────────────────────────
+    % GE private tag (0019,109C) = 'iqmre2d' uniquely identifies this sequence.
+    % Layout: first nSlices files = skip, next nSlices = magnitude (1/slice),
+    % remaining 2*nSlices files = wave (2 phases/slice).
+    % Guard: DERIVED series from the same exam (Stiffness, Confidence, Shear
+    % Wave, Loss Modulus, Storage Modulus from mmdi recon) also carry this
+    % private tag — they must fall through to the GRE block for correct
+    % sub-classification, so only label ORIGINAL series here.
+    if strcmp(seq, 'iqmre2d') && contains(itype, 'original')
+        entry.Role = 'GRE_IQMre2D'; return
+    end
+
     % ── EPI-MRE ──────────────────────────────────────────────────────
     isEPI = hit(seq,  {'epimre','epi_mre'}) || ...
             (hit(desc,{'mre','elastograph'}) && ...

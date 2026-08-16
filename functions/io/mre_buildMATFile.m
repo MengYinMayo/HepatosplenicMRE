@@ -404,18 +404,22 @@ function matPath = buildFromSelection(sel, opts)
         grp = filterMREGroupToAnchorFamily(grp, sel.MRE);
         if isempty(grp), grp = sel.MRE; end
 
+        isIQMre2D  = false;
         isPhilips  = false;
         isEPI      = false;
         isSiemens  = false;
         try
             roles = {grp.Role};
-            isSiemens = any(startsWith(roles,'SIEMENS_')) || startsWith(sel.MRE.Role,'SIEMENS_');
-            isPhilips = ~isSiemens && (any(startsWith(roles,'PHILIPS_')) || startsWith(sel.MRE.Role,'PHILIPS_'));
-            isEPI     = ~isPhilips && ~isSiemens && (any(startsWith(roles,'EPI_')) || startsWith(sel.MRE.Role,'EPI_'));
+            isIQMre2D = any(strcmp(roles,'GRE_IQMre2D')) || strcmp(sel.MRE.Role,'GRE_IQMre2D');
+            isSiemens = ~isIQMre2D && (any(startsWith(roles,'SIEMENS_')) || startsWith(sel.MRE.Role,'SIEMENS_'));
+            isPhilips = ~isIQMre2D && ~isSiemens && (any(startsWith(roles,'PHILIPS_')) || startsWith(sel.MRE.Role,'PHILIPS_'));
+            isEPI     = ~isIQMre2D && ~isPhilips && ~isSiemens && (any(startsWith(roles,'EPI_')) || startsWith(sel.MRE.Role,'EPI_'));
         catch
         end
 
-        if isSiemens
+        if isIQMre2D
+            [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionIQMre2D(grp, opts);
+        elseif isSiemens
             [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionSiemens(grp, opts);
         elseif isPhilips
             % Load magnitude and raw wave from the interleaved Philips raw series.
@@ -1084,6 +1088,307 @@ function [ok, score] = scoreProcCandidate(g, rawSlices)
     catch
         ok = false;
         score = -inf;
+    end
+end
+
+% ======================================================================
+%  GE IQMre2D HELPERS
+% ======================================================================
+
+function [W_raw, W, M, M_raw, S, LapC, H] = buildFromSelectionIQMre2D(grp, opts)
+%BUILDFROMSELECTIONIQMRE2D  GE iqmre2d 2D-MRE raw series load.
+%
+% Primary classification: DICOM ImageType tag
+%   '\M\' or ending '\M'  -> magnitude (1 per slice, static)
+%   '\P\' or ending '\P'  -> phase/wave (2 per slice)
+%   anything else         -> skip (discarded)
+%
+% Positional fallback (InstanceNumber order) used only when ImageType is absent.
+
+    W_raw = []; W = []; M = []; M_raw = []; S = []; LapC = []; H = [];
+
+    rawSeries = findRoleInGroup(grp, {'GRE_IQMre2D'});
+    if isempty(rawSeries), rawSeries = grp(1); end
+
+    files  = rawSeries.Files;
+    nTotal = numel(files);
+    if nTotal < 8
+        vprint(opts, 'iqmre2d: insufficient files (%d).', nTotal);
+        return
+    end
+
+    % ── Pass 1: read all headers ──────────────────────────────────────────
+    nR = 0; nC = 0;
+    instNums  = zeros(1, nTotal);
+    sliceLocs = zeros(1, nTotal);
+    tempPos   = zeros(1, nTotal);
+    itypes    = cell(1, nTotal);
+    for k = 1:nTotal
+        try
+            info = dicominfo(files{k}, 'UseDictionaryVR', true);
+            if isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
+                instNums(k) = double(info.InstanceNumber);
+            else
+                instNums(k) = k;
+            end
+            if isfield(info,'SliceLocation') && ~isempty(info.SliceLocation)
+                sliceLocs(k) = double(info.SliceLocation);
+            end
+            if isfield(info,'TemporalPositionIdentifier') && ~isempty(info.TemporalPositionIdentifier)
+                tempPos(k) = double(info.TemporalPositionIdentifier);
+            end
+            if isfield(info,'ImageType') && ~isempty(info.ImageType)
+                itypes{k} = upper(char(info.ImageType));
+            else
+                itypes{k} = '';
+            end
+            if nR == 0 && isfield(info,'Rows') && ~isempty(info.Rows)
+                nR = double(info.Rows);
+                nC = double(info.Columns);
+            end
+        catch
+            instNums(k) = k;
+            itypes{k} = '';
+        end
+    end
+    if nR == 0, nR = 256; nC = 256; end
+
+    % ── Pass 2: classify by ImageType ────────────────────────────────────
+    % GE convention: ORIGINAL\PRIMARY\M\ND = magnitude, ORIGINAL\PRIMARY\P\ND = phase
+    magFiles = {}; magLocs = [];
+    waveFiles = {}; waveLocs = []; waveTemp = [];
+
+    for k = 1:nTotal
+        it = itypes{k};
+        isMag   = contains(it,'\M\') || endsWith(it,'\M');
+        isPhase = contains(it,'\P\') || endsWith(it,'\P') || contains(it,'PHASE');
+        % Exclude magnitude from phase check (e.g. '\P\' but also '\M\' edge case)
+        if isMag && isPhase, isPhase = false; end
+
+        if isMag
+            magFiles{end+1}  = files{k};   %#ok<AGROW>
+            magLocs(end+1)   = sliceLocs(k);
+        elseif isPhase
+            waveFiles{end+1} = files{k};   %#ok<AGROW>
+            waveLocs(end+1)  = sliceLocs(k);
+            waveTemp(end+1)  = tempPos(k);
+        end
+    end
+
+    vprint(opts, 'iqmre2d ImageType: mag=%d  wave=%d  (of %d total)', ...
+        numel(magFiles), numel(waveFiles), nTotal);
+
+    % ── Fallback: positional partitioning by InstanceNumber order ─────────
+    if isempty(magFiles) || isempty(waveFiles)
+        vprint(opts, 'iqmre2d: ImageType unavailable — using positional fallback.');
+        [~, sortIdx] = sort(instNums);
+        sFiles = files(sortIdx);
+        sLocs  = sliceLocs(sortIdx);
+        sTemp  = tempPos(sortIdx);
+
+        nSlices = 0;
+        try
+            hdr = rawSeries.Header;
+            if isfield(hdr,'Private_0021_104f') && ~isempty(hdr.Private_0021_104f)
+                nSlices = round(double(hdr.Private_0021_104f(1)));
+            end
+        catch
+        end
+        if nSlices < 1, nSlices = round(nTotal / 4); end
+        if nSlices < 1, nSlices = 1; end
+
+        magFiles  = sFiles(nSlices+1 : min(2*nSlices, nTotal));
+        magLocs   = sLocs (nSlices+1 : min(2*nSlices, nTotal));
+        waveFiles = sFiles(min(2*nSlices+1, nTotal+1) : end);
+        waveLocs  = sLocs (min(2*nSlices+1, nTotal+1) : end);
+        waveTemp  = sTemp (min(2*nSlices+1, nTotal+1) : end);
+        vprint(opts, 'iqmre2d fallback: nSlices=%d  mag=%d  wave=%d', ...
+            nSlices, numel(magFiles), numel(waveFiles));
+    end
+
+    if isempty(magFiles)
+        vprint(opts, 'iqmre2d: no magnitude files identified — aborting.');
+        return
+    end
+
+    % ── Read magnitude (1 per slice, static) ─────────────────────────────
+    nSlices = numel(magFiles);
+    [~, magOrd] = sort(magLocs);
+    magFiles = magFiles(magOrd);
+    M = zeros(nR, nC, nSlices, 'double');
+    for sl = 1:nSlices
+        try
+            img = double(dicomread(magFiles{sl}));
+            if size(img,1) ~= nR || size(img,2) ~= nC
+                img = imresize(img, [nR nC], 'bilinear');
+            end
+            M(:,:,sl) = img;
+        catch
+        end
+    end
+    M_raw = M;   % static 3-D volume — no phase dimension
+
+    % ── Read raw wave (2 phases per slice) ───────────────────────────────
+    nWave   = numel(waveFiles);
+    nPhases = max(1, round(nWave / nSlices));
+    vprint(opts, 'iqmre2d: nSlices=%d  nWave=%d  nPhases=%d', nSlices, nWave, nPhases);
+
+    W_raw = zeros(nR, nC, nSlices, nPhases, 'double');
+    uniqueWaveLocs = unique(waveLocs);
+    for sl = 1:min(nSlices, numel(uniqueWaveLocs))
+        locMask = (waveLocs == uniqueWaveLocs(sl));
+        phFiles = waveFiles(locMask);
+        phTemp  = waveTemp(locMask);
+        if any(phTemp > 0)
+            [~, phOrd] = sort(phTemp);
+        else
+            phOrd = 1:numel(phFiles);
+        end
+        phFiles = phFiles(phOrd);
+        for ph = 1:min(numel(phFiles), nPhases)
+            try
+                img = double(dicomread(phFiles{ph}));
+                if size(img,1) ~= nR || size(img,2) ~= nC
+                    img = imresize(img, [nR nC], 'bilinear');
+                end
+                W_raw(:,:,sl,ph) = img;
+            catch
+            end
+        end
+    end
+
+    % ── Processed wave: prefer offline-recon shear wave when readable ─────
+    % The mmdi recon also outputs Loss Modulus and Storage Modulus as DICOM
+    % series; these get classified as GRE_WaveMag_Proc because they are
+    % derived GRE series that are neither confidence nor stiffness.
+    % Explicitly skip any series whose description contains modulus/elastic
+    % keywords so they are never mistaken for the shear wave.
+    W = [];
+    procSeries = [];
+    procFallback = [];
+    for kp = 1:numel(grp)
+        gp = grp(kp);
+        if ~any(strcmp(gp.Role, {'GRE_WaveMag_Proc','GRE_ProcWave'})), continue; end
+        desc_lc = lower(char(gp.SeriesDescription));
+        if contains(desc_lc,'modulus') || contains(desc_lc,'elastic') || contains(desc_lc,'storage')
+            vprint(opts,'iqmre2d: skipping modulus series as proc wave: %s', gp.SeriesDescription);
+            continue
+        end
+        if isempty(procSeries) && contains(desc_lc,'shear wave')
+            procSeries = gp;   % preferred: explicitly named shear wave
+        elseif isempty(procFallback)
+            procFallback = gp; % fallback: any non-modulus proc series
+        end
+    end
+    if isempty(procSeries), procSeries = procFallback; end
+    if ~isempty(procSeries)
+        vprint(opts, 'iqmre2d: trying recon shear wave: S%d', procSeries.SeriesNumber);
+        Wp = readIQMre2DProcWave(procSeries.Files, nR, nC);
+        if ~isempty(Wp) && any(Wp(:) ~= 0)
+            vprint(opts, 'iqmre2d: recon wave read OK %s', mat2str(size(Wp)));
+            if opts.interpolateWave && size(Wp,4) > 1 && size(Wp,4) < 8
+                vprint(opts, 'iqmre2d: interpolating recon wave %d->8.', size(Wp,4));
+                Wp = mre_interpolatePhases(Wp, 8);
+            end
+            W = Wp;
+        else
+            vprint(opts, 'iqmre2d: recon wave unreadable (likely .sdopen) — using raw fallback.');
+        end
+    end
+
+    % Fallback: interpolate raw wave for display
+    if isempty(W)
+        if opts.interpolateWave && nPhases > 1 && nPhases < 8
+            vprint(opts, 'iqmre2d: interpolating raw wave %d->8 phases.', nPhases);
+            W = mre_interpolatePhases(W_raw, 8);
+        else
+            W = W_raw;
+        end
+    end
+
+    % ── Header ───────────────────────────────────────────────────────────
+    try
+        H = buildHeaderStruct(rawSeries.Header, struct());
+    catch
+        H = struct();
+    end
+
+    % ── Stiffness and confidence from offline recon ───────────────────────
+    stiffSeries = findRoleInGroup(grp, {'GRE_Stiffness','EPI_Stiffness'});
+    if ~isempty(stiffSeries)
+        vprint(opts, 'iqmre2d: reading stiffness: S%d', stiffSeries.SeriesNumber);
+        S_raw = readGrayscaleVolume(stiffSeries.Files, nR, nC, nSlices);
+        S = double(S_raw) / 1000.0;
+    end
+
+    confSeries = findRoleInGroup(grp, {'GRE_ConfMap','EPI_ConfMap'});
+    if ~isempty(confSeries)
+        vprint(opts, 'iqmre2d: reading confidence: S%d', confSeries.SeriesNumber);
+        LapC_raw = readGrayscaleVolume(confSeries.Files, nR, nC, nSlices);
+        LapC = double(LapC_raw) / 1000.0;
+    end
+end
+
+function W = readIQMre2DProcWave(files, nR, nC)
+%READIQMRE2DPROCWAVE  Read offline-recon shear wave into [nR nC nSlices nPhases].
+%   Sorts all files by InstanceNumber, then groups by SliceLocation.
+%   Within each slice, phases are sorted by TemporalPositionIdentifier.
+    W = [];
+    nF = numel(files);
+    if nF == 0, return; end
+
+    instNums  = zeros(1, nF);
+    sliceLocs = zeros(1, nF);
+    tempPos   = zeros(1, nF);
+    for k = 1:nF
+        try
+            info = dicominfo(files{k}, 'UseDictionaryVR', true);
+            if isfield(info,'InstanceNumber') && ~isempty(info.InstanceNumber)
+                instNums(k) = double(info.InstanceNumber);
+            else
+                instNums(k) = k;
+            end
+            if isfield(info,'SliceLocation') && ~isempty(info.SliceLocation)
+                sliceLocs(k) = double(info.SliceLocation);
+            end
+            if isfield(info,'TemporalPositionIdentifier') && ~isempty(info.TemporalPositionIdentifier)
+                tempPos(k) = double(info.TemporalPositionIdentifier);
+            end
+        catch
+            instNums(k) = k;
+        end
+    end
+
+    [~, sortIdx] = sort(instNums);
+    files     = files(sortIdx);
+    sliceLocs = sliceLocs(sortIdx);
+    tempPos   = tempPos(sortIdx);
+
+    uniqueLocs = unique(sliceLocs);
+    nSlices    = numel(uniqueLocs);
+    nPhases    = max(1, round(nF / nSlices));
+
+    W = zeros(nR, nC, nSlices, nPhases, 'double');
+    for sl = 1:nSlices
+        mask   = (sliceLocs == uniqueLocs(sl));
+        fSel   = files(mask);
+        tSel   = tempPos(mask);
+        if any(tSel > 0)
+            [~, ord] = sort(tSel);
+        else
+            ord = 1:numel(fSel);
+        end
+        fSel = fSel(ord);
+        for ph = 1:min(numel(fSel), nPhases)
+            try
+                img = double(dicomread(fSel{ph}));
+                if size(img,1) ~= nR || size(img,2) ~= nC
+                    img = imresize(img, [nR nC], 'bilinear');
+                end
+                W(:,:,sl,ph) = img;
+            catch
+            end
+        end
     end
 end
 
