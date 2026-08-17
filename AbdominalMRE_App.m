@@ -4869,6 +4869,23 @@ function I = getMREMagnitudeForROI(app, sl)
                 end
                 needContour = true;
 
+                % Resample contour to uniform arc-length spacing so that the
+                % number of 1-D profiles is determined by the contour perimeter
+                % and a fixed spatial resolution, not by mouse speed during drawing.
+                % Target: one ray per 1 mm of capsule perimeter.
+                if size(boundaryPoints,1) >= 3 && pixSp > 0
+                    bp = [boundaryPoints; boundaryPoints(1,:)];
+                    segs = sqrt(sum(diff(bp).^2, 2));
+                    arcLen = [0; cumsum(segs)];
+                    totalLen = arcLen(end);
+                    spacingPx = max(0.5, 1.0 / pixSp);   % 1 mm in pixels
+                    nResamp   = max(20, round(totalLen / spacingPx));
+                    tq = linspace(0, totalLen, nResamp + 1);
+                    tq = tq(1:end-1);
+                    boundaryPoints = [interp1(arcLen, bp(:,1), tq(:), 'linear'), ...
+                                      interp1(arcLen, bp(:,2), tq(:), 'linear')];
+                end
+
                 % Step 2: compute 1-D profiles capsule -> IVC,
                 %         storing raw confidence values for interactive threshold
                 numPts = 100;
